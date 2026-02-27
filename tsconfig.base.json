@@ -1,0 +1,19 @@
+{
+    "compilerOptions": {
+      "target": "ES2021",
+      "lib": ["DOM", "ES2021"],
+      "module": "ESNext",
+      "moduleResolution": "Node",
+      "strict": true,
+      "esModuleInterop": true,
+      "skipLibCheck": true,
+      "jsx": "react-jsx",
+      "baseUrl": ".",
+      "paths": {
+        "@app/ui": ["packages/ui"],
+        "@app/config": ["packages/config"],
+        "@app/db": ["packages/db"]
+      }
+    }
+  }
+  

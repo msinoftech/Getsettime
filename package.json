@@ -1,0 +1,23 @@
+{
+  "name": "saas-platform",
+  "version": "1.0.0",
+  "author": "Miraculous <miraculoussoft@gmail.com>",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "install:all": "yarn install",
+    "dev:workspace": "yarn workspace workspace-app dev",
+    "dev:superadmin": "yarn workspace superadmin-app dev",
+    "build:workspace": "yarn workspace workspace-app build",
+    "build:superadmin": "yarn workspace superadmin-app build",
+    "start:workspace": "yarn workspace workspace-app start",
+    "start:superadmin": "yarn workspace superadmin-app start",
+    "lint": "eslint . --ext .ts,.tsx,.js,.jsx"
+  },
+  "dependencies": {
+    "twilio": "^5.12.1"
+  }
+}

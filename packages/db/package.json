@@ -1,0 +1,11 @@
+{
+  "name": "@app/db",
+  "version": "1.0.0",
+  "main": "index.ts",
+  "types": "index.ts",
+  "license": "MIT",
+  "dependencies": {
+    "@app/config": "*",
+    "@supabase/supabase-js": "^2.81.1"
+  }
+}

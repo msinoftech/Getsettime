@@ -1,0 +1,16 @@
+export {
+  FcHome,
+  FcPlanner,
+  FcOvertime,
+  FcAlarmClock,
+  FcBusinessman,
+  FcCrystalOscillator,
+  FcOrgUnit,
+  FcCollaboration,
+  FcCurrencyExchange,
+  FcSettings,
+  FcAddressBook,
+  FcList,
+  FcOrganization,
+  FcHighBattery,
+} from "react-icons/fc";
