@@ -51,6 +51,7 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug }
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   const [notes, setNotes] = useState('');
+  const [sendWhatsapp, setSendWhatsapp] = useState(false);
   const [customFieldValues, setCustomFieldValues] = useState<Record<string, string>>({});
   const [touched, setTouched] = useState<{ name: boolean; email: boolean; phone: boolean }>({
     name: false,
@@ -259,6 +260,7 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug }
         const v = (customFieldValues[field.id] || '').trim();
         if (v) intakeFormPayload[field.id] = v;
       }
+      if (sendWhatsapp) intakeFormPayload.whatsapp_opt_in = 'true';
 
       const timezone = getDisplayTimezone(generalSettings?.timezone);
 
@@ -410,6 +412,7 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug }
                   email={email}
                   phone={phone}
                   notes={notes}
+                  sendWhatsapp={sendWhatsapp}
                   customFieldValues={customFieldValues}
                   selectedServiceIds={selectedServiceIds}
                   services={services}
@@ -423,6 +426,7 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug }
                   onEmailChange={setEmail}
                   onPhoneChange={setPhone}
                   onNotesChange={setNotes}
+                  onSendWhatsappChange={setSendWhatsapp}
                   onCustomFieldChange={(id, v) => setCustomFieldValues((prev) => ({ ...prev, [id]: v }))}
                   onServiceToggle={(id) =>
                     setSelectedServiceIds((prev) =>

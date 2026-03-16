@@ -520,8 +520,10 @@ export async function POST(req: NextRequest) {
     }
 
     // Send WhatsApp notification (best-effort; don't fail booking)
+    // Only send if the invitee explicitly opted in via intake_form.whatsapp_opt_in.
+    const whatsappOptIn = Boolean(intake_form && (intake_form as any).whatsapp_opt_in);
     try {
-      if (invitee_phone && invitee_phone.trim()) {
+      if (invitee_phone && invitee_phone.trim() && whatsappOptIn) {
         const origin = new URL(req.url).origin;
         const whenOpts: Intl.DateTimeFormatOptions = {
           weekday: 'short',

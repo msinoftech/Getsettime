@@ -18,6 +18,7 @@ interface Step4IntakeFormProps {
   email: string;
   phone: string;
   notes: string;
+  sendWhatsapp: boolean;
   customFieldValues: Record<string, string>;
   selectedServiceIds: string[];
   services: Service[];
@@ -31,6 +32,7 @@ interface Step4IntakeFormProps {
   onEmailChange: (v: string) => void;
   onPhoneChange: (v: string) => void;
   onNotesChange: (v: string) => void;
+  onSendWhatsappChange: (v: boolean) => void;
   onCustomFieldChange: (id: string, v: string) => void;
   onServiceToggle: (id: string) => void;
   onTouchedName: () => void;
@@ -47,6 +49,7 @@ export function Step4IntakeForm({
   email,
   phone,
   notes,
+   sendWhatsapp,
   customFieldValues,
   selectedServiceIds,
   services,
@@ -60,6 +63,7 @@ export function Step4IntakeForm({
   onEmailChange,
   onPhoneChange,
   onNotesChange,
+   onSendWhatsappChange,
   onCustomFieldChange,
   onServiceToggle,
   onTouchedName,
@@ -70,7 +74,8 @@ export function Step4IntakeForm({
   onConfirm,
 }: Step4IntakeFormProps) {
   const [attemptedConfirm, setAttemptedConfirm] = useState(false);
-  const [sendWhatsapp, setSendWhatsapp] = useState(false);
+  const [acceptTerms, setAcceptTerms] = useState(false);
+  const [showTermsModal, setShowTermsModal] = useState(false);
   const showFieldError = (key: string) => attemptedConfirm && Boolean(intakeValidation[key]);
   const baseInputClass =
     'w-full px-4 py-4 rounded-xl border-2 border-gray-200 focus:outline-none focus:border-indigo-500 transition-all bg-white hover:border-gray-300';
@@ -290,10 +295,28 @@ export function Step4IntakeForm({
             <input
               type="checkbox"
               checked={sendWhatsapp}
-              onChange={(e) => setSendWhatsapp(e.target.checked)}
+              onChange={(e) => onSendWhatsappChange(e.target.checked)}
               className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
             />
             <span className="text-sm text-gray-700">I agree to receive appointment and reminder via WhatsApp.</span>
+          </label>
+        </div>
+
+        <div className='group'>
+          <label className="inline-flex items-center gap-3 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={acceptTerms}
+              onChange={(e) => {
+                const checked = e.target.checked;
+                setAcceptTerms(checked);
+                if (checked) {
+                  setShowTermsModal(true);
+                }
+              }}
+              className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+            />
+            <span className="text-sm text-gray-700">I agree to the terms and conditions.</span>
           </label>
         </div>
         
@@ -335,6 +358,42 @@ export function Step4IntakeForm({
           )}
         </button>
       </div>
+
+      {showTermsModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-white rounded-xl shadow-xl max-w-lg w-full mx-4 p-6">
+            <h3 className="text-lg font-semibold text-gray-900 mb-3">Terms &amp; Conditions</h3>
+            <div className="text-sm text-gray-700 mb-6 max-h-60 overflow-y-auto">
+              <p>
+                Please review the terms and conditions for this booking. By clicking OK, you confirm that you have read
+                and agree to them.
+              </p>
+            </div>
+            <div className="flex justify-end gap-3">
+              {/* <button
+                type="button"
+                className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm hover:bg-gray-50"
+                onClick={() => {
+                  setShowTermsModal(false);
+                  setAcceptTerms(false);
+                }}
+              >
+                Cancel
+              </button> */}
+              <button
+                type="button"
+                className="px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700"
+                onClick={() => {
+                  setAcceptTerms(true);
+                  setShowTermsModal(false);
+                }}
+              >
+                OK
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

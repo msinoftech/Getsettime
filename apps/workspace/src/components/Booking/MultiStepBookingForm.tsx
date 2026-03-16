@@ -46,6 +46,7 @@ const MultiStepBookingForm = ({ onSave, onCancel }: MultiStepBookingFormProps) =
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   const [notes, setNotes] = useState('');
+  const [sendWhatsapp, setSendWhatsapp] = useState(false);
   const [touched, setTouched] = useState({ name: false, email: false, phone: false });
   const [touchedCustomFields, setTouchedCustomFields] = useState<Record<string, boolean>>({});
   const [customFieldValues, setCustomFieldValues] = useState<Record<string, string>>({});
@@ -143,6 +144,7 @@ const MultiStepBookingForm = ({ onSave, onCancel }: MultiStepBookingFormProps) =
     if (intakeForm.name === false) setName('');
     if (intakeForm.email === false) setEmail('');
     if (intakeForm.phone === false) setPhone('');
+    setSendWhatsapp(false);
     if (intakeForm.additional_description === false) setNotes('');
   }, [intakeForm]);
 
@@ -172,7 +174,12 @@ const MultiStepBookingForm = ({ onSave, onCancel }: MultiStepBookingFormProps) =
       return;
     }
     if (!isStep4Valid) {
-      const first = intakeValidation._config || intakeValidation.name || intakeValidation.email || intakeValidation.phone || intakeValidation.services;
+      const first =
+        intakeValidation._config ||
+        intakeValidation.name ||
+        intakeValidation.email ||
+        intakeValidation.phone ||
+        intakeValidation.services;
       setError(first || 'Please fill in all required fields');
       return;
     }
@@ -250,6 +257,7 @@ const MultiStepBookingForm = ({ onSave, onCancel }: MultiStepBookingFormProps) =
 
       const metadata: Record<string, unknown> = {};
       if (additionalDescriptionEnabled && notes.trim()) metadata.notes = notes.trim();
+      if (sendWhatsapp) metadata.whatsapp_opt_in = true;
       if (Object.keys(intakeFormPayload).length > 0) metadata.intake_form = intakeFormPayload;
 
       const timezone = getDisplayTimezone(general?.timezone);
@@ -394,6 +402,7 @@ const MultiStepBookingForm = ({ onSave, onCancel }: MultiStepBookingFormProps) =
                   email={email}
                   phone={phone}
                   notes={notes}
+                  sendWhatsapp={sendWhatsapp}
                   customFieldValues={customFieldValues}
                   selectedServiceIds={selectedServiceIds}
                   services={services}
@@ -407,6 +416,7 @@ const MultiStepBookingForm = ({ onSave, onCancel }: MultiStepBookingFormProps) =
                   onEmailChange={setEmail}
                   onPhoneChange={setPhone}
                   onNotesChange={setNotes}
+                  onSendWhatsappChange={setSendWhatsapp}
                   onCustomFieldChange={(id, v) => setCustomFieldValues((prev) => ({ ...prev, [id]: v }))}
                   onServiceToggle={(id) =>
                     setSelectedServiceIds((prev) =>
