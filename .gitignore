@@ -1,0 +1,54 @@
+# Node
+node_modules
+**/node_modules
+
+# Next.js
+.next
+**/.next
+out
+**/out
+
+# Env
+.env
+.env.local
+.env.production
+.env.development
+.env.*
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# System
+.DS_Store
+Thumbs.db
+
+# Turbo
+.turbo
+**/.turbo
+
+# Build
+dist
+build
+**/dist
+**/build
+
+# Supabase (local)
+supabase/.branches
+supabase/.temp
+supabase/.env
+
+# VS Code
+.vscode
+
+# OS
+*.swp
+*.swo
+
+# Rules
+.cursor
+.rules
+apps/workspace/test-smtp.js
+apps/workspace/EMAIL_CONFIGURATION.md
+apps/workspace/EMAIL_DEBUGGING_GUIDE.md

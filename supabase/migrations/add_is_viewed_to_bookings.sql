@@ -1,0 +1,1 @@
+ALTER TABLE bookings ADD COLUMN is_viewed BOOLEAN DEFAULT false;

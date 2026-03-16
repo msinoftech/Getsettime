@@ -1,0 +1,44 @@
+'use client';
+
+import React from 'react';
+
+function SkeletonBar({ className }: { className?: string }) {
+  return (
+    <div
+      className={`rounded bg-slate-200 animate-pulse ${className ?? ''}`}
+    />
+  );
+}
+
+const SKELETON_ROWS = 8;
+
+export function BookingTableSkeleton() {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full">
+        <thead className="bg-slate-50 border-b border-slate-200">
+          <tr className="border border-slate-200">
+            <th className="px-6 py-4 text-left text-sm font-bold text-slate-700 tracking-wider">Name</th>
+            <th className="px-6 py-4 text-left text-sm font-bold text-slate-700 tracking-wider">Booked Date / Time</th>
+            <th className="px-6 py-4 text-left text-sm font-bold text-slate-700 tracking-wider">Type</th>
+            <th className="px-6 py-4 text-left text-sm font-bold text-slate-700 tracking-wider">Workspace</th>
+            <th className="px-6 py-4 text-left text-sm font-bold text-slate-700 tracking-wider">Status</th>
+            <th className="px-6 py-4 text-left text-sm font-bold text-slate-700 tracking-wider">Created At</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-200">
+          {Array.from({ length: SKELETON_ROWS }).map((_, i) => (
+            <tr key={i} className="bg-white border border-slate-200">
+              <td className="px-6 py-4"><SkeletonBar className="h-4 w-24" /></td>
+              <td className="px-6 py-4"><SkeletonBar className="h-4 w-36" /></td>
+              <td className="px-6 py-4"><SkeletonBar className="h-4 w-20" /></td>
+              <td className="px-6 py-4"><SkeletonBar className="h-4 w-24" /></td>
+              <td className="px-6 py-4"><SkeletonBar className="h-6 w-20 rounded-full" /></td>
+              <td className="px-6 py-4"><SkeletonBar className="h-4 w-32" /></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
