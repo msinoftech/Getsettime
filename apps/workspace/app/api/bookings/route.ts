@@ -532,9 +532,11 @@ export async function POST(req: NextRequest) {
     }
 
     // Send WhatsApp notification (best-effort; don't fail booking)
-    // Only send if the invitee explicitly opted in via whatsapp_opt_in metadata.
+    // metadata.whatsapp_opt_in controls messages to the user (invitee),
+    // notifications.whatsapp (whatsappEnabled) controls messages to admins.
+    const whatsappEnabled = configData?.settings?.notifications?.whatsapp === true;
     try {
-      if (invitee_phone && invitee_phone.trim() && metadata?.whatsapp_opt_in) {
+      if (invitee_phone && invitee_phone.trim() && (metadata?.whatsapp_opt_in || whatsappEnabled)) {
         const origin = new URL(req.url).origin;
         const whenOpts: Intl.DateTimeFormatOptions = {
           weekday: 'short',
@@ -571,6 +573,8 @@ export async function POST(req: NextRequest) {
             email: invitee_email?.trim() || null,
             phone: invitee_phone?.trim(),
             message,
+            send_to_user: Boolean(metadata?.whatsapp_opt_in),
+            send_to_admin: whatsappEnabled,
           }),
         });
       }

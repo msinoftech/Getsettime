@@ -520,10 +520,12 @@ export async function POST(req: NextRequest) {
     }
 
     // Send WhatsApp notification (best-effort; don't fail booking)
-    // Only send if the invitee explicitly opted in via intake_form.whatsapp_opt_in.
+    // whatsappOptIn controls messages to the user (invitee),
+    // whatsappEnabled (notifications.whatsapp) controls messages to admins.
     const whatsappOptIn = Boolean(intake_form && (intake_form as any).whatsapp_opt_in);
+    const whatsappEnabled = configData?.settings?.notifications?.whatsapp === true;
     try {
-      if (invitee_phone && invitee_phone.trim() && whatsappOptIn) {
+      if (invitee_phone && invitee_phone.trim() && (whatsappOptIn || whatsappEnabled)) {
         const origin = new URL(req.url).origin;
         const whenOpts: Intl.DateTimeFormatOptions = {
           weekday: 'short',
@@ -551,6 +553,8 @@ export async function POST(req: NextRequest) {
             email: invitee_email?.trim() || null,
             phone: invitee_phone?.trim(),
             message,
+            send_to_user: whatsappOptIn,
+            send_to_admin: whatsappEnabled,
           }),
         }).catch((whatsappError) => {
           console.error('Error sending WhatsApp notification:', whatsappError);

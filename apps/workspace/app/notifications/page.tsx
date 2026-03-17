@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect } from "react";
 import { FcFeedback, FcClock, FcPhone, FcOk, FcSettings, FcAutomotive, FcBusinessman, FcBusinesswoman } from "react-icons/fc";
+import { FaWhatsapp } from "react-icons/fa";
 import { IconType } from "react-icons";
 import { useAuth } from "@/src/providers/AuthProvider";
 
@@ -19,6 +20,7 @@ const WORKFLOW_DEFINITIONS = [
   { settingsKey: "sms-reminder", name: "SMS 1h before", description: "SMS notification 1 hour prior", iconIndex: 1 },
   { settingsKey: "post-meeting-follow-up", name: "Post-meeting follow-up", description: "Send thank you email after meeting", iconIndex: 2 },
   { settingsKey: "auto-confirm-booking", name: "Auto-confirm bookings", description: "Automatically confirm new bookings without manual approval", iconIndex: 3 },
+  { settingsKey: "whatsapp", name: "Whatsapp Notification", description: "Receive booking requests on Whatsapp", iconIndex: 8 },
 ];
 
 export default function Workflows({ dark = false }) {
@@ -173,6 +175,7 @@ export default function Workflows({ dark = false }) {
     FcAutomotive,
     FcBusinessman,
     FcBusinesswoman,
+    FaWhatsapp,
   ];
 
   const getWorkflowIcon = (flow: Workflow): IconType => {

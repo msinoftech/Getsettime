@@ -5,7 +5,16 @@ import type { WhatsAppTemplateComponent } from "@workspace/lib/types";
 
 export async function POST(req: Request) {
   try {
-    const { name, email, phone, message } = await req.json();
+    const {
+      name,
+      email,
+      phone,
+      message,
+      // Optional flags to control which WhatsApp messages are sent.
+      // Default to true for backward compatibility with existing callers.
+      send_to_user = true,
+      send_to_admin = true,
+    } = await req.json();
 
     if (!phone) {
       return NextResponse.json(
@@ -110,52 +119,54 @@ export async function POST(req: Request) {
     ];
 
     // ================= SEND TO USER =================
-    // Build template components for user
-    const userTemplateComponents: WhatsAppTemplateComponent[] = [
-      {
-        type: "body",
-        parameters: userTemplateParams.map(param => ({
-          type: "text" as const,
-          text: String(param).substring(0, 32768) // WhatsApp limit per parameter
-        }))
-      }
-    ];
+    if (send_to_user) {
+      // Build template components for user
+      const userTemplateComponents: WhatsAppTemplateComponent[] = [
+        {
+          type: "body",
+          parameters: userTemplateParams.map(param => ({
+            type: "text" as const,
+            text: String(param).substring(0, 32768) // WhatsApp limit per parameter
+          }))
+        }
+      ];
 
-    console.log("Sending WhatsApp template to user:", {
-      phone,
-      template: userTemplateName,
-      language: languageCode,
-      parameters: userTemplateParams,
-      parametersCount: userTemplateParams.length
-    });
-
-    try {
-      userWhatsappResult = await sendWhatsAppTemplate(
-        phone,  // TO: Form phone number (user/recipient) - formatting handled in whatsapp.ts
-        userTemplateName,
-        languageCode,
-        userTemplateComponents
-      );
-      userWhatsappSent = true;
-      console.log("WhatsApp template message sent to user successfully:", {
-        messageId: userWhatsappResult?.messages?.[0]?.id
-      });
-    } catch (userWhatsappErr: any) {
-      userWhatsappError = userWhatsappErr.message || "Unknown WhatsApp error";
-      console.error("WhatsApp sending error to user:", {
-        error: userWhatsappErr.message,
+      console.log("Sending WhatsApp template to user:", {
+        phone,
         template: userTemplateName,
         language: languageCode,
-        phone,
-        fullError: process.env.NODE_ENV === "development" ? userWhatsappErr : undefined
+        parameters: userTemplateParams,
+        parametersCount: userTemplateParams.length
       });
-      // Continue even if user WhatsApp fails
+
+      try {
+        userWhatsappResult = await sendWhatsAppTemplate(
+          phone,  // TO: Form phone number (user/recipient) - formatting handled in whatsapp.ts
+          userTemplateName,
+          languageCode,
+          userTemplateComponents
+        );
+        userWhatsappSent = true;
+        console.log("WhatsApp template message sent to user successfully:", {
+          messageId: userWhatsappResult?.messages?.[0]?.id
+        });
+      } catch (userWhatsappErr: any) {
+        userWhatsappError = userWhatsappErr.message || "Unknown WhatsApp error";
+        console.error("WhatsApp sending error to user:", {
+          error: userWhatsappErr.message,
+          template: userTemplateName,
+          language: languageCode,
+          phone,
+          fullError: process.env.NODE_ENV === "development" ? userWhatsappErr : undefined
+        });
+        // Continue even if user WhatsApp fails
+      }
     }
 
     // ================= SEND TO ADMINS =================
     const adminNumbers = ["919463303891"];
 
-    if (adminNumbers.length > 0) {
+    if (adminNumbers.length > 0 && send_to_admin) {
       // `booking_received` expects 4 body parameters, not the user's 5.
       const adminTemplateComponents: WhatsAppTemplateComponent[] = [
         {

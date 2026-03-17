@@ -43,6 +43,7 @@ export default function RegisterForm() {
     google_meet: true,
     in_person: true,
     phone_call: false,
+    whatsapp: false,
   });
   const [step3Saved, setStep3Saved] = useState(false);
   const [onboardingUser, setOnboardingUser] = useState<{ email?: string; google_calendar_sync?: boolean } | null>(null);
@@ -242,6 +243,7 @@ export default function RegisterForm() {
           google_meet: meetingOptions.google_meet,
           in_person: meetingOptions.in_person,
           phone_call: meetingOptions.phone_call,
+          whatsapp: meetingOptions.whatsapp,
         },
       };
       const postRes = await fetch("/api/settings", {
@@ -368,7 +370,7 @@ export default function RegisterForm() {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-white to-purple-50 py-8">
         <div className="absolute top-0 left-0 w-full h-full bg-grid-pattern opacity-5" />
-        <div className="w-full max-w-2xl px-6 relative z-10">
+        <div className="w-full max-w-6xl px-6 relative z-10">
           <div className="text-center mb-6">
             <Link href="/" className="inline-block">
               <Image src="/getsettime-logo.svg" alt="GetSetTime Logo" width={200} height={50} className="mx-auto mb-4" />
@@ -568,6 +570,7 @@ export default function RegisterForm() {
                   { key: "google_meet" as const, label: "Google Meet" },
                   { key: "in_person" as const, label: "In-person" },
                   { key: "phone_call" as const, label: "Phone call" },
+                  { key: "whatsapp" as const, label: "Whatsapp Notification" },
                 ].map(({ key, label }) => (
                   <label key={key} className="flex items-center gap-3 cursor-pointer">
                     <input
