@@ -94,6 +94,62 @@ export async function createCalendarEvent(
 }
 
 /**
+ * Update a calendar event when a booking is rescheduled
+ */
+export async function updateCalendarEvent(
+  workspaceId: number,
+  eventId: string,
+  params: { startAt: string; endAt: string; summary?: string }
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const calendar = await getCalendarClient(workspaceId);
+    if (!calendar) return { success: false, error: 'Calendar not connected' };
+
+    await calendar.events.patch({
+      calendarId: 'primary',
+      eventId,
+      requestBody: {
+        start: { dateTime: params.startAt },
+        end: { dateTime: params.endAt },
+        ...(params.summary ? { summary: params.summary } : {}),
+      },
+      sendUpdates: 'none',
+    });
+
+    return { success: true };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Unknown error';
+    console.error('updateCalendarEvent error:', msg);
+    return { success: false, error: msg };
+  }
+}
+
+/**
+ * Delete a calendar event when a booking is cancelled
+ */
+export async function deleteCalendarEvent(
+  workspaceId: number,
+  eventId: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const calendar = await getCalendarClient(workspaceId);
+    if (!calendar) return { success: false, error: 'Calendar not connected' };
+
+    await calendar.events.delete({
+      calendarId: 'primary',
+      eventId,
+      sendUpdates: 'none',
+    });
+
+    return { success: true };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Unknown error';
+    console.error('deleteCalendarEvent error:', msg);
+    return { success: false, error: msg };
+  }
+}
+
+/**
  * Get busy time slots from Google Calendar for availability checking
  */
 export async function getBusySlots(

@@ -4,6 +4,7 @@ import { FcFeedback, FcClock, FcPhone, FcOk, FcSettings, FcAutomotive, FcBusines
 import { FaWhatsapp } from "react-icons/fa";
 import { IconType } from "react-icons";
 import { useAuth } from "@/src/providers/AuthProvider";
+import { NotificationsWorkflowsSkeleton } from "@/src/components/ui/NotificationsSkeleton";
 
 interface Workflow {
   id: number;
@@ -184,13 +185,7 @@ export default function Workflows({ dark = false }) {
   };
 
   if (loading) {
-    return (
-      <section className="space-y-6 rounded-xl mr-auto">
-        <div className="text-center py-10">
-          <p className="text-slate-500">Loading notification settings...</p>
-        </div>
-      </section>
-    );
+    return <NotificationsWorkflowsSkeleton />;
   }
 
   return (

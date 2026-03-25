@@ -10,13 +10,14 @@ interface Step5SuccessProps {
   selectedDate: Date | null;
   selectedTime: string;
   previewUrl?: string | null;
+  isReschedule?: boolean;
 }
 
 function fmtDay(d: Date) {
   return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
 }
 
-export function Step5Success({ selectedType, selectedDate, selectedTime, previewUrl }: Step5SuccessProps) {
+export function Step5Success({ selectedType, selectedDate, selectedTime, previewUrl, isReschedule }: Step5SuccessProps) {
   const [copied, setCopied] = useState(false);
 
   const fullPreviewUrl = previewUrl
@@ -53,9 +54,11 @@ export function Step5Success({ selectedType, selectedDate, selectedTime, preview
 
       <div className="text-center space-y-3 sm:space-y-4 px-4">
         <h2 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-indigo-700">
-          {BOOKING_STEP_TITLES.step5}
+          {isReschedule ? 'Booking Rescheduled!' : BOOKING_STEP_TITLES.step5}
         </h2>
-        <p className="text-lg sm:text-xl text-gray-600">{BOOKING_STEP_TITLES.step5Subtitle}</p>
+        <p className="text-lg sm:text-xl text-gray-600">
+          {isReschedule ? 'Your booking has been updated with the new time.' : BOOKING_STEP_TITLES.step5Subtitle}
+        </p>
 
         <div className="mt-6 sm:mt-8 p-4 sm:p-6 bg-gradient-to-br from-indigo-50 to-blue-50 rounded-xl sm:rounded-2xl border-2 border-indigo-100 max-w-md mx-auto w-full">
           <div className="space-y-3">

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { appendActivityLog } from '@/lib/activity-log';
 
 function createAuthenticatedClient(req: NextRequest) {
   const authHeader = req.headers.get('authorization');
@@ -95,6 +96,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
+    await appendActivityLog(workspaceId, {
+      type: 'contact',
+      action: 'created',
+      title: 'Contact created',
+      description: `${data?.name || name.trim()}${data?.email ? ` (${data.email})` : ''}`,
+    });
+
     return NextResponse.json({ contact: data });
   } catch (err: unknown) {
     const error = err as Error;
@@ -151,6 +159,16 @@ export async function PUT(req: NextRequest) {
       return NextResponse.json({ error: 'Contact not found or unauthorized' }, { status: 404 });
     }
 
+    const workspaceId = user.user_metadata?.workspace_id;
+    if (workspaceId) {
+      await appendActivityLog(workspaceId, {
+        type: 'contact',
+        action: 'updated',
+        title: 'Contact updated',
+        description: `${data?.name || name.trim()}${data?.email ? ` (${data.email})` : ''}`,
+      });
+    }
+
     return NextResponse.json({ contact: data });
   } catch (err: unknown) {
     const error = err as Error;
@@ -186,6 +204,16 @@ export async function DELETE(req: NextRequest) {
     if (error) {
       console.error('Error deleting contact:', error);
       return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    const workspaceId = user.user_metadata?.workspace_id;
+    if (workspaceId) {
+      await appendActivityLog(workspaceId, {
+        type: 'contact',
+        action: 'deleted',
+        title: 'Contact deleted',
+        description: `Contact ID ${id} was removed`,
+      });
     }
 
     return NextResponse.json({ success: true });

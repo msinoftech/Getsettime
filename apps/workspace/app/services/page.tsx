@@ -3,6 +3,7 @@ import { useState, useEffect } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { AlertModal } from "@/src/components/ui/AlertModal";
 import { ConfirmModal } from "@/src/components/ui/ConfirmModal";
+import { ServiceSkeleton } from "@/src/components/ui/ServiceSkeleton";
 
 interface Service {
   id: string;
@@ -24,6 +25,7 @@ export default function ServicesPage() {
     price: "",
   });
   const [loading, setLoading] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(true);
   const [alertMessage, setAlertMessage] = useState<string | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
 
@@ -49,6 +51,8 @@ export default function ServicesPage() {
       }
     } catch (error) {
       console.error('Error fetching services:', error);
+    } finally {
+      setInitialLoading(false);
     }
   };
 
@@ -165,6 +169,9 @@ export default function ServicesPage() {
       </header>
 
       {/* Services List */}
+      {initialLoading ? (
+        <ServiceSkeleton />
+      ) : (
       <div className="rounded-2xl bg-white shadow-md p-6">
         {services.length === 0 ? (
           <div className="text-center py-12">
@@ -225,6 +232,7 @@ export default function ServicesPage() {
           </div>
         )}
       </div>
+      )}
 
       {/* Service Form Modal */}
       {showServiceForm && (

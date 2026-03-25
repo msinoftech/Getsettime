@@ -166,8 +166,7 @@ export default function LoginForm() {
         // Continue anyway - cookies are optional
       }
 
-      // Redirect to workspace dashboard
-      router.push("/");
+      router.push(userRole === 'customer' ? '/my-bookings' : '/');
     } catch (err) {
       setError("An unexpected error occurred");
       console.error(err);

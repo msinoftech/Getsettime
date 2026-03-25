@@ -59,8 +59,11 @@ interface SidebarProps {
 }
 
 export default function Sidebar({ isOpen, onClose }: SidebarProps) {
+  const PROFILE_IMAGE_STORAGE_KEY = "workspace_profile_image";
+  const PROFILE_IMAGE_EVENT = "workspace-profile-image-updated";
   
   const [isDepartmentsOpen, setIsDepartmentsOpen] = useState(false);
+  const [profileImage, setProfileImage] = useState<string | null>(null);
   const pathname = usePathname();
   const { user } = useAuth();
   const { general, loading: loadingConfig, workspaceName, workspaceLogo } = useWorkspaceSettings();
@@ -95,6 +98,32 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
       window.removeEventListener('bookings-viewed-update', fetchNewBookingsCount);
     };
   }, [fetchNewBookingsCount]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const metadata = (user?.user_metadata ?? {}) as Record<string, unknown>;
+    const metadataAvatar =
+      (metadata.avatar_url as string) ||
+      (metadata.picture as string) ||
+      null;
+
+    const updateAvatar = () => {
+      const savedAvatar = window.localStorage.getItem(PROFILE_IMAGE_STORAGE_KEY);
+      const normalizedSavedAvatar =
+        savedAvatar && !savedAvatar.startsWith("data:") ? savedAvatar : null;
+      setProfileImage(normalizedSavedAvatar || metadataAvatar);
+    };
+
+    updateAvatar();
+    window.addEventListener(PROFILE_IMAGE_EVENT, updateAvatar);
+    window.addEventListener("storage", updateAvatar);
+
+    return () => {
+      window.removeEventListener(PROFILE_IMAGE_EVENT, updateAvatar);
+      window.removeEventListener("storage", updateAvatar);
+    };
+  }, [user]);
 
   const logoUrl = workspaceLogo || "/getsettime-logo.svg";
   const accountName = workspaceName || "GetSetTime";
@@ -218,7 +247,7 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
           <Link href="/notifications" className={`group flex items-center px-3 py-2 text-sm font-medium rounded-md ${ activeMenu === "notifications" ? "bg-blue-50 text-blue-600" : "text-gray-700 hover:bg-gray-50" }`} onClick={handleNavClick}>
             <FcOrgUnit className="h-5 w-5 mr-3" />
             Notifications
-          </Link>        
+          </Link>
           <Link href="/integrations" className={`group flex items-center px-3 py-2 text-sm font-medium rounded-md ${ activeMenu === "integrations" ? "bg-blue-50 text-blue-600" : "text-gray-700 hover:bg-gray-50" }`} onClick={handleNavClick}>
             <FcCrystalOscillator className="h-5 w-5 mr-3" />
             Integrations
@@ -246,18 +275,22 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
         </nav>
       </div>
 
-      <div className="bg-white absolute bottom-0 w-full border-t border-gray-200 p-4">
+      <div className="bg-indigo-600 absolute bottom-0 w-full border-t border-gray-200 p-4">
         <div className="flex items-center">
-          <div className="h-10 w-10 rounded-full bg-blue-500 flex items-center justify-center text-white">
-            <span className="text-sm font-medium">
-              {user?.email ? user.email.charAt(0).toUpperCase() : "U"}
-            </span>
+          <div className="h-10 w-10 rounded-full bg-blue-500 flex items-center justify-center text-white overflow-hidden">
+            {profileImage ? (
+              <img src={profileImage} alt="Profile" className="h-full w-full object-cover" />
+            ) : (
+              <span className="text-sm font-medium">
+                {user?.email ? user.email.charAt(0).toUpperCase() : "U"}
+              </span>
+            )}
           </div>
           <div className="ml-3">
-            <p className="text-sm font-medium text-gray-700 truncate max-w-[150px]">
+            <p className="text-sm font-medium text-white truncate max-w-[150px]">
               {user?.user_metadata?.name || user?.email?.split('@')[0] || "User"}
             </p>
-            <p className="text-xs text-gray-500 truncate max-w-[150px]">
+            <p className="text-xs text-white truncate max-w-[150px]">
               {user?.email || "user@example.com"}
             </p>
           </div>

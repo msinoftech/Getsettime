@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { appendActivityLog } from '@/lib/activity-log';
 
 /**
  * Creates an authenticated Supabase client using the anon key (respects RLS)
@@ -163,6 +164,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
+    await appendActivityLog(workspaceId, {
+      type: 'department',
+      action: 'created',
+      title: 'Department created',
+      description: data?.name || name.trim(),
+    });
+
     return NextResponse.json({ department: data });
   } catch (err: unknown) {
     const error = err as Error;
@@ -267,6 +275,16 @@ export async function PUT(req: NextRequest) {
       return NextResponse.json({ error: 'Department not found or unauthorized' }, { status: 404 });
     }
 
+    const workspaceId = user.user_metadata?.workspace_id;
+    if (workspaceId) {
+      await appendActivityLog(workspaceId, {
+        type: 'department',
+        action: 'updated',
+        title: 'Department updated',
+        description: data?.name || name.trim(),
+      });
+    }
+
     return NextResponse.json({ department: data });
   } catch (err: unknown) {
     const error = err as Error;
@@ -306,6 +324,16 @@ export async function DELETE(req: NextRequest) {
     if (error) {
       console.error('Error deleting department:', error);
       return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    const workspaceId = user.user_metadata?.workspace_id;
+    if (workspaceId) {
+      await appendActivityLog(workspaceId, {
+        type: 'department',
+        action: 'deleted',
+        title: 'Department deleted',
+        description: `Department ID ${id} was removed`,
+      });
     }
 
     return NextResponse.json({ success: true });

@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { findOrCreateContact } from '@/lib/contact-linking';
 import { getLocalTimePartsInTimezone } from '@/lib/date-timezone';
+import { appendActivityLog } from '@/lib/activity-log';
 
 type DayName = "Sun" | "Mon" | "Tue" | "Wed" | "Thu" | "Fri" | "Sat";
 
@@ -605,6 +606,13 @@ export async function POST(req: NextRequest) {
       console.warn('Google Calendar sync failed (non-blocking):', calErr);
     }
 
+    await appendActivityLog(workspaceId, {
+      type: 'booking',
+      action: 'created',
+      title: 'Booking created',
+      description: `${data?.invitee_name || invitee_name.trim()} (${data?.status || status || 'pending'})`,
+    });
+
     return NextResponse.json({
       data,
       preview_url: `/booking-preview/${data.public_code}`,
@@ -701,6 +709,13 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ error: 'Booking not found or access denied' }, { status: 404 });
     }
 
+    await appendActivityLog(workspaceId, {
+      type: 'booking',
+      action: 'updated',
+      title: 'Booking updated',
+      description: `${data?.invitee_name || 'Someone'} (${data?.status || 'pending'})`,
+    });
+
     return NextResponse.json({ data });
   } catch (err: unknown) {
     const error = err as Error;
@@ -757,6 +772,13 @@ export async function DELETE(req: NextRequest) {
       console.error('Error deleting booking:', error);
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
+
+    await appendActivityLog(workspaceId, {
+      type: 'booking',
+      action: 'deleted',
+      title: 'Booking deleted',
+      description: `Booking ID ${id} was removed`,
+    });
 
     return NextResponse.json({ success: true });
   } catch (err: unknown) {

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createSupabaseServerClient } from '@app/db';
 import { createClient } from '@supabase/supabase-js';
+import { appendActivityLog } from '@/lib/activity-log';
 
 async function getUserFromRequest(req: NextRequest) {
   const authHeader = req.headers.get('authorization');
@@ -168,6 +169,16 @@ export async function POST(req: NextRequest) {
     if (!data) {
       return NextResponse.json({ error: 'Failed to save settings' }, { status: 500 });
     }
+
+    const changedAvailability = Object.prototype.hasOwnProperty.call(newSettings, 'availability');
+    await appendActivityLog(workspaceId, {
+      type: changedAvailability ? 'availability' : 'settings',
+      action: 'updated',
+      title: changedAvailability ? 'Availability timesheet updated' : 'Workspace settings updated',
+      description: changedAvailability
+        ? 'Availability schedule or time slots were changed'
+        : 'General workspace configuration was changed',
+    });
 
     return NextResponse.json({ settings: data.settings });
   } catch (err: unknown) {

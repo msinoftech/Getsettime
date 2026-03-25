@@ -56,6 +56,9 @@ export function BookingDetailsModal({
   const metaDesc = booking.metadata?.additional_description as string | undefined;
   const displayNotes = notes || legacyNotes || metaDesc || 'N/A';
 
+  const fileUploadUrl = intakeForm?.file_upload_url as string | undefined;
+  const fileUploadName = fileUploadUrl ? decodeURIComponent(fileUploadUrl.split('/').pop() || 'file') : '';
+
   const showAdditionalInfo =
     intakeFormSettings?.additional_description === true ||
     intakeFormSettings === null;
@@ -254,6 +257,29 @@ export function BookingDetailsModal({
                   );
                 })}
               </div>
+            </div>
+          )}
+
+          {/* Uploaded File */}
+          {fileUploadUrl && (
+            <div>
+              <h4 className="text-sm font-semibold text-slate-500 uppercase tracking-wide mb-3">
+                Uploaded File
+              </h4>
+              <a
+                href={fileUploadUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-700 hover:bg-indigo-100 transition-colors"
+              >
+                <svg className="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                <span className="text-sm font-medium truncate max-w-xs">{fileUploadName}</span>
+                <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                </svg>
+              </a>
             </div>
           )}
 

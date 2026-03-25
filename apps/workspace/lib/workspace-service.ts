@@ -134,13 +134,16 @@ export async function getOrCreateWorkspace(
 }
 
 /**
- * Update user metadata with workspace information
+ * Update user metadata with workspace information.
+ * When isNewWorkspace is true the user is the original creator and gets
+ * the immutable `is_workspace_owner` flag.
  */
 export async function updateUserWorkspaceMetadata(
   userId: string,
   workspaceId: number,
   additionalMetadata: Record<string, any>,
-  supabaseAdmin: SupabaseClient
+  supabaseAdmin: SupabaseClient,
+  isNewWorkspace = false
 ): Promise<{ error: string | null }> {
   try {
     const { data: userData } = await supabaseAdmin.auth.admin.getUserById(userId);
@@ -152,6 +155,7 @@ export async function updateUserWorkspaceMetadata(
         ...additionalMetadata,
         workspace_id: workspaceId,
         role: 'workspace_admin',
+        ...(isNewWorkspace ? { is_workspace_owner: true } : {}),
       },
     });
 

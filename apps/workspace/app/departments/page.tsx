@@ -3,6 +3,7 @@ import { useState, useEffect } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { AlertModal } from "@/src/components/ui/AlertModal";
 import { ConfirmModal } from "@/src/components/ui/ConfirmModal";
+import { DepartmentSkeleton } from "@/src/components/ui/DepartmentSkeleton";
 
 interface Service {
   id: string;
@@ -37,6 +38,7 @@ export default function DepartmentsPage() {
   const [selectedServices, setSelectedServices] = useState<DepartmentService[]>([]);
   const [servicesLoading, setServicesLoading] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(true);
   const [alertMessage, setAlertMessage] = useState<string | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
 
@@ -63,6 +65,8 @@ export default function DepartmentsPage() {
       }
     } catch (error) {
       console.error('Error fetching departments:', error);
+    } finally {
+      setInitialLoading(false);
     }
   };
 
@@ -242,6 +246,9 @@ export default function DepartmentsPage() {
       </header>
 
       {/* Departments List */}
+      {initialLoading ? (
+        <DepartmentSkeleton />
+      ) : (
       <div className="rounded-2xl bg-white shadow-md p-6">
         {departments.length === 0 ? (
           <div className="text-center py-12">
@@ -312,6 +319,7 @@ export default function DepartmentsPage() {
           </div>
         )}
       </div>
+      )}
 
       {/* Department Form Modal */}
       {showDepartmentForm && (

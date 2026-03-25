@@ -212,7 +212,6 @@ export async function GET(req: Request) {
         return NextResponse.redirect(new URL('/register?error=workspace_creation_failed', req.url));
       }
 
-      // Update user metadata with workspace information
       const { error: metaError } = await updateUserWorkspaceMetadata(
         userId,
         workspaceResult.workspaceId,
@@ -223,7 +222,8 @@ export async function GET(req: Request) {
           google_id,
           picture: data.picture,
         },
-        supabaseAdmin
+        supabaseAdmin,
+        workspaceResult.isNewWorkspace
       );
 
       if (metaError) {

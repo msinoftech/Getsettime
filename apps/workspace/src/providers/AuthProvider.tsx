@@ -77,7 +77,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // Block superadmin and only allow workspace roles
         // NOTE: For /auth/callback allow a temporary missing role so the callback page can set it.
         if (!isAuthCallback && (!userRole || !ALLOWED_ROLES.includes(userRole))) {
-          // Sign out user with wrong role
           await supabase.auth.signOut()
           setUser(null)
           setLoading(false)
@@ -86,12 +85,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           }
           return
         }
+
+        if (userRole === 'customer' && !pathname.startsWith('/my-bookings') && !isPublicPath(pathname)) {
+          router.push('/my-bookings')
+          setUser(currentUser)
+          setLoading(false)
+          return
+        }
       }
 
       setUser(currentUser)
       setLoading(false)
       
-      // Only redirect to login if not on a public route
       if (!session && !isPublicPath(pathname)) {
         router.push('/login')
       }
@@ -124,7 +129,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // Block superadmin and only allow workspace roles
         // NOTE: For /auth/callback allow a temporary missing role so the callback page can set it.
         if (!isAuthCallback && (!userRole || !ALLOWED_ROLES.includes(userRole))) {
-          // Sign out user with wrong role
           await supabase.auth.signOut()
           setUser(null)
           if (!isPublicPath(pathname)) {
@@ -132,18 +136,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           }
           return
         }
+
+        if (userRole === 'customer' && !pathname.startsWith('/my-bookings') && !isPublicPath(pathname)) {
+          router.push('/my-bookings')
+          setUser(currentUser)
+          return
+        }
       }
 
       setUser(currentUser)
       
-      // Only redirect to login if not on a public route
       if (!session && !isPublicPath(pathname)) {
         router.push('/login')
       }
       
-      // If logged in and on login page, redirect to home
       if (session && pathname === '/login') {
-        router.push('/')
+        const loginRole = session.user?.user_metadata?.role
+        router.push(loginRole === 'customer' ? '/my-bookings' : '/')
       }
     })
 

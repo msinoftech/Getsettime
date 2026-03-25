@@ -26,7 +26,7 @@ export async function GET(
 
     const workspaceId = booking.workspace_id;
 
-    const [deptResult, providerResult, servicesResult, settingsResult] = await Promise.all([
+    const [deptResult, providerResult, servicesResult, settingsResult, workspaceResult] = await Promise.all([
       booking.department_id
         ? supabase
             .from('departments')
@@ -65,6 +65,12 @@ export async function GET(
         .select('intake_form')
         .eq('workspace_id', workspaceId)
         .single(),
+
+      supabase
+        .from('workspaces')
+        .select('slug')
+        .eq('id', workspaceId)
+        .single(),
     ]);
 
     const department = deptResult.data
@@ -87,6 +93,7 @@ export async function GET(
       serviceProvider,
       services: servicesResult.data ?? [],
       intakeFormSettings: settingsResult.data?.intake_form ?? null,
+      workspace_slug: workspaceResult.data?.slug ?? null,
     });
   } catch (err: unknown) {
     const error = err as Error;

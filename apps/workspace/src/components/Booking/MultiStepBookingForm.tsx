@@ -51,6 +51,8 @@ const MultiStepBookingForm = ({ onSave, onCancel }: MultiStepBookingFormProps) =
   const [touchedCustomFields, setTouchedCustomFields] = useState<Record<string, boolean>>({});
   const [customFieldValues, setCustomFieldValues] = useState<Record<string, string>>({});
   const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>([]);
+  const [file, setFile] = useState<File | null>(null);
+  const [fileError, setFileError] = useState('');
   const [confirmed, setConfirmed] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -168,6 +170,35 @@ const MultiStepBookingForm = ({ onSave, onCancel }: MultiStepBookingFormProps) =
     }
   }, [intakeForm, services]);
 
+  const ALLOWED_FILE_TYPES = ['application/pdf', 'image/png', 'image/jpeg', 'image/heic', 'image/heif'];
+  const MAX_FILE_SIZE = 2 * 1024 * 1024;
+
+  const validateFile = useCallback((f: File | null): boolean => {
+    if (!f) {
+      setFileError('');
+      return true;
+    }
+    if (!ALLOWED_FILE_TYPES.includes(f.type)) {
+      setFileError('Only PDF, PNG, JPG, and HEIC files are allowed.');
+      return false;
+    }
+    if (f.size > MAX_FILE_SIZE) {
+      setFileError('File size must be 2 MB or less.');
+      return false;
+    }
+    setFileError('');
+    return true;
+  }, []);
+
+  const handleFileChange = useCallback((f: File | null) => {
+    if (f && !validateFile(f)) {
+      setFile(null);
+      return;
+    }
+    setFile(f);
+    setFileError('');
+  }, [validateFile]);
+
   const handleConfirm = async () => {
     if (!selectedType || !selectedDate || !selectedTime) {
       setError('Please fill in all required fields');
@@ -258,6 +289,23 @@ const MultiStepBookingForm = ({ onSave, onCancel }: MultiStepBookingFormProps) =
       const metadata: Record<string, unknown> = {};
       if (additionalDescriptionEnabled && notes.trim()) metadata.notes = notes.trim();
       if (sendWhatsapp) metadata.whatsapp_opt_in = true;
+
+      if (file && intakeForm?.file_upload === true) {
+        if (!validateFile(file)) {
+          setLoading(false);
+          return;
+        }
+        const uploadForm = new FormData();
+        uploadForm.append('file', file);
+        uploadForm.append('workspace_id', String(user?.user_metadata?.workspace_id));
+        const uploadRes = await fetch('/api/embed/upload', { method: 'POST', body: uploadForm });
+        const uploadResult = await uploadRes.json();
+        if (!uploadRes.ok) {
+          throw new Error(uploadResult.error || 'Failed to upload file');
+        }
+        intakeFormPayload.file_upload_url = uploadResult.url;
+      }
+
       if (Object.keys(intakeFormPayload).length > 0) metadata.intake_form = intakeFormPayload;
 
       const timezone = getDisplayTimezone(general?.timezone);
@@ -427,6 +475,9 @@ const MultiStepBookingForm = ({ onSave, onCancel }: MultiStepBookingFormProps) =
                   onTouchedEmail={() => setTouched((t) => ({ ...t, email: true }))}
                   onTouchedPhone={() => setTouched((t) => ({ ...t, phone: true }))}
                   onTouchedCustomField={(id) => setTouchedCustomFields((prev) => ({ ...prev, [id]: true }))}
+                  file={file}
+                  onFileChange={handleFileChange}
+                  fileError={fileError}
                   onBack={() => setStep(3)}
                   onConfirm={handleConfirm}
                 />

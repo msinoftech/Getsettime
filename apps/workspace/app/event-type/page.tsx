@@ -5,6 +5,7 @@ import { supabase } from "@/lib/supabaseClient";
 import { useAuth } from "@/src/providers/AuthProvider";
 import { AlertModal } from "@/src/components/ui/AlertModal";
 import { ConfirmModal } from "@/src/components/ui/ConfirmModal";
+import { EventTypeSkeleton } from "@/src/components/ui/EventTypeSkeleton";
 
 interface EventType {
   id: number;
@@ -464,9 +465,7 @@ export default function EventTypes() {
       )}
 
       {loading ? (
-        <div className="text-center py-8 text-slate-500">
-          Loading event types...
-        </div>
+        <EventTypeSkeleton />
       ) : items.length === 0 ? (
         <div className="text-center py-8 text-slate-500">
           No event types found. Create your first one!

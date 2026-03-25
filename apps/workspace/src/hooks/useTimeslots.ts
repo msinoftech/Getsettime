@@ -7,6 +7,7 @@ import {
   isTimeSlotBooked,
   isTimeSlotInPast,
   isTimeSlotOnBreak,
+  isToday,
   normalizeDate,
   parseTimeToMinutes,
 } from '@/src/utils/bookingTime';
@@ -15,7 +16,8 @@ export function useTimeslots(
   selectedType: EventType | null,
   selectedDate: Date | null,
   availabilitySettings: AvailabilitySettings | null,
-  existingBookings: Booking[]
+  existingBookings: Booking[],
+  minLeadTimeMinutes = 0
 ): Timeslot[] {
   return useMemo(() => {
     if (!selectedType || !selectedDate) return [];
@@ -71,8 +73,17 @@ export function useTimeslots(
         continue;
       }
 
+      if (minLeadTimeMinutes > 0 && isToday(selectedDate)) {
+        const cutoff = new Date();
+        cutoff.setMinutes(cutoff.getMinutes() + minLeadTimeMinutes);
+        if (slotStart < cutoff) {
+          slots.push({ time: formatMinutesToDisplay(slotStartMinutes), disabled: true, reason: 'past' });
+          continue;
+        }
+      }
+
       slots.push({ time: formatMinutesToDisplay(slotStartMinutes), disabled: false });
     }
     return slots;
-  }, [selectedType, selectedDate, availabilitySettings, existingBookings]);
+  }, [selectedType, selectedDate, availabilitySettings, existingBookings, minLeadTimeMinutes]);
 }

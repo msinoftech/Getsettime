@@ -13,9 +13,33 @@ interface TopbarProps {
   isSidebarOpen: boolean;
 }
 
+interface NotificationItem {
+  id: string;
+  title: string;
+  description: string;
+  createdAt: string;
+}
+
+function getRelativeTime(dateIso: string) {
+  const diffMs = Date.now() - new Date(dateIso).getTime();
+  const minutes = Math.floor(diffMs / 60000);
+  if (minutes < 1) return "Just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
+
 export default function Topbar({ toggleSidebar, isSidebarOpen }: TopbarProps) {
+  const PROFILE_IMAGE_STORAGE_KEY = "workspace_profile_image";
+  const PROFILE_IMAGE_EVENT = "workspace-profile-image-updated";
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
   const [isNotificationOpen, setIsNotificationOpen] = useState(false);
+  const [profileImage, setProfileImage] = useState<string | null>(null);
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const [notificationsLoading, setNotificationsLoading] = useState(false);
+  const [notificationsError, setNotificationsError] = useState<string | null>(null);
   const router = useRouter();
   const { user } = useAuth();
   const { general, loading: loadingSettings } = useWorkspaceSettings();
@@ -60,6 +84,82 @@ export default function Topbar({ toggleSidebar, isSidebarOpen }: TopbarProps) {
       document.removeEventListener('mousedown', handleClickOutside);
     };
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const metadata = (user?.user_metadata ?? {}) as Record<string, unknown>;
+    const metadataAvatar =
+      (metadata.avatar_url as string) ||
+      (metadata.picture as string) ||
+      null;
+
+    const updateAvatar = () => {
+      const savedAvatar = window.localStorage.getItem(PROFILE_IMAGE_STORAGE_KEY);
+      const normalizedSavedAvatar =
+        savedAvatar && !savedAvatar.startsWith("data:") ? savedAvatar : null;
+      setProfileImage(normalizedSavedAvatar || metadataAvatar);
+    };
+
+    updateAvatar();
+    window.addEventListener(PROFILE_IMAGE_EVENT, updateAvatar);
+    window.addEventListener("storage", updateAvatar);
+
+    return () => {
+      window.removeEventListener(PROFILE_IMAGE_EVENT, updateAvatar);
+      window.removeEventListener("storage", updateAvatar);
+    };
+  }, [user]);
+
+  useEffect(() => {
+    if (!isNotificationOpen) return;
+    let alive = true;
+
+    const loadNotifications = async () => {
+      setNotificationsLoading(true);
+      setNotificationsError(null);
+      try {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+
+        if (!session?.access_token) {
+          if (alive) setNotifications([]);
+          return;
+        }
+
+        const response = await fetch("/api/activity", {
+          headers: {
+            Authorization: `Bearer ${session.access_token}`,
+          },
+        });
+
+        if (!response.ok) {
+          const body = await response.json().catch(() => ({}));
+          throw new Error(body?.error || "Failed to load notifications");
+        }
+
+        const body = await response.json();
+        const activities = (body?.activities || []) as NotificationItem[];
+        if (alive) {
+          setNotifications(activities.slice(0, 5));
+        }
+      } catch (error) {
+        if (alive) {
+          setNotificationsError(error instanceof Error ? error.message : "Failed to load notifications");
+        }
+      } finally {
+        if (alive) setNotificationsLoading(false);
+      }
+    };
+
+    loadNotifications();
+    const interval = window.setInterval(loadNotifications, 30000);
+    return () => {
+      alive = false;
+      window.clearInterval(interval);
+    };
+  }, [isNotificationOpen]);
 
   // Prevent clicks inside the dropdown from closing it
   const handleDropdownClick = (e: React.MouseEvent) => {
@@ -133,29 +233,34 @@ export default function Topbar({ toggleSidebar, isSidebarOpen }: TopbarProps) {
             </button>
             
             {isNotificationOpen && (
-              <div id="notification-dropdown" className="absolute right-0 mt-2 w-80 bg-white rounded-md shadow-lg py-1 z-50 border border-gray-200">
-                <div className="px-4 py-2 border-b border-gray-100">
-                  <h3 className="text-sm font-semibold text-gray-700">Notifications</h3>
+              <div id="notification-dropdown" className="absolute right-0 w-80 bg-white rounded-md shadow-lg overflow-hidden z-50 border border-gray-200">
+                <div className="bg-indigo-600 text-white px-4 py-2 border-b border-gray-100">
+                  <h3 className="text-sm font-semibold text-white">Notifications</h3>
                 </div>
                 <div className="max-h-96 overflow-y-auto">
-                  <div className="px-4 py-3 border-b border-gray-100 hover:bg-gray-50">
-                    <p className="text-sm font-medium text-gray-700">New booking request</p>
-                    <p className="text-xs text-gray-500 mt-1">John Doe requested a booking for tomorrow at 2:00 PM</p>
-                    <p className="text-xs text-gray-400 mt-1">10 minutes ago</p>
-                  </div>
-                  <div className="px-4 py-3 border-b border-gray-100 hover:bg-gray-50">
-                    <p className="text-sm font-medium text-gray-700">Booking confirmed</p>
-                    <p className="text-xs text-gray-500 mt-1">Your booking with Jane Smith has been confirmed</p>
-                    <p className="text-xs text-gray-400 mt-1">1 hour ago</p>
-                  </div>
-                  <div className="px-4 py-3 hover:bg-gray-50">
-                    <p className="text-sm font-medium text-gray-700">Reminder</p>
-                    <p className="text-xs text-gray-500 mt-1">You have a meeting in 30 minutes</p>
-                    <p className="text-xs text-gray-400 mt-1">25 minutes ago</p>
-                  </div>
+                  {notificationsLoading ? (
+                    <div className="px-4 py-3 text-xs text-gray-500">Loading notifications...</div>
+                  ) : notificationsError ? (
+                    <div className="px-4 py-3 text-xs text-red-600">{notificationsError}</div>
+                  ) : notifications.length === 0 ? (
+                    <div className="px-4 py-3 text-xs text-gray-500">No recent activity</div>
+                  ) : (
+                    notifications.map((item, index) => (
+                      <div
+                        key={item.id}
+                        className={`px-4 py-3 hover:bg-gray-50 ${
+                          index !== notifications.length - 1 ? "border-b border-gray-100" : ""
+                        }`}
+                      >
+                        <p className="text-sm font-medium text-gray-700">{item.title}</p>
+                        <p className="text-xs text-gray-500 mt-1">{item.description}</p>
+                        <p className="text-xs text-gray-400 mt-1">{getRelativeTime(item.createdAt)}</p>
+                      </div>
+                    ))
+                  )}
                 </div>
                 <div className="px-4 py-2 border-t border-gray-100 text-center">
-                  <Link href="/notifications" className="text-xs text-blue-600 hover:text-blue-800">View all notifications</Link>
+                  <Link href="/notifications/all" className="text-xs text-blue-600 hover:text-blue-800" onClick={() => setIsNotificationOpen(false)}>View all notifications</Link>
                 </div>
               </div>
             )}
@@ -163,8 +268,12 @@ export default function Topbar({ toggleSidebar, isSidebarOpen }: TopbarProps) {
 
           <div className="relative">
             <button id="profile-button" onClick={(e) => { e.stopPropagation(); setIsProfileMenuOpen(!isProfileMenuOpen); setIsNotificationOpen(false);}} className="flex items-center space-x-2 cursor-pointer focus:outline-none" aria-expanded={isProfileMenuOpen} aria-haspopup="true">
-              <div className="h-8 w-8 rounded-full bg-blue-500 flex items-center justify-center text-white">
-                <span className="text-sm font-medium">{user?.email ? user.email.charAt(0).toUpperCase() : "U"}</span>
+              <div className="h-8 w-8 rounded-full bg-blue-500 flex items-center justify-center text-white overflow-hidden">
+                {profileImage ? (
+                  <img src={profileImage} alt="Profile" className="h-full w-full object-cover" />
+                ) : (
+                  <span className="text-sm font-medium">{user?.email ? user.email.charAt(0).toUpperCase() : "U"}</span>
+                )}
               </div>
             </button>
 
@@ -176,8 +285,8 @@ export default function Topbar({ toggleSidebar, isSidebarOpen }: TopbarProps) {
                     <p className="text-sm font-medium text-gray-700 truncate">{user.email}</p>
                   </div>
                 )}
-                <Link href="/profile" className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Your Profile</Link>
-                <Link href="/settings" className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Settings</Link>
+                <Link href="/profile" className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100" onClick={() => setIsProfileMenuOpen(false)}>Your Profile</Link>
+                <Link href="/settings" className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100" onClick={() => setIsProfileMenuOpen(false)}>Settings</Link>
                 <div className="border-t border-gray-100 my-1"></div>
                 <button onClick={handleSignOut} className="w-full text-left block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Sign out</button>
               </div>

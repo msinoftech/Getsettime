@@ -35,9 +35,13 @@ interface Step3DateTimeProps {
   onToggleCalendar: () => void;
   onNavigateMonth: (dir: 'prev' | 'next') => void;
   onSetCurrentMonth?: (date: Date) => void;
-  onBack: () => void;
+  onBack?: (() => void) | undefined;
   onContinue: () => void;
   onDaysChange: (updater: (prev: Date[]) => Date[]) => void;
+  continueLabel?: string;
+  continueDisabled?: boolean;
+  previousStartAt?: string | null;
+  previousEndAt?: string | null;
 }
 
 export function Step3DateTime({
@@ -63,6 +67,10 @@ export function Step3DateTime({
   onBack,
   onContinue,
   onDaysChange,
+  continueLabel,
+  continueDisabled,
+  previousStartAt,
+  previousEndAt,
 }: Step3DateTimeProps) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const selectedDateRef = useRef<HTMLButtonElement | null>(null);
@@ -120,6 +128,19 @@ export function Step3DateTime({
   const checkDateAvailable = (date: Date) =>
     isDateAvailable(date, availabilitySettings, selectedType, existingBookings);
 
+  const hasNewSelection = Boolean(selectedDate && selectedTime);
+
+  const formatPreviousDateTime = (iso: string) => {
+    const d = new Date(iso);
+    return d.toLocaleString(undefined, {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  };
+
   return (
     <div className="space-y-4 sm:space-y-6 lg:space-y-8 animate-fadeIn">
       <div className="text-center lg:text-left">
@@ -127,7 +148,41 @@ export function Step3DateTime({
         <p className="text-xs sm:text-sm text-gray-500">{BOOKING_STEP_TITLES.step3Subtitle}</p>
       </div>
 
-      <div>
+      {previousStartAt && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+          <div className="flex items-start gap-3">
+            <div className="w-8 h-8 rounded-lg bg-amber-100 flex items-center justify-center flex-shrink-0 mt-0.5">
+              <svg className="w-4 h-4 text-amber-600" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-amber-800 mb-1">Previous Appointment</p>
+              <div className="flex flex-col gap-0.5">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-medium text-amber-700">Start:</span>
+                  <span className={`text-sm text-amber-900 ${hasNewSelection ? 'line-through opacity-60' : ''}`}>
+                    {formatPreviousDateTime(previousStartAt)}
+                  </span>
+                </div>
+                {previousEndAt && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-medium text-amber-700">End:</span>
+                    <span className={`text-sm text-amber-900 ${hasNewSelection ? 'line-through opacity-60' : ''}`}>
+                      {formatPreviousDateTime(previousEndAt)}
+                    </span>
+                  </div>
+                )}
+              </div>
+              {hasNewSelection && (
+                <p className="text-xs text-amber-600 mt-1.5 font-medium">Select a new date and time below to reschedule.</p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="relative">
         <div className="flex items-center justify-between mb-3 sm:mb-4">
           <div className="flex items-center gap-2">
             <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-gradient-to-br from-indigo-100 to-indigo-200 flex items-center justify-center flex-shrink-0">
@@ -139,7 +194,7 @@ export function Step3DateTime({
           </div>
           <button
             onClick={onToggleCalendar}
-            className="text-xs sm:text-sm text-indigo-600 hover:text-indigo-700 font-medium flex items-center gap-1"
+            className="text-xs sm:text-sm text-indigo-600 hover:text-indigo-700 font-medium flex items-center gap-1 cursor-pointer"
           >
             {showCalendar ? BOOKING_BUTTON_LABELS.hideCalendar : BOOKING_BUTTON_LABELS.showCalendar}
             <svg className={`w-4 h-4 transition-transform ${showCalendar ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -149,25 +204,25 @@ export function Step3DateTime({
         </div>
 
         {showCalendar ? (
-          <div className="bg-white rounded-xl sm:rounded-2xl border-2 border-gray-200 p-4 sm:p-6 mb-4 shadow-lg">
-            <div className="flex items-center justify-between mb-4">
-              <button onClick={() => onNavigateMonth('prev')} className="w-8 h-8 rounded-lg hover:bg-gray-100 flex items-center justify-center transition-colors">
-                <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <div className="absolute right-0 top-full mt-2 w-full sm:w-auto min-w-[280px] grid rounded-2xl overflow-hidden border text-sm z-50 shadow-lg border-slate-200 bg-white text-slate-700">
+            <div className="bg-indigo-600 text-white flex items-center justify-between px-1 py-1">
+              <button onClick={() => onNavigateMonth('prev')} className="w-8 h-8 rounded-lg cursor-pointer flex items-center justify-center transition-colors">
+                <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
                 </svg>
               </button>
-              <h3 className="text-base sm:text-lg font-bold text-gray-900">
+              <h3 className="text-base font-medium text-white">
                 {currentMonth.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}
               </h3>
-              <button onClick={() => onNavigateMonth('next')} className="w-8 h-8 rounded-lg hover:bg-gray-100 flex items-center justify-center transition-colors">
-                <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <button onClick={() => onNavigateMonth('next')} className="w-8 h-8 rounded-lg cursor-pointer flex items-center justify-center transition-colors">
+                <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                 </svg>
               </button>
             </div>
-            <div className="grid grid-cols-7 gap-1 sm:gap-2">
+            <div className="grid grid-cols-7 p-2 gap-1 sm:gap-2">
               {DAY_NAMES.map((day) => (
-                <div key={day} className="text-center text-xs sm:text-sm font-bold text-gray-500 py-2">{day}</div>
+                <div key={day} className="text-center text-xs sm:text-sm font-medium text-gray-500 py-2">{day}</div>
               ))}
               {getCalendarDays(currentMonth).map((date, index) => {
                 const isCurrentMonth = date.getMonth() === currentMonth.getMonth();
@@ -335,22 +390,24 @@ export function Step3DateTime({
       </div>
 
       <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 mt-6 sm:mt-8 lg:mt-10 pt-6 sm:pt-8 border-t border-gray-200">
+        {onBack && (
+          <button
+            onClick={onBack}
+            className="w-full sm:w-auto px-6 sm:px-8 py-3 sm:py-3.5 rounded-xl border-2 border-gray-200 hover:border-gray-300 hover:bg-gray-50 transition-all font-semibold text-gray-700 hover:shadow-md"
+          >
+            {BOOKING_BUTTON_LABELS.back}
+          </button>
+        )}
         <button
-          onClick={onBack}
-          className="w-full sm:w-auto px-6 sm:px-8 py-3 sm:py-3.5 rounded-xl border-2 border-gray-200 hover:border-gray-300 hover:bg-gray-50 transition-all font-semibold text-gray-700 hover:shadow-md"
-        >
-          {BOOKING_BUTTON_LABELS.back}
-        </button>
-        <button
-          disabled={!selectedDate || !selectedTime}
+          disabled={!selectedDate || !selectedTime || continueDisabled}
           onClick={onContinue}
           className={`w-full sm:w-auto sm:ml-auto px-6 sm:px-10 py-3 sm:py-3.5 rounded-xl text-white transition-all font-semibold ${
-            !selectedDate || !selectedTime
+            !selectedDate || !selectedTime || continueDisabled
               ? 'bg-gray-300 cursor-not-allowed'
               : 'bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-700 hover:to-indigo-800 shadow-xl hover:shadow-2xl hover:scale-105'
           }`}
         >
-          {BOOKING_BUTTON_LABELS.continue}
+          {continueLabel || BOOKING_BUTTON_LABELS.continue}
         </button>
       </div>
     </div>

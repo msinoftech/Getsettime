@@ -32,6 +32,7 @@ interface EmbedBookingFormProps {
   workspace: Workspace;
   eventType?: string;
   eventTypeSlug?: string;
+  rescheduleCode?: string;
 }
 
 const StepFallback = () => (
@@ -40,7 +41,12 @@ const StepFallback = () => (
   </div>
 );
 
-export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug }: EmbedBookingFormProps) {
+export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, rescheduleCode }: EmbedBookingFormProps) {
+  const isRescheduleMode = Boolean(rescheduleCode);
+  const [rescheduleEventTypeId, setRescheduleEventTypeId] = useState<string | null>(null);
+  const [rescheduleReady, setRescheduleReady] = useState(false);
+  const [previousStartAt, setPreviousStartAt] = useState<string | null>(null);
+  const [previousEndAt, setPreviousEndAt] = useState<string | null>(null);
   const [step, setStep] = useState(1);
   const [selectedDepartment, setSelectedDepartment] = useState<Department | null>(null);
   const [selectedProvider, setSelectedProvider] = useState<ServiceProvider | null>(null);
@@ -60,6 +66,8 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug }
   });
   const [touchedCustomFields, setTouchedCustomFields] = useState<Record<string, boolean>>({});
   const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>([]);
+  const [file, setFile] = useState<File | null>(null);
+  const [fileError, setFileError] = useState('');
   const [confirmed, setConfirmed] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -111,7 +119,7 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug }
     duration: targetDuration,
   });
 
-  const timeslots = useTimeslots(selectedType, selectedDate, availabilitySettings, existingBookings);
+  const timeslots = useTimeslots(selectedType, selectedDate, availabilitySettings, existingBookings, isRescheduleMode ? 60 : 0);
 
   const intakeValidation = useIntakeValidation(
     intakeForm,
@@ -138,10 +146,11 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug }
   }, [eventTypeSlug, targetDuration, sortedEventTypes, selectedType]);
 
   useEffect(() => {
+    if (isRescheduleMode) return;
     if (!loadingDepartments && departments.length === 0 && step === 1) {
       setStep(hasPreselectedEventType ? 3 : 2);
     }
-  }, [loadingDepartments, departments.length, step, hasPreselectedEventType]);
+  }, [loadingDepartments, departments.length, step, hasPreselectedEventType, isRescheduleMode]);
 
   useEffect(() => {
     if (hasPreselectedEventType && step === 2) setStep(3);
@@ -185,6 +194,130 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug }
       setSelectedServiceIds((prev) => prev.filter((id) => services.some((s) => s.id === id)));
     }
   }, [intakeForm, services]);
+
+  // Reschedule mode: fetch original booking and extract event_type_id
+  useEffect(() => {
+    if (!rescheduleCode) return;
+    const fetchOriginalBooking = async () => {
+      try {
+        const res = await fetch(`/api/booking-preview/${rescheduleCode}`);
+        if (!res.ok) return;
+        const json = await res.json();
+        const etId = json.booking?.event_type_id as string | null;
+        if (etId) setRescheduleEventTypeId(etId);
+        if (json.booking?.start_at) setPreviousStartAt(json.booking.start_at);
+        if (json.booking?.end_at) setPreviousEndAt(json.booking.end_at);
+        setRescheduleReady(true);
+      } catch {
+        setRescheduleReady(true);
+      }
+    };
+    fetchOriginalBooking();
+  }, [rescheduleCode]);
+
+  // Reschedule mode: auto-select event type once event types are loaded
+  useEffect(() => {
+    if (!isRescheduleMode || !rescheduleReady || !rescheduleEventTypeId) return;
+    if (loadingEventTypes || selectedType) return;
+    const match = eventTypes.find((et) => et.id === rescheduleEventTypeId);
+    if (match) {
+      setSelectedType(match);
+      setStep(3);
+    }
+  }, [isRescheduleMode, rescheduleReady, rescheduleEventTypeId, loadingEventTypes, eventTypes, selectedType]);
+
+  const ALLOWED_FILE_TYPES = ['application/pdf', 'image/png', 'image/jpeg', 'image/heic', 'image/heif'];
+  const MAX_FILE_SIZE = 2 * 1024 * 1024; // 2 MB
+
+  const validateFile = useCallback((f: File | null): boolean => {
+    if (!f) {
+      setFileError('');
+      return true;
+    }
+    if (!ALLOWED_FILE_TYPES.includes(f.type)) {
+      setFileError('Only PDF, PNG, JPG, and HEIC files are allowed.');
+      return false;
+    }
+    if (f.size > MAX_FILE_SIZE) {
+      setFileError('File size must be 2 MB or less.');
+      return false;
+    }
+    setFileError('');
+    return true;
+  }, []);
+
+  const handleFileChange = useCallback((f: File | null) => {
+    if (f && !validateFile(f)) {
+      setFile(null);
+      return;
+    }
+    setFile(f);
+    setFileError('');
+  }, [validateFile]);
+
+  const handleRescheduleConfirm = async () => {
+    if (!selectedType || !selectedDate || !selectedTime || !rescheduleCode) {
+      setError('Please select a date and time');
+      return;
+    }
+    const selectedSlot = timeslots.find((s) => s.time === selectedTime);
+    if (selectedSlot?.disabled) {
+      setError('This time slot is not available. Please select another time.');
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      const parsed = parseTimeStringTo24h(selectedTime);
+      if (!parsed) {
+        setError('Invalid time selection. Please try again.');
+        setLoading(false);
+        return;
+      }
+      const startDate = new Date(selectedDate);
+      startDate.setHours(parsed.hour, parsed.minute, 0, 0);
+      if (startDate < new Date()) {
+        setError('Cannot reschedule to a time in the past.');
+        setLoading(false);
+        return;
+      }
+
+      const endDate = new Date(startDate);
+      endDate.setMinutes(endDate.getMinutes() + (selectedType.duration_minutes || 30));
+      if (isTimeSlotBooked(startDate, endDate, selectedDate, existingBookings)) {
+        setError('This time slot has already been booked. Please select another time.');
+        setLoading(false);
+        return;
+      }
+
+      const timezone = getDisplayTimezone(generalSettings?.timezone);
+
+      const res = await fetch('/api/embed/bookings/reschedule', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          public_code: rescheduleCode,
+          start_at: startDate.toISOString(),
+          end_at: endDate.toISOString(),
+          ...(timezone ? { timezone } : {}),
+        }),
+      });
+
+      const result = await res.json();
+      if (!res.ok) {
+        throw new Error(result.error || 'Failed to reschedule booking');
+      }
+      if (result.preview_url) setPreviewUrl(result.preview_url);
+      setConfirmed(true);
+      setStep(5);
+    } catch (err) {
+      setError((err as Error).message || 'An error occurred');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleConfirm = async () => {
     if (!selectedType || !selectedDate || !selectedTime) {
@@ -261,6 +394,22 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug }
         if (v) intakeFormPayload[field.id] = v;
       }
       if (sendWhatsapp) intakeFormPayload.whatsapp_opt_in = 'true';
+
+      if (file && intakeForm?.file_upload === true) {
+        if (!validateFile(file)) {
+          setLoading(false);
+          return;
+        }
+        const uploadForm = new FormData();
+        uploadForm.append('file', file);
+        uploadForm.append('workspace_id', String(workspace.id));
+        const uploadRes = await fetch('/api/embed/upload', { method: 'POST', body: uploadForm });
+        const uploadResult = await uploadRes.json();
+        if (!uploadRes.ok) {
+          throw new Error(uploadResult.error || 'Failed to upload file');
+        }
+        intakeFormPayload.file_upload_url = uploadResult.url;
+      }
 
       const timezone = getDisplayTimezone(generalSettings?.timezone);
 
@@ -395,13 +544,17 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug }
                       })
                     }
                     onSetCurrentMonth={(d) => setCurrentMonth(new Date(d.getFullYear(), d.getMonth(), 1))}
-                    onBack={() => {
+                    onBack={isRescheduleMode ? undefined : () => {
                       setStep(departments.length === 0 ? 2 : 1);
                       setSelectedDate(null);
                       setSelectedTime('');
                     }}
-                    onContinue={() => setStep(4)}
+                    onContinue={isRescheduleMode ? handleRescheduleConfirm : () => setStep(4)}
+                    continueLabel={isRescheduleMode ? (loading ? 'Rescheduling...' : 'Confirm Reschedule') : undefined}
+                    continueDisabled={isRescheduleMode ? loading : undefined}
                     onDaysChange={setDays}
+                    previousStartAt={isRescheduleMode ? previousStartAt : undefined}
+                    previousEndAt={isRescheduleMode ? previousEndAt : undefined}
                   />
                 </Suspense>
               )}
@@ -437,6 +590,9 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug }
                   onTouchedEmail={() => setTouched((t) => ({ ...t, email: true }))}
                   onTouchedPhone={() => setTouched((t) => ({ ...t, phone: true }))}
                   onTouchedCustomField={(id) => setTouchedCustomFields((prev) => ({ ...prev, [id]: true }))}
+                  file={file}
+                  onFileChange={handleFileChange}
+                  fileError={fileError}
                   onBack={() => setStep(3)}
                   onConfirm={handleConfirm}
                 />
@@ -447,6 +603,7 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug }
                   selectedDate={selectedDate}
                   selectedTime={selectedTime}
                   previewUrl={previewUrl}
+                  isReschedule={isRescheduleMode}
                 />
               )}
             </div>

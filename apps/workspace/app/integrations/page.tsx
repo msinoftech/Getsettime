@@ -3,6 +3,7 @@
 import React, { useEffect, useState, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { ConfirmModal } from "@/src/components/ui/ConfirmModal";
+import { IntegrationsSkeleton } from "@/src/components/ui/IntegrationsSkeleton";
 
 interface IntegrationStatus {
   google_calendar: boolean;
@@ -200,7 +201,7 @@ function IntegrationsContent() {
       )}
 
       {loading ? (
-        <div className="text-center py-8 text-slate-500">Loading integrations...</div>
+        <IntegrationsSkeleton />
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
           {items.map((it) => (
@@ -245,7 +246,7 @@ function IntegrationsContent() {
 
 export default function Integrations() {
   return (
-    <Suspense fallback={<div className="text-center py-8 text-slate-500">Loading...</div>}>
+    <Suspense fallback={<IntegrationsSkeleton withHeader />}>
       <IntegrationsContent />
     </Suspense>
   );

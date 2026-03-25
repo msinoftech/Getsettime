@@ -123,6 +123,7 @@ export async function GET(req: NextRequest) {
         created_at: u.created_at,
         email_confirmed_at: u.email_confirmed_at,
         deactivated: u.user_metadata?.deactivated || false,
+        is_workspace_owner: u.user_metadata?.is_workspace_owner === true,
       }));
 
     console.log('Filtered team members:', teamMembers.length);
@@ -287,18 +288,25 @@ export async function PUT(req: NextRequest) {
       return NextResponse.json({ error: 'User not found' }, { status: 404 });
     }
 
-    // Verify user belongs to the same workspace
     if (Number(existingUser.user_metadata?.workspace_id) !== Number(workspaceId)) {
       return NextResponse.json({ error: 'Forbidden: User does not belong to your workspace' }, { status: 403 });
     }
 
-    // Update user metadata
+    if (existingUser.user_metadata?.is_workspace_owner === true && role && role !== existingUser.user_metadata?.role) {
+      return NextResponse.json({ error: 'Owner role cannot be changed' }, { status: 403 });
+    }
+
     const updatedMetadata = {
       ...existingUser.user_metadata,
       ...(name && { name }),
       ...(role && { role }),
       ...(departments !== undefined && { departments }),
     };
+
+    // Prevent stripping the owner flag via payload manipulation
+    if (existingUser.user_metadata?.is_workspace_owner === true) {
+      updatedMetadata.is_workspace_owner = true;
+    }
 
     const updatePayload: any = {
       user_metadata: updatedMetadata,
@@ -327,6 +335,7 @@ export async function PUT(req: NextRequest) {
         name: updatedUser.user.user_metadata?.name,
         role: updatedUser.user.user_metadata?.role,
         departments: updatedUser.user.user_metadata?.departments || [],
+        is_workspace_owner: updatedUser.user.user_metadata?.is_workspace_owner === true,
       },
     });
   } catch (err: unknown) {
@@ -461,7 +470,10 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ error: 'Forbidden: User does not belong to your workspace' }, { status: 403 });
     }
 
-    // Deactivate user by setting deactivated flag in metadata
+    if (existingUser.user_metadata?.is_workspace_owner === true) {
+      return NextResponse.json({ error: 'Workspace owner cannot be deactivated' }, { status: 403 });
+    }
+
     const updatedMetadata = {
       ...existingUser.user_metadata,
       deactivated: true,

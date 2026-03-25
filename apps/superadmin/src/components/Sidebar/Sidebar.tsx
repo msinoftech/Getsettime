@@ -38,9 +38,12 @@ interface SidebarProps {
 }
 
 export default function Sidebar({ isOpen, onClose }: SidebarProps) {
+  const PROFILE_IMAGE_STORAGE_KEY = "superadmin_profile_image";
+  const PROFILE_IMAGE_EVENT = "profile-image-updated";
   
 
   const [newBookingsCount, setNewBookingsCount] = useState(0);
+  const [profileImage, setProfileImage] = useState<string | null>(null);
   const pathname = usePathname();
   const { user } = useAuth();
 
@@ -63,6 +66,32 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
     const interval = setInterval(fetchNewBookingsCount, 60_000);
     return () => clearInterval(interval);
   }, [fetchNewBookingsCount]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const metadata = (user?.user_metadata ?? {}) as Record<string, unknown>;
+    const metadataAvatar =
+      (metadata.avatar_url as string) ||
+      (metadata.picture as string) ||
+      null;
+
+    const updateAvatar = () => {
+      const savedAvatar = window.localStorage.getItem(PROFILE_IMAGE_STORAGE_KEY);
+      const normalizedSavedAvatar =
+        savedAvatar && !savedAvatar.startsWith("data:") ? savedAvatar : null;
+      setProfileImage(normalizedSavedAvatar || metadataAvatar);
+    };
+
+    updateAvatar();
+    window.addEventListener(PROFILE_IMAGE_EVENT, updateAvatar);
+    window.addEventListener("storage", updateAvatar);
+
+    return () => {
+      window.removeEventListener(PROFILE_IMAGE_EVENT, updateAvatar);
+      window.removeEventListener("storage", updateAvatar);
+    };
+  }, [user]);
 
   const handleNavClick = () => {
     if (typeof window !== "undefined" && window.innerWidth < 1024) {
@@ -120,10 +149,14 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
 
       <div className="absolute bottom-0 w-full border-t border-gray-200 p-4">
         <div className="flex items-center">
-          <div className="h-10 w-10 rounded-full bg-blue-500 flex items-center justify-center text-white">
-            <span className="text-sm font-medium">
-              {user?.email ? user.email.charAt(0).toUpperCase() : "SA"}
-            </span>
+          <div className="h-10 w-10 rounded-full bg-blue-500 flex items-center justify-center text-white overflow-hidden">
+            {profileImage ? (
+              <img src={profileImage} alt="Profile" className="h-full w-full object-cover" />
+            ) : (
+              <span className="text-sm font-medium">
+                {user?.email ? user.email.charAt(0).toUpperCase() : "SA"}
+              </span>
+            )}
           </div>
           <div className="ml-3">
             <p className="text-sm font-medium text-gray-700 truncate max-w-[150px]">

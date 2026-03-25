@@ -26,6 +26,8 @@ interface BookingEmailData {
   notes?: string;
   /** IANA timezone (e.g. Asia/Kolkata) for displaying booking time in recipient's timezone */
   timezone?: string;
+  previousStartTime?: string;
+  previousEndTime?: string;
 }
 
 // Format date and time for email (uses timezone when provided to avoid UTC on server)
@@ -416,6 +418,372 @@ export const sendFollowUpEmail = async (data: BookingEmailData): Promise<void> =
     html: getFollowUpEmailTemplate(data),
   });
   console.log('Follow-up email sent to:', data.inviteeEmail);
+};
+
+// --- Reschedule email templates ---
+
+const getUserRescheduleEmailTemplate = (data: BookingEmailData): string => {
+  const departmentLabel = data.departmentName?.trim() ? data.departmentName : 'Not assigned';
+  const providerLabel = data.providerName?.trim() ? data.providerName : 'Not assigned';
+  return `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+    .header { background-color: #D97706; color: white; padding: 20px; text-align: center; border-radius: 5px 5px 0 0; }
+    .content { background-color: #f9f9f9; padding: 30px; border: 1px solid #ddd; border-radius: 0 0 5px 5px; }
+    .booking-details { background-color: white; padding: 20px; margin: 20px 0; border-radius: 5px; border-left: 4px solid #D97706; }
+    .detail-row { margin: 10px 0; }
+    .label { font-weight: bold; color: #D97706; }
+    .old-time { text-decoration: line-through; color: #999; }
+    .footer { text-align: center; margin-top: 20px; padding-top: 20px; border-top: 1px solid #ddd; color: #666; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>Booking Rescheduled</h1>
+    </div>
+    <div class="content">
+      <p>Dear ${data.inviteeName},</p>
+      <p>Your booking has been rescheduled. Please review the updated details below:</p>
+      
+      <div class="booking-details">
+        <h2 style="margin-top: 0; color: #D97706;">Updated Booking Details</h2>
+        <div class="detail-row">
+          <span class="label">Event:</span> ${data.eventTypeName}
+        </div>
+        <div class="detail-row">
+          <span class="label">Department:</span> ${departmentLabel}
+        </div>
+        <div class="detail-row">
+          <span class="label">Service Provider:</span> ${providerLabel}
+        </div>
+        ${data.previousStartTime ? `
+        <div class="detail-row">
+          <span class="label">Previous Time:</span> <span class="old-time">${formatDateTime(data.previousStartTime, data.timezone)}</span>
+        </div>
+        ` : ''}
+        <div class="detail-row">
+          <span class="label">New Start Time:</span> ${formatDateTime(data.startTime, data.timezone)}
+        </div>
+        <div class="detail-row">
+          <span class="label">New End Time:</span> ${formatDateTime(data.endTime, data.timezone)}
+        </div>
+        <div class="detail-row">
+          <span class="label">Duration:</span> ${data.duration} minutes
+        </div>
+      </div>
+      
+      <p><strong>Important:</strong> Please arrive 5-10 minutes before your new scheduled time.</p>
+      
+      <div class="footer">
+        <p>This is an automated message. Please do not reply to this email.</p>
+        <p>&copy; ${new Date().getFullYear()} GetSetTime. All rights reserved.</p>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
+  `;
+};
+
+const getProviderRescheduleEmailTemplate = (data: BookingEmailData): string => {
+  const departmentLabel = data.departmentName?.trim() ? data.departmentName : 'Not assigned';
+  return `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+    .header { background-color: #D97706; color: white; padding: 20px; text-align: center; border-radius: 5px 5px 0 0; }
+    .content { background-color: #f9f9f9; padding: 30px; border: 1px solid #ddd; border-radius: 0 0 5px 5px; }
+    .booking-details { background-color: white; padding: 20px; margin: 20px 0; border-radius: 5px; border-left: 4px solid #D97706; }
+    .detail-row { margin: 10px 0; }
+    .label { font-weight: bold; color: #D97706; }
+    .old-time { text-decoration: line-through; color: #999; }
+    .alert { background-color: #FEF3C7; border-left: 4px solid #F59E0B; padding: 15px; margin: 20px 0; border-radius: 5px; }
+    .footer { text-align: center; margin-top: 20px; padding-top: 20px; border-top: 1px solid #ddd; color: #666; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>Booking Rescheduled</h1>
+    </div>
+    <div class="content">
+      <p>Dear ${data.providerName || 'Service Provider'},</p>
+      <p>A booking has been rescheduled by the client. Please review the updated details:</p>
+      
+      <div class="booking-details">
+        <h2 style="margin-top: 0; color: #D97706;">Updated Booking Details</h2>
+        <div class="detail-row">
+          <span class="label">Client Name:</span> ${data.inviteeName}
+        </div>
+        <div class="detail-row">
+          <span class="label">Client Email:</span> ${data.inviteeEmail}
+        </div>
+        <div class="detail-row">
+          <span class="label">Event Type:</span> ${data.eventTypeName}
+        </div>
+        <div class="detail-row">
+          <span class="label">Department:</span> ${departmentLabel}
+        </div>
+        ${data.previousStartTime ? `
+        <div class="detail-row">
+          <span class="label">Previous Time:</span> <span class="old-time">${formatDateTime(data.previousStartTime, data.timezone)}</span>
+        </div>
+        ` : ''}
+        <div class="detail-row">
+          <span class="label">New Start Time:</span> ${formatDateTime(data.startTime, data.timezone)}
+        </div>
+        <div class="detail-row">
+          <span class="label">New End Time:</span> ${formatDateTime(data.endTime, data.timezone)}
+        </div>
+        <div class="detail-row">
+          <span class="label">Duration:</span> ${data.duration} minutes
+        </div>
+      </div>
+      
+      <div class="alert">
+        <strong>Note:</strong> Please update your schedule accordingly for this rescheduled appointment.
+      </div>
+      
+      <div class="footer">
+        <p>This is an automated notification from your booking system.</p>
+        <p>&copy; ${new Date().getFullYear()} GetSetTime. All rights reserved.</p>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
+  `;
+};
+
+export const sendBookingRescheduleEmails = async (data: BookingEmailData): Promise<{
+  userEmailSent: boolean;
+  providerEmailSent: boolean;
+  errors: string[];
+}> => {
+  const errors: string[] = [];
+  let userEmailSent = false;
+  let providerEmailSent = false;
+
+  if (data.inviteeEmail) {
+    try {
+      const transporter = createTransporter();
+      await transporter.sendMail({
+        from: `"GetSetTime" <${process.env.SMTP_USER}>`,
+        to: data.inviteeEmail,
+        subject: `Booking Rescheduled - ${data.eventTypeName}`,
+        html: getUserRescheduleEmailTemplate(data),
+      });
+      userEmailSent = true;
+    } catch (error) {
+      const err = error as Error;
+      errors.push(`Failed to send reschedule email to user: ${err.message}`);
+    }
+  }
+
+  if (data.providerEmail) {
+    try {
+      const transporter = createTransporter();
+      await transporter.sendMail({
+        from: `"GetSetTime Bookings" <${process.env.SMTP_USER}>`,
+        to: data.providerEmail,
+        subject: `Booking Rescheduled - ${data.eventTypeName} with ${data.inviteeName}`,
+        html: getProviderRescheduleEmailTemplate(data),
+      });
+      providerEmailSent = true;
+    } catch (error) {
+      const err = error as Error;
+      errors.push(`Failed to send reschedule email to provider: ${err.message}`);
+    }
+  }
+
+  return { userEmailSent, providerEmailSent, errors };
+};
+
+// --- Cancellation email templates ---
+
+const getUserCancellationEmailTemplate = (data: BookingEmailData): string => {
+  const departmentLabel = data.departmentName?.trim() ? data.departmentName : 'Not assigned';
+  const providerLabel = data.providerName?.trim() ? data.providerName : 'Not assigned';
+  return `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+    .header { background-color: #DC2626; color: white; padding: 20px; text-align: center; border-radius: 5px 5px 0 0; }
+    .content { background-color: #f9f9f9; padding: 30px; border: 1px solid #ddd; border-radius: 0 0 5px 5px; }
+    .booking-details { background-color: white; padding: 20px; margin: 20px 0; border-radius: 5px; border-left: 4px solid #DC2626; }
+    .detail-row { margin: 10px 0; }
+    .label { font-weight: bold; color: #DC2626; }
+    .footer { text-align: center; margin-top: 20px; padding-top: 20px; border-top: 1px solid #ddd; color: #666; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>Booking Cancelled</h1>
+    </div>
+    <div class="content">
+      <p>Dear ${data.inviteeName},</p>
+      <p>Your booking has been cancelled. Here are the details of the cancelled appointment:</p>
+      
+      <div class="booking-details">
+        <h2 style="margin-top: 0; color: #DC2626;">Cancelled Booking Details</h2>
+        <div class="detail-row">
+          <span class="label">Event:</span> ${data.eventTypeName}
+        </div>
+        <div class="detail-row">
+          <span class="label">Department:</span> ${departmentLabel}
+        </div>
+        <div class="detail-row">
+          <span class="label">Service Provider:</span> ${providerLabel}
+        </div>
+        <div class="detail-row">
+          <span class="label">Start Time:</span> ${formatDateTime(data.startTime, data.timezone)}
+        </div>
+        <div class="detail-row">
+          <span class="label">End Time:</span> ${formatDateTime(data.endTime, data.timezone)}
+        </div>
+        <div class="detail-row">
+          <span class="label">Duration:</span> ${data.duration} minutes
+        </div>
+      </div>
+      
+      <p>If you'd like to rebook, please visit our booking page.</p>
+      
+      <div class="footer">
+        <p>This is an automated message. Please do not reply to this email.</p>
+        <p>&copy; ${new Date().getFullYear()} GetSetTime. All rights reserved.</p>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
+  `;
+};
+
+const getProviderCancellationEmailTemplate = (data: BookingEmailData): string => {
+  const departmentLabel = data.departmentName?.trim() ? data.departmentName : 'Not assigned';
+  return `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+    .header { background-color: #DC2626; color: white; padding: 20px; text-align: center; border-radius: 5px 5px 0 0; }
+    .content { background-color: #f9f9f9; padding: 30px; border: 1px solid #ddd; border-radius: 0 0 5px 5px; }
+    .booking-details { background-color: white; padding: 20px; margin: 20px 0; border-radius: 5px; border-left: 4px solid #DC2626; }
+    .detail-row { margin: 10px 0; }
+    .label { font-weight: bold; color: #DC2626; }
+    .alert { background-color: #FEE2E2; border-left: 4px solid #DC2626; padding: 15px; margin: 20px 0; border-radius: 5px; }
+    .footer { text-align: center; margin-top: 20px; padding-top: 20px; border-top: 1px solid #ddd; color: #666; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>Booking Cancelled</h1>
+    </div>
+    <div class="content">
+      <p>Dear ${data.providerName || 'Service Provider'},</p>
+      <p>A booking has been cancelled by the client. Here are the details:</p>
+      
+      <div class="booking-details">
+        <h2 style="margin-top: 0; color: #DC2626;">Cancelled Booking Details</h2>
+        <div class="detail-row">
+          <span class="label">Client Name:</span> ${data.inviteeName}
+        </div>
+        <div class="detail-row">
+          <span class="label">Client Email:</span> ${data.inviteeEmail}
+        </div>
+        <div class="detail-row">
+          <span class="label">Event Type:</span> ${data.eventTypeName}
+        </div>
+        <div class="detail-row">
+          <span class="label">Department:</span> ${departmentLabel}
+        </div>
+        <div class="detail-row">
+          <span class="label">Start Time:</span> ${formatDateTime(data.startTime, data.timezone)}
+        </div>
+        <div class="detail-row">
+          <span class="label">End Time:</span> ${formatDateTime(data.endTime, data.timezone)}
+        </div>
+        <div class="detail-row">
+          <span class="label">Duration:</span> ${data.duration} minutes
+        </div>
+      </div>
+      
+      <div class="alert">
+        <strong>Note:</strong> This time slot is now available for other bookings.
+      </div>
+      
+      <div class="footer">
+        <p>This is an automated notification from your booking system.</p>
+        <p>&copy; ${new Date().getFullYear()} GetSetTime. All rights reserved.</p>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
+  `;
+};
+
+export const sendBookingCancellationEmails = async (data: BookingEmailData): Promise<{
+  userEmailSent: boolean;
+  providerEmailSent: boolean;
+  errors: string[];
+}> => {
+  const errors: string[] = [];
+  let userEmailSent = false;
+  let providerEmailSent = false;
+
+  if (data.inviteeEmail) {
+    try {
+      const transporter = createTransporter();
+      await transporter.sendMail({
+        from: `"GetSetTime" <${process.env.SMTP_USER}>`,
+        to: data.inviteeEmail,
+        subject: `Booking Cancelled - ${data.eventTypeName}`,
+        html: getUserCancellationEmailTemplate(data),
+      });
+      userEmailSent = true;
+    } catch (error) {
+      const err = error as Error;
+      errors.push(`Failed to send cancellation email to user: ${err.message}`);
+    }
+  }
+
+  if (data.providerEmail) {
+    try {
+      const transporter = createTransporter();
+      await transporter.sendMail({
+        from: `"GetSetTime Bookings" <${process.env.SMTP_USER}>`,
+        to: data.providerEmail,
+        subject: `Booking Cancelled - ${data.eventTypeName} with ${data.inviteeName}`,
+        html: getProviderCancellationEmailTemplate(data),
+      });
+      providerEmailSent = true;
+    } catch (error) {
+      const err = error as Error;
+      errors.push(`Failed to send cancellation email to provider: ${err.message}`);
+    }
+  }
+
+  return { userEmailSent, providerEmailSent, errors };
 };
 
 // Send email confirmation link for registration (nodemailer)

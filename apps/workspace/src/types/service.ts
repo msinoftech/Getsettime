@@ -12,6 +12,7 @@ export interface IntakeFormSettings {
   name?: boolean;
   email?: boolean;
   phone?: boolean;
+  file_upload?: boolean;
   services?: {
     enabled: boolean;
     allowed_service_ids: string[];

@@ -98,6 +98,7 @@ export async function GET(req: NextRequest) {
         created_at: u.created_at,
         email_confirmed_at: u.email_confirmed_at,
         deactivated: u.user_metadata?.deactivated || false,
+        is_workspace_owner: u.user_metadata?.is_workspace_owner === true,
       }));
 
     return NextResponse.json({ teamMembers });

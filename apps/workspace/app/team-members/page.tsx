@@ -2,6 +2,7 @@
 import { useState, useEffect } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { ConfirmModal } from "@/src/components/ui/ConfirmModal";
+import { TeamMemberSkeleton } from "@/src/components/ui/TeamMemberSkeleton";
 
 interface Department {
   id: number;
@@ -17,6 +18,7 @@ interface TeamMember {
   created_at: string;
   email_confirmed_at: string | null;
   deactivated: boolean;
+  is_workspace_owner: boolean;
 }
 
 export default function TeamMembersPage() {
@@ -39,6 +41,7 @@ export default function TeamMembersPage() {
   });
   const [inviteUrl, setInviteUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [confirmModal, setConfirmModal] = useState<{
@@ -72,6 +75,8 @@ export default function TeamMembersPage() {
     } catch (error) {
       console.error('Error fetching team members:', error);
       setError('An error occurred while fetching team members');
+    } finally {
+      setInitialLoading(false);
     }
   };
 
@@ -396,6 +401,9 @@ export default function TeamMembersPage() {
       )}
 
       {/* Team Members List */}
+      {initialLoading ? (
+        <TeamMemberSkeleton />
+      ) : (
       <div className="rounded-2xl bg-white shadow-md p-6">
         {teamMembers.length === 0 ? (
           <div className="text-center py-12">
@@ -452,6 +460,11 @@ export default function TeamMembersPage() {
                           {member.role.replace('_', ' ')}
                         </span>
                       )}
+                      {member.is_workspace_owner && (
+                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800 border border-amber-300">
+                          Owner
+                        </span>
+                      )}
                       {departmentNames.length > 0 && (
                         <>
                           {departmentNames.map((name) => (
@@ -470,29 +483,37 @@ export default function TeamMembersPage() {
                     </p>
                   </div>
                   <div className="flex gap-2 flex-shrink-0">
-                    <button
-                      onClick={() => handleEditMember(member)}
-                      className="inline-flex items-center rounded-md bg-indigo-50 px-3 py-1.5 text-xs font-medium text-indigo-700 hover:bg-indigo-100 transition"
-                      disabled={loading || member.deactivated}
-                    >
-                      Edit
-                    </button>
-                    {!member.deactivated ? (
-                      <button
-                        onClick={() => handleDeactivateClick(member.id)}
-                        className="inline-flex items-center rounded-md bg-red-50 px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-100 transition"
-                        disabled={loading}
-                      >
-                        Deactivate
-                      </button>
+                    {member.is_workspace_owner ? (
+                      <span className="inline-flex items-center rounded-md bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-500" title="Owner role is locked">
+                        Role locked
+                      </span>
                     ) : (
-                      <button
-                        onClick={() => handleActivateClick(member.id)}
-                        className="inline-flex items-center rounded-md bg-green-50 px-3 py-1.5 text-xs font-medium text-green-700 hover:bg-green-100 transition"
-                        disabled={loading}
-                      >
-                        Activate
-                      </button>
+                      <>
+                        <button
+                          onClick={() => handleEditMember(member)}
+                          className="inline-flex items-center rounded-md bg-indigo-50 px-3 py-1.5 text-xs font-medium text-indigo-700 hover:bg-indigo-100 transition"
+                          disabled={loading || member.deactivated}
+                        >
+                          Edit
+                        </button>
+                        {!member.deactivated ? (
+                          <button
+                            onClick={() => handleDeactivateClick(member.id)}
+                            className="inline-flex items-center rounded-md bg-red-50 px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-100 transition"
+                            disabled={loading}
+                          >
+                            Deactivate
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => handleActivateClick(member.id)}
+                            className="inline-flex items-center rounded-md bg-green-50 px-3 py-1.5 text-xs font-medium text-green-700 hover:bg-green-100 transition"
+                            disabled={loading}
+                          >
+                            Activate
+                          </button>
+                        )}
+                      </>
                     )}
                   </div>
                 </div>
@@ -501,6 +522,7 @@ export default function TeamMembersPage() {
           </div>
         )}
       </div>
+      )}
 
       {/* Team Member Form Modal */}
       {showMemberForm && (

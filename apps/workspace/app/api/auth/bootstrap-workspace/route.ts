@@ -58,12 +58,12 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Failed to get or create workspace" }, { status: 500 });
     }
 
-    // Update user metadata with workspace information
     const { error: updateError } = await updateUserWorkspaceMetadata(
       user.id,
       workspaceResult.workspaceId,
       meta,
-      supabaseAdmin
+      supabaseAdmin,
+      workspaceResult.isNewWorkspace
     );
 
     if (updateError) {

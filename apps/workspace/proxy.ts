@@ -22,23 +22,23 @@ export default function proxy(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // Enforce role-based access: only workspace_admin and customer can access
-  // Block superadmin users
-  const allowedRoles = ['workspace_admin', 'customer'];
+  const allowedRoles = ['workspace_admin', 'manager', 'service_provider', 'customer'];
   if (role) {
     if (role === 'superadmin') {
-      // Clear superadmin cookie and redirect to login
       const response = NextResponse.redirect(new URL('/login', request.url));
       response.cookies.delete('x_role');
       response.cookies.delete('x_workspace_id');
       return response;
     }
     if (!allowedRoles.includes(role)) {
-      // Clear invalid role cookie and redirect to login
       const response = NextResponse.redirect(new URL('/login', request.url));
       response.cookies.delete('x_role');
       response.cookies.delete('x_workspace_id');
       return response;
+    }
+
+    if (role === 'customer' && !pathname.startsWith('/my-bookings')) {
+      return NextResponse.redirect(new URL('/my-bookings', request.url));
     }
   }
 

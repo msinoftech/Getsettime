@@ -1,9 +1,11 @@
 'use client';
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { type public_booking } from '@/src/types/public_booking';
+import { supabase } from '@/lib/supabaseClient';
 
-type Step = 'phone_input' | 'otp_verify' | 'bookings_list';
+type Step = 'loading' | 'phone_input' | 'otp_verify' | 'bookings_list';
 
 const STATUS_COLORS: Record<string, string> = {
   pending: 'bg-yellow-100 text-yellow-800',
@@ -42,10 +44,13 @@ interface PaginationInfo {
 }
 
 export default function MyBookingsPage() {
-  const [step, setStep] = useState<Step>('phone_input');
+  const router = useRouter();
+  const [step, setStep] = useState<Step>('loading');
   const [phone, setPhone] = useState('');
   const [otpCode, setOtpCode] = useState('');
   const [token, setToken] = useState('');
+  const [isAuthSession, setIsAuthSession] = useState(false);
+  const [authDisplayName, setAuthDisplayName] = useState('');
   const [bookings, setBookings] = useState<public_booking[]>([]);
   const [pagination, setPagination] = useState<PaginationInfo>({
     page: 1, limit: ITEMS_PER_PAGE, total: 0, totalPages: 0,
@@ -67,6 +72,50 @@ export default function MyBookingsPage() {
       });
     }, 1000);
   }, []);
+
+  const fetchBookingsWithAuth = useCallback(async (accessToken: string, page = 1) => {
+    setLoading(true);
+    setError('');
+    try {
+      const res = await fetch(
+        `/api/my-bookings?page=${page}&limit=${ITEMS_PER_PAGE}`,
+        { headers: { Authorization: `Bearer ${accessToken}` } }
+      );
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || 'Failed to load bookings');
+        return;
+      }
+      setBookings(data.data || []);
+      if (data.pagination) setPagination(data.pagination);
+      setStep('bookings_list');
+    } catch {
+      setError('Network error. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const checkSession = async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (cancelled) return;
+        if (session?.user?.user_metadata?.role === 'customer') {
+          const name = session.user.user_metadata?.name || session.user.email || 'Customer';
+          setIsAuthSession(true);
+          setAuthDisplayName(name);
+          setToken(session.access_token);
+          await fetchBookingsWithAuth(session.access_token);
+          return;
+        }
+      } catch { /* ignore */ }
+      if (!cancelled) setStep('phone_input');
+    };
+    checkSession();
+    return () => { cancelled = true; };
+  }, [fetchBookingsWithAuth]);
 
   const handleSendOtp = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -160,7 +209,11 @@ export default function MyBookingsPage() {
 
   const goToPage = (page: number) => {
     if (!token || page < 1 || page > pagination.totalPages) return;
-    fetchBookings(token, page);
+    if (isAuthSession) {
+      fetchBookingsWithAuth(token, page);
+    } else {
+      fetchBookings(token, page);
+    }
   };
 
   const handleResend = async () => {
@@ -198,17 +251,31 @@ export default function MyBookingsPage() {
     setError('');
   };
 
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    router.push('/login');
+  };
+
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="mx-auto max-w-4xl px-4 py-12">
         <div className="mb-8 text-center">
           <h1 className="text-3xl font-bold text-gray-900">GetSetTime</h1>
           <p className="mt-2 text-gray-600">
-            Verify your phone number to view your bookings
+            {isAuthSession ? `Welcome back, ${authDisplayName}` : 'Verify your phone number to view your bookings'}
           </p>
         </div>
 
-        {error && (
+        {step === 'loading' && (
+          <div className="flex items-center justify-center py-16">
+            <div className="text-center">
+              <div className="mx-auto h-10 w-10 animate-spin rounded-full border-b-2 border-purple-600" />
+              <p className="mt-4 text-sm text-gray-500">Loading your bookings...</p>
+            </div>
+          </div>
+        )}
+
+        {error && step !== 'loading' && (
           <div className="mx-auto mb-6 max-w-md rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
             {error}
           </div>
@@ -319,16 +386,31 @@ export default function MyBookingsPage() {
           <div>
             <div className="mb-4 flex items-center justify-between">
               <p className="text-sm text-gray-600">
-                Showing bookings for{' '}
-                <span className="font-medium">{phone}</span>
+                {isAuthSession
+                  ? <>Showing bookings for <span className="font-medium">{authDisplayName}</span></>
+                  : <>Showing bookings for <span className="font-medium">{phone}</span></>
+                }
               </p>
-              <button
-                type="button"
-                onClick={handleStartOver}
-                className="text-sm text-purple-600 hover:text-purple-700"
-              >
-                Verify another number
-              </button>
+              {isAuthSession ? (
+                <button
+                  type="button"
+                  onClick={handleLogout}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
+                >
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                  </svg>
+                  Logout
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleStartOver}
+                  className="text-sm text-purple-600 hover:text-purple-700"
+                >
+                  Verify another number
+                </button>
+              )}
             </div>
 
             {loading ? (
@@ -457,7 +539,7 @@ export default function MyBookingsPage() {
                   </span>
                   <button
                     type="button"
-                    onClick={() => token && fetchBookings(token, pagination.page)}
+                    onClick={() => token && (isAuthSession ? fetchBookingsWithAuth(token, pagination.page) : fetchBookings(token, pagination.page))}
                     disabled={loading}
                     className="text-purple-600 hover:text-purple-700 disabled:text-gray-400"
                   >

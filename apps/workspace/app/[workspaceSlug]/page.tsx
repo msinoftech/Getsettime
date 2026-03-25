@@ -150,12 +150,12 @@ export default async function EmbedBookingPage({ params, searchParams }: PagePro
     notFound();
   }
 
-  // Extract event-type parameter (e.g., "15mins", "30mins", "60mins")
   const eventType = typeof query['event-type'] === 'string' ? query['event-type'] : undefined;
+  const rescheduleCode = typeof query['reschedule'] === 'string' ? query['reschedule'] : undefined;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 py-8 px-4">
-      <EmbedBookingForm workspace={workspace} eventType={eventType} />
+      <EmbedBookingForm workspace={workspace} eventType={eventType} rescheduleCode={rescheduleCode} />
     </div>
   );
 }

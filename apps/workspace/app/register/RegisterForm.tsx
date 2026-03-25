@@ -51,6 +51,7 @@ export default function RegisterForm() {
 
   const registeringRef = useRef(false);
   const bootstrapPromiseRef = useRef<Promise<number | null> | null>(null);
+  const autoGoogleTriggeredRef = useRef(false);
 
   const resolveMode = async (session: { user: { user_metadata?: Record<string, unknown>; email?: string; email_confirmed_at?: string }; access_token: string } | null) => {
     if (!session?.user) {
@@ -143,6 +144,17 @@ export default function RegisterForm() {
     });
     return () => subscription.unsubscribe();
   }, [searchParams, router]);
+
+  useEffect(() => {
+    if (
+      searchParams.get("g_signup") === "1" &&
+      onboardingMode === false &&
+      !autoGoogleTriggeredRef.current
+    ) {
+      autoGoogleTriggeredRef.current = true;
+      handleGoogleSignup();
+    }
+  }, [searchParams, onboardingMode]);
 
   const saveStep1 = async (): Promise<boolean> => {
     const isOtherProfession = selectedProfessionId === OTHER_VALUE;

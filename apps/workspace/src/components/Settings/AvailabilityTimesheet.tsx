@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from 'react';
+import { AvailabilityGeneralSkeleton } from '@/src/components/ui/AvailabilityGeneralSkeleton';
 
 type DayName = "Sun" | "Mon" | "Tue" | "Wed" | "Thu" | "Fri" | "Sat";
 
@@ -664,9 +665,7 @@ export default function AvailabilityTimesheet({ onSave, initialTimesheet }: Avai
   };
 
   if (isLoading) {
-    return (
-      <div className="text-center py-8 text-slate-400">Loading availability timesheet...</div>
-    );
+    return <AvailabilityGeneralSkeleton />;
   }
 
   return (

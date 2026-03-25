@@ -78,6 +78,7 @@ export type IntakeFormSettings = {
    * - boolean (requested spec)
    * - { enabled, allowed_service_ids } (current RoutingForm UI)
    */
+  file_upload?: boolean;
   services?: boolean | IntakeFormServiceSettings;
   additional_description?: boolean;
   custom_fields?: IntakeCustomField[];

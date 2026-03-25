@@ -39,6 +39,9 @@ interface Step4IntakeFormProps {
   onTouchedEmail: () => void;
   onTouchedPhone: () => void;
   onTouchedCustomField: (id: string) => void;
+  file: File | null;
+  onFileChange: (f: File | null) => void;
+  fileError: string;
   onBack: () => void;
   onConfirm: () => void;
 }
@@ -70,6 +73,9 @@ export function Step4IntakeForm({
   onTouchedEmail,
   onTouchedPhone,
   onTouchedCustomField,
+  file,
+  onFileChange,
+  fileError,
   onBack,
   onConfirm,
 }: Step4IntakeFormProps) {
@@ -272,6 +278,61 @@ export function Step4IntakeForm({
           );
         })}
 
+        {intakeForm?.file_upload === true && (
+          <div className="group">
+            <div className="text-sm font-semibold text-gray-700 mb-2">
+              Upload File <span className="text-gray-400 font-normal">(optional)</span>
+            </div>
+            {file ? (
+              <div className="flex items-center gap-3 px-4 py-3 rounded-xl border-2 border-indigo-200 bg-indigo-50">
+                <svg className="w-5 h-5 text-indigo-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                <span className="text-sm text-gray-800 truncate flex-1">{file.name}</span>
+                <span className="text-xs text-gray-500 flex-shrink-0">{(file.size / 1024).toFixed(0)} KB</span>
+                <button
+                  type="button"
+                  onClick={() => onFileChange(null)}
+                  className="p-1 rounded-full text-gray-400 hover:text-red-600 hover:bg-red-50 transition"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            ) : (
+              <label
+                className="flex flex-col items-center justify-center gap-2 px-4 py-6 rounded-xl border-2 border-dashed border-gray-300 bg-gray-50 hover:border-indigo-400 hover:bg-indigo-50/50 cursor-pointer transition-all"
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  const dropped = e.dataTransfer.files[0];
+                  if (dropped) onFileChange(dropped);
+                }}
+              >
+                <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                </svg>
+                <span className="text-sm font-medium text-gray-600">Choose file or drag &amp; drop</span>
+                <span className="text-xs text-gray-400">PDF, PNG, JPG, HEIC &mdash; Max 2 MB</span>
+                <input
+                  type="file"
+                  className="hidden"
+                  accept=".pdf,.png,.jpg,.jpeg,.heic,.heif"
+                  onChange={(e) => {
+                    const selected = e.target.files?.[0] ?? null;
+                    onFileChange(selected);
+                    e.target.value = '';
+                  }}
+                />
+              </label>
+            )}
+            {fileError && (
+              <p className="mt-2 text-xs font-medium text-red-600">{fileError}</p>
+            )}
+          </div>
+        )}
+
         {intakeForm?.additional_description === true && (
           <div className="group">
             <div className="relative">
@@ -295,14 +356,17 @@ export function Step4IntakeForm({
             <input
               type="checkbox"
               checked={sendWhatsapp}
-              onChange={(e) => onSendWhatsappChange(e.target.checked)}
+              onChange={(e) => {
+                onSendWhatsappChange(e.target.checked);
+                if (e.target.checked) setShowTermsModal(true);
+              }}
               className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
             />
             <span className="text-sm text-gray-700">I agree to receive appointment and reminder via WhatsApp.</span>
           </label>
         </div>
 
-        <div className='group'>
+        {/* <div className='group'>
           <label className="inline-flex items-center gap-3 cursor-pointer select-none">
             <input
               type="checkbox"
@@ -318,7 +382,7 @@ export function Step4IntakeForm({
             />
             <span className="text-sm text-gray-700">I agree to the terms and conditions.</span>
           </label>
-        </div>
+        </div> */}
         
       </div>
 

@@ -1,7 +1,7 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
-import { useParams } from 'next/navigation';
+import React, { useCallback, useEffect, useState } from 'react';
+import { useParams, useRouter } from 'next/navigation';
 import { formatDate, formatTime } from '@/src/utils/date';
 import { StatusBadge } from '@/src/components/Booking/StatusBadge';
 import type { NormalizedIntakeForm } from '@/src/utils/intakeForm';
@@ -11,42 +11,72 @@ import type { Booking } from '@/src/types/booking';
 
 type BookingPreviewData = Omit<Booking, 'id' | 'workspace_id' | 'host_user_id'>;
 
+const HIDDEN_ACTION_STATUSES = ['cancelled', 'completed'];
+
 interface ApiResponse {
   booking: BookingPreviewData;
   department: Department | null;
   serviceProvider: ServiceProvider | null;
   services: Service[];
   intakeFormSettings: Record<string, unknown> | null;
+  workspace_slug: string | null;
 }
 
 export default function BookingPreviewPage() {
   const { code } = useParams<{ code: string }>();
+  const router = useRouter();
   const [data, setData] = useState<ApiResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
+  const [showCancelDialog, setShowCancelDialog] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
 
-  useEffect(() => {
+  const fetchBooking = useCallback(async () => {
     if (!code) return;
-
-    const fetchBooking = async () => {
-      try {
-        const res = await fetch(`/api/booking-preview/${code}`);
-        if (res.status === 404) {
-          setNotFound(true);
-          return;
-        }
-        if (!res.ok) throw new Error('Failed to fetch');
-        const json: ApiResponse = await res.json();
-        setData(json);
-      } catch {
+    try {
+      const res = await fetch(`/api/booking-preview/${code}`);
+      if (res.status === 404) {
         setNotFound(true);
-      } finally {
-        setLoading(false);
+        return;
       }
-    };
-
-    fetchBooking();
+      if (!res.ok) throw new Error('Failed to fetch');
+      const json: ApiResponse = await res.json();
+      setData(json);
+    } catch {
+      setNotFound(true);
+    } finally {
+      setLoading(false);
+    }
   }, [code]);
+
+  useEffect(() => { fetchBooking(); }, [fetchBooking]);
+
+  const handleCancel = async () => {
+    if (!code) return;
+    setCancelling(true);
+    try {
+      const res = await fetch(`/api/booking-preview/${code}/cancel`, { method: 'POST' });
+      if (!res.ok) {
+        const json = await res.json();
+        alert(json.error || 'Failed to cancel booking');
+        return;
+      }
+      setShowCancelDialog(false);
+      await fetchBooking();
+    } catch {
+      alert('An error occurred while cancelling.');
+    } finally {
+      setCancelling(false);
+    }
+  };
+
+  const handleReschedule = () => {
+    if (!data?.workspace_slug || !code) return;
+    router.push(`/${data.workspace_slug}?reschedule=${code}`);
+  };
+
+  const showActions = data?.booking &&
+    !HIDDEN_ACTION_STATUSES.includes(data.booking.status?.toLowerCase() ?? '');
 
   if (loading) {
     return (
@@ -99,8 +129,40 @@ export default function BookingPreviewPage() {
           serviceProvider={serviceProvider}
           services={services}
           intakeFormSettings={intakeForm}
+          showActions={!!showActions}
+          onCancel={() => setShowCancelDialog(true)}
+          onReschedule={handleReschedule}
         />
       </div>
+
+      {showCancelDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6">
+            <h3 className="text-lg font-semibold text-slate-800 mb-2">Cancel Booking</h3>
+            <p className="text-sm text-slate-600 mb-6">
+              Are you sure you want to cancel this booking? This action cannot be undone.
+            </p>
+            <div className="flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setShowCancelDialog(false)}
+                disabled={cancelling}
+                className="px-4 py-2 text-sm font-medium text-slate-700 bg-slate-100 rounded-lg hover:bg-slate-200 transition-colors"
+              >
+                Keep Booking
+              </button>
+              <button
+                type="button"
+                onClick={handleCancel}
+                disabled={cancelling}
+                className="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50"
+              >
+                {cancelling ? 'Cancelling...' : 'Yes, Cancel'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -111,12 +173,18 @@ function BookingPreviewContent({
   serviceProvider,
   services,
   intakeFormSettings,
+  showActions,
+  onCancel,
+  onReschedule,
 }: {
   booking: BookingPreviewData;
   department: Department | null;
   serviceProvider: ServiceProvider | null;
   services: Service[];
   intakeFormSettings: NormalizedIntakeForm | null;
+  showActions: boolean;
+  onCancel: () => void;
+  onReschedule: () => void;
 }) {
   const intakeFormData = booking.metadata?.intake_form as Record<string, unknown> | undefined;
 
@@ -136,6 +204,9 @@ function BookingPreviewContent({
   const legacyNotes = booking.metadata?.notes as string | undefined;
   const metaDesc = booking.metadata?.additional_description as string | undefined;
   const displayNotes = notes || legacyNotes || metaDesc || 'N/A';
+
+  const fileUploadUrl = intakeFormData?.file_upload_url as string | undefined;
+  const fileUploadName = fileUploadUrl ? decodeURIComponent(fileUploadUrl.split('/').pop() || 'file') : '';
 
   const showAdditionalInfo =
     intakeFormSettings?.additional_description === true ||
@@ -157,13 +228,39 @@ function BookingPreviewContent({
 
   return (
     <>
-      <div className="border-b border-slate-200 px-6 py-4">
-        <h3 className="text-xl font-semibold text-slate-800">Booking Details</h3>
-        {booking.created_at && (
-          <p className="text-xs text-slate-500 mt-0.5">
-            Created on {formatDate(booking.created_at)} at{' '}
-            {formatTime(booking.created_at)}
-          </p>
+      <div className="border-b border-slate-200 px-6 py-4 flex items-start justify-between gap-4">
+        <div>
+          <h3 className="text-xl font-semibold text-slate-800">Booking Details</h3>
+          {booking.created_at && (
+            <p className="text-xs text-slate-500 mt-0.5">
+              Created on {formatDate(booking.created_at)} at{' '}
+              {formatTime(booking.created_at)}
+            </p>
+          )}
+        </div>
+        {showActions && (
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <button
+              type="button"
+              onClick={onReschedule}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-lg hover:bg-indigo-100 transition-colors"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+              </svg>
+              Reschedule
+            </button>
+            <button
+              type="button"
+              onClick={onCancel}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-red-700 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 transition-colors"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+              Cancel
+            </button>
+          </div>
         )}
       </div>
 
@@ -284,6 +381,29 @@ function BookingPreviewContent({
                 );
               })}
             </div>
+          </div>
+        )}
+
+        {/* Uploaded File */}
+        {fileUploadUrl && (
+          <div>
+            <h4 className="text-sm font-semibold text-slate-500 uppercase tracking-wide mb-3">
+              Uploaded File
+            </h4>
+            <a
+              href={fileUploadUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-700 hover:bg-indigo-100 transition-colors"
+            >
+              <svg className="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+              <span className="text-sm font-medium truncate max-w-xs">{fileUploadName}</span>
+              <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+              </svg>
+            </a>
           </div>
         )}
 

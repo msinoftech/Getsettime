@@ -25,6 +25,7 @@ export interface NormalizedIntakeForm {
   name: boolean;
   email: boolean;
   phone: boolean;
+  file_upload: boolean;
   services: { enabled: boolean; allowed_service_ids: string[] };
   additional_description: boolean;
   custom_fields: Array<{
@@ -62,6 +63,7 @@ export function normalizeIntakeForm(
     name: settings.name ?? true,
     email: settings.email ?? true,
     phone: settings.phone ?? false,
+    file_upload: settings.file_upload ?? false,
     services: {
       enabled: services.enabled ?? false,
       allowed_service_ids: services.allowed_service_ids ?? [],

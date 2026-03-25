@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { appendActivityLog } from '@/lib/activity-log';
 
 /**
  * Creates an authenticated Supabase client using the anon key (respects RLS)
@@ -115,6 +116,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
+    await appendActivityLog(workspaceId, {
+      type: 'service',
+      action: 'created',
+      title: 'Service created',
+      description: data?.name || name.trim(),
+    });
+
     return NextResponse.json({ service: data });
   } catch (err: unknown) {
     const error = err as Error;
@@ -170,6 +178,16 @@ export async function PUT(req: NextRequest) {
       return NextResponse.json({ error: 'Service not found or unauthorized' }, { status: 404 });
     }
 
+    const workspaceId = user.user_metadata?.workspace_id;
+    if (workspaceId) {
+      await appendActivityLog(workspaceId, {
+        type: 'service',
+        action: 'updated',
+        title: 'Service updated',
+        description: data?.name || name.trim(),
+      });
+    }
+
     return NextResponse.json({ service: data });
   } catch (err: unknown) {
     const error = err as Error;
@@ -209,6 +227,16 @@ export async function DELETE(req: NextRequest) {
     if (error) {
       console.error('Error deleting service:', error);
       return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    const workspaceId = user.user_metadata?.workspace_id;
+    if (workspaceId) {
+      await appendActivityLog(workspaceId, {
+        type: 'service',
+        action: 'deleted',
+        title: 'Service deleted',
+        description: `Service ID ${id} was removed`,
+      });
     }
 
     return NextResponse.json({ success: true });

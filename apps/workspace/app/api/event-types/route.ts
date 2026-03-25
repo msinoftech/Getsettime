@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { appendActivityLog } from '@/lib/activity-log';
 
 /**
  * Creates an authenticated Supabase client using the anon key (respects RLS)
@@ -119,6 +120,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
+    await appendActivityLog(workspaceId, {
+      type: 'event_type',
+      action: 'created',
+      title: 'Event type created',
+      description: data?.title || title.trim(),
+    });
+
     return NextResponse.json({ data });
   } catch (err: any) {
     console.error('Error:', err);
@@ -172,6 +180,16 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ error: 'Event type not found or access denied' }, { status: 404 });
     }
 
+    const workspaceId = user.user_metadata?.workspace_id;
+    if (workspaceId) {
+      await appendActivityLog(workspaceId, {
+        type: 'event_type',
+        action: 'updated',
+        title: 'Event type updated',
+        description: data?.title || title.trim(),
+      });
+    }
+
     return NextResponse.json({ data });
   } catch (err: any) {
     console.error('Error:', err);
@@ -209,6 +227,16 @@ export async function DELETE(req: NextRequest) {
     if (error) {
       console.error('Error deleting event type:', error);
       return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    const workspaceId = user.user_metadata?.workspace_id;
+    if (workspaceId) {
+      await appendActivityLog(workspaceId, {
+        type: 'event_type',
+        action: 'deleted',
+        title: 'Event type deleted',
+        description: `Event type ID ${id} was removed`,
+      });
     }
 
     return NextResponse.json({ success: true });

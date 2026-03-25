@@ -54,6 +54,7 @@ export default function RoutingForm({ dark = false }) {
       enabled: false,
       allowed_service_ids: [] as string[],
     },
+    file_upload: false,
     additional_description: false,
     custom_fields: [] as CustomField[],
   });
@@ -122,6 +123,7 @@ export default function RoutingForm({ dark = false }) {
               enabled: false,
               allowed_service_ids: [],
             },
+            file_upload: data.settings.intake_form.file_upload ?? false,
             additional_description: data.settings.intake_form.additional_description ?? false,
             custom_fields: data.settings.intake_form.custom_fields ?? [],
           });
@@ -465,6 +467,23 @@ export default function RoutingForm({ dark = false }) {
                         type="checkbox"
                         checked={intakeFormSettings.phone}
                         onChange={(e) => setIntakeFormSettings({ ...intakeFormSettings, phone: e.target.checked })}
+                        className="sr-only peer"
+                      />
+                      <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-300 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+                    </label>
+                  </div>
+
+                  {/* File Upload Field Toggle */}
+                  <div className="flex items-center justify-between p-3 rounded-lg border border-slate-200 bg-white">
+                    <div>
+                      <label className="text-sm font-medium text-slate-700">File Upload</label>
+                      <p className="text-xs text-slate-500">Allow invitees to upload a file (PDF, image)</p>
+                    </div>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={intakeFormSettings.file_upload}
+                        onChange={(e) => setIntakeFormSettings({ ...intakeFormSettings, file_upload: e.target.checked })}
                         className="sr-only peer"
                       />
                       <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-300 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>

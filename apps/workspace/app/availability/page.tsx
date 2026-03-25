@@ -16,6 +16,7 @@ import {
   eachDayOfInterval,
 } from "date-fns";
 import AvailabilityTimesheet from '@/src/components/Settings/AvailabilityTimesheet';
+import { AvailabilityGeneralSkeleton } from '@/src/components/ui/AvailabilityGeneralSkeleton';
 import { useWorkspaceSettings } from '@/src/hooks/useWorkspaceSettings';
 import { supabase } from "@/lib/supabaseClient";
 
@@ -671,7 +672,7 @@ export default function Availability() {
           {activeTab === 'general' && (
             <div className="mt-0 pt-6">
               {settingsLoading ? (
-                <div className="flex items-center justify-center py-12 text-slate-500">Loading...</div>
+                <AvailabilityGeneralSkeleton />
               ) : (
                 <AvailabilityTimesheet
                   initialTimesheet={settingsAvailability?.timesheet ?? null}

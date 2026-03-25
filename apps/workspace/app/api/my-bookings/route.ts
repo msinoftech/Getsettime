@@ -1,68 +1,106 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createSupabaseServerClient } from '@app/db';
+import { createClient } from '@supabase/supabase-js';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+async function resolveAuthenticatedCustomer(req: NextRequest): Promise<{ email: string | null; phone: string | null } | null> {
+  const authHeader = req.headers.get('authorization');
+  const token = authHeader?.replace('Bearer ', '').trim();
+  if (!token || UUID_RE.test(token)) return null;
+
+  const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+  if (!supabaseUrl || !supabaseAnonKey) return null;
+
+  const client = createClient(supabaseUrl, supabaseAnonKey, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+  const { data: { user }, error } = await client.auth.getUser(token);
+  if (error || !user) return null;
+  if (user.user_metadata?.role !== 'customer') return null;
+
+  return {
+    email: user.email || user.user_metadata?.email || null,
+    phone: user.user_metadata?.phone || user.phone || null,
+  };
+}
 
 export async function GET(req: NextRequest) {
   try {
     const authHeader = req.headers.get('authorization');
     const token = authHeader?.replace('Bearer ', '').trim() || '';
 
-    if (!token || !UUID_RE.test(token)) {
+    if (!token) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
     const supabase = createSupabaseServerClient();
 
-    // Validate session token and resolve verified phone
-    const { data: session, error: sessionError } = await supabase
-      .from('phone_verification_sessions')
-      .select('phone_e164, expires_at')
-      .eq('token', token)
-      .single();
+    const customerAuth = await resolveAuthenticatedCustomer(req);
 
-    if (sessionError || !session) {
-      console.error('[my-bookings] Session lookup failed:', {
-        code: sessionError?.code,
-        message: sessionError?.message,
-      });
-      return NextResponse.json(
-        { error: 'Session expired. Please verify your phone again.' },
-        { status: 401 }
-      );
+    let phoneE164: string | null = null;
+    let customerEmail: string | null = null;
+
+    if (customerAuth) {
+      phoneE164 = customerAuth.phone;
+      customerEmail = customerAuth.email;
+      if (!phoneE164 && !customerEmail) {
+        return NextResponse.json({ error: 'No phone or email associated with your account.' }, { status: 400 });
+      }
+    } else {
+      if (!UUID_RE.test(token)) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      }
+
+      const { data: session, error: sessionError } = await supabase
+        .from('phone_verification_sessions')
+        .select('phone_e164, expires_at')
+        .eq('token', token)
+        .single();
+
+      if (sessionError || !session) {
+        return NextResponse.json(
+          { error: 'Session expired. Please verify your phone again.' },
+          { status: 401 }
+        );
+      }
+
+      if (new Date(session.expires_at) < new Date()) {
+        return NextResponse.json(
+          { error: 'Session expired. Please verify your phone again.' },
+          { status: 401 }
+        );
+      }
+
+      phoneE164 = session.phone_e164;
     }
 
-    if (new Date(session.expires_at) < new Date()) {
-      return NextResponse.json(
-        { error: 'Session expired. Please verify your phone again.' },
-        { status: 401 }
-      );
-    }
-
-    const phoneE164 = session.phone_e164;
-    const phoneDigits = phoneE164.replace(/\D/g, '');
+    const phoneDigits = phoneE164?.replace(/\D/g, '') || '';
 
     const phoneMatches = (value: string | null): boolean => {
-      if (!value) return false;
+      if (!value || !phoneDigits) return false;
       if (value === phoneE164) return true;
       const valueDigits = value.replace(/\D/g, '');
       if (!valueDigits) return false;
       if (valueDigits === phoneDigits) return true;
-      // Suffix match handles local numbers vs E.164 (e.g. "9915712311" vs "919915712311")
       return phoneDigits.endsWith(valueDigits) || valueDigits.endsWith(phoneDigits);
     };
 
-    // 1. Find contact IDs whose phone matches the verified number
+    const emailMatches = (value: string | null): boolean => {
+      if (!value || !customerEmail) return false;
+      return value.toLowerCase() === customerEmail.toLowerCase();
+    };
+
     const { data: contacts } = await supabase
       .from('contacts')
-      .select('id, phone')
-      .not('phone', 'is', null);
+      .select('id, phone, email')
+      .or('phone.not.is.null,email.not.is.null');
 
     const contactIds = (contacts || [])
-      .filter((c) => phoneMatches(c.phone))
+      .filter((c) => phoneMatches(c.phone) || emailMatches(c.email))
       .map((c) => c.id);
 
-    // 2. Fetch bookings by invitee_phone OR by contact_id
     const { data: bookings, error: bookingsError } = await supabase
       .from('bookings')
       .select(
@@ -81,12 +119,12 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    // Match by invitee_phone OR by contact_id linked to this phone
     const seenIds = new Set<string>();
     const filtered = (bookings || []).filter((b) => {
       const byPhone = phoneMatches(b.invitee_phone);
+      const byEmail = emailMatches(b.invitee_email);
       const byContact = b.contact_id != null && contactIds.includes(b.contact_id);
-      if (!byPhone && !byContact) return false;
+      if (!byPhone && !byEmail && !byContact) return false;
       if (seenIds.has(String(b.id))) return false;
       seenIds.add(String(b.id));
       return true;
