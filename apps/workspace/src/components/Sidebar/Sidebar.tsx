@@ -62,8 +62,8 @@ interface SidebarProps {
 export default function Sidebar({ isOpen, onClose }: SidebarProps) {
   const PROFILE_IMAGE_STORAGE_KEY = "workspace_profile_image";
   const PROFILE_IMAGE_EVENT = "workspace-profile-image-updated";
-  
-  const [isDepartmentsOpen, setIsDepartmentsOpen] = useState(false);
+
+  const [isDepartmentsSubmenuOpen, setIsDepartmentsSubmenuOpen] = useState(false);
   const [profileImage, setProfileImage] = useState<string | null>(null);
   const pathname = usePathname();
   const { user } = useAuth();
@@ -136,12 +136,11 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
     }
   };
 
-  // Auto-expand departments submenu if on departments or services page
   useEffect(() => {
-    if (pathname === "/departments" || pathname === "/services") {
-      setIsDepartmentsOpen(true);
+    if (pathname === "/services" || pathname === "/departments") {
+      setIsDepartmentsSubmenuOpen(true);
     } else {
-      setIsDepartmentsOpen(false);
+      setIsDepartmentsSubmenuOpen(false);
     }
   }, [pathname]);
 
@@ -207,39 +206,59 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
             <svg className="h-7 w-7 mr-2" viewBox="-2.4 -2.4 28.80 28.80" fill="none" xmlns="http://www.w3.org/2000/svg"><g id="SVGRepo_bgCarrier"></g><g id="SVGRepo_tracerCarrier" strokeLinecap="round" strokeLinejoin="round"></g><g id="SVGRepo_iconCarrier"> <path d="M16.5 4.25C18.8472 4.25 20.75 6.15279 20.75 8.5C20.75 10.8472 18.8472 12.75 16.5 12.75H7.5C5.98122 12.75 4.75 13.9812 4.75 15.5C4.75 17.0188 5.98122 18.25 7.5 18.25H18.1893L17.4697 17.5303C17.1768 17.2374 17.1768 16.7626 17.4697 16.4697C17.7626 16.1768 18.2374 16.1768 18.5303 16.4697L20.5303 18.4697C20.8232 18.7626 20.8232 19.2374 20.5303 19.5303L18.5303 21.5303C18.2374 21.8232 17.7626 21.8232 17.4697 21.5303C17.1768 21.2374 17.1768 20.7626 17.4697 20.4697L18.1893 19.75H7.5C5.15279 19.75 3.25 17.8472 3.25 15.5C3.25 13.1528 5.15279 11.25 7.5 11.25H16.5C18.0188 11.25 19.25 10.0188 19.25 8.5C19.25 6.98122 18.0188 5.75 16.5 5.75H7.85462C7.55793 6.48296 6.83934 7 6 7C4.89543 7 4 6.10457 4 5C4 3.89543 4.89543 3 6 3C6.83934 3 7.55793 3.51704 7.85462 4.25H16.5Z" fill="#1C274C"></path> </g></svg>
             Forms
           </Link>
-          {/* Departments with Services submenu */}
-          <div>
-            <button
-              onClick={() => setIsDepartmentsOpen(!isDepartmentsOpen)}
-              className={`group w-full flex items-center justify-between px-3 py-2 text-sm font-medium rounded-md ${ activeMenu === "departments" || activeMenu === "services" ? "bg-blue-50 text-blue-600" : "text-gray-700 hover:bg-gray-50" }`}
+          <div className="space-y-1">
+            <div
+              className={`flex items-stretch rounded-md ${
+                activeMenu === "departments" || activeMenu === "services"
+                  ? "bg-blue-50"
+                  : "text-gray-700 hover:bg-gray-50"
+              }`}
             >
-              <div className="flex items-center">
-                <FcOrganization className="h-5 w-5 mr-3" />
-                Departments
-              </div>
-              <svg
-                className={`h-4 w-4 transition-transform ${isDepartmentsOpen ? "rotate-90" : ""}`}
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
+              <Link
+                href="/departments"
+                className={`group flex min-w-0 flex-1 items-center px-3 py-2 text-sm font-medium rounded-l-md ${
+                  activeMenu === "departments" ? "text-blue-600" : "text-gray-700"
+                }`}
+                onClick={() => {
+                  setIsDepartmentsSubmenuOpen(true);
+                  handleNavClick();
+                }}
               >
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-              </svg>
-            </button>
-            {isDepartmentsOpen && (
-              <div className="ml-4 mt-1 space-y-1">
-                <Link
-                  href="/departments"
-                  className={`block px-3 py-2 text-sm font-medium rounded-md ${ activeMenu === "departments" ? "bg-blue-50 text-blue-600" : "text-gray-600 hover:bg-gray-50" }`}
-                  onClick={handleNavClick}
+                <FcOrganization className="h-5 w-5 mr-3 shrink-0" />
+                <span className="truncate">Departments</span>
+              </Link>
+              <button
+                type="button"
+                id="sidebar-dept-submenu-toggle"
+                aria-expanded={isDepartmentsSubmenuOpen}
+                aria-controls="sidebar-dept-submenu"
+                onClick={() => setIsDepartmentsSubmenuOpen((open) => !open)}
+                className={`flex shrink-0 items-center justify-center rounded-r-md px-2 py-2 text-gray-600 hover:bg-gray-100/80 ${
+                  activeMenu === "services" ? "text-blue-600" : ""
+                }`}
+                aria-label={isDepartmentsSubmenuOpen ? "Hide services submenu" : "Show services submenu"}
+              >
+                <svg
+                  className={`h-4 w-4 transition-transform ${isDepartmentsSubmenuOpen ? "rotate-90" : ""}`}
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                  aria-hidden
                 >
-                  Departments
-                </Link>
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
+              </button>
+            </div>
+            {isDepartmentsSubmenuOpen && (
+              <div id="sidebar-dept-submenu" className="ml-4 space-y-1">
                 <Link
                   href="/services"
-                  className={`block px-3 py-2 text-sm font-medium rounded-md ${ activeMenu === "services" ? "bg-blue-50 text-blue-600" : "text-gray-600 hover:bg-gray-50" }`}
+                  className={`flex items-center px-3 py-2 text-sm font-medium rounded-md ${
+                    activeMenu === "services" ? "bg-blue-50 text-blue-600" : "text-gray-600 hover:bg-gray-50"
+                  }`}
                   onClick={handleNavClick}
                 >
+                  <FcCollaboration className="h-5 w-5 mr-3 shrink-0" />
                   Services
                 </Link>
               </div>
