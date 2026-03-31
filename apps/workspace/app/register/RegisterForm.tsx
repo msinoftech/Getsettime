@@ -186,18 +186,18 @@ export default function RegisterForm() {
     };
     const ws = wsBody.workspace ?? null;
 
+    // Fresh metadata before wizard check (JWT can lag behind auth.users after updateUser).
+    const { data: userResult, error: getUserErr } = await supabase.auth.getUser();
+    if (!getUserErr && userResult.user?.user_metadata) {
+      meta = userResult.user.user_metadata as Record<string, unknown>;
+    }
+
     const hasType = !!ws?.type || !!ws?.profession_id;
     const wizardIncomplete = workspaceAdminNeedsOnboardingWizard(meta, hasType);
     if (!wizardIncomplete) {
       resumeStepHydratedUserIdRef.current = null;
       router.replace("/");
       return;
-    }
-
-    // Load latest user_metadata without refreshSession (avoids breaking a brand-new OAuth session).
-    const { data: userResult, error: getUserErr } = await supabase.auth.getUser();
-    if (!getUserErr && userResult.user?.user_metadata) {
-      meta = userResult.user.user_metadata as Record<string, unknown>;
     }
 
     const { data: { session: latestSession } } = await supabase.auth.getSession();
@@ -279,10 +279,21 @@ export default function RegisterForm() {
     setOnboardingMode(true);
     const userIdForResume =
       userResult.user?.id ?? latestSession?.user?.id ?? session.user.id;
-    // Initial login / first load: land on first incomplete step from metadata.
+    // Initial login / first load: resume from metadata; optional ?step= is capped so users cannot skip ahead.
     // Later resolveMode runs (auth events, searchParams) must not override Back/Next.
     if (resumeStepHydratedUserIdRef.current !== userIdForResume) {
-      setOnboardingStep(workspaceOnboardingResumeStep(meta));
+      const resumeFromMeta = workspaceOnboardingResumeStep(meta);
+      let initialStep = resumeFromMeta;
+      if (searchParams.get("onboarding") === "1") {
+        const rawStep = searchParams.get("step");
+        if (rawStep !== null) {
+          const n = parseInt(rawStep, 10);
+          if (Number.isFinite(n) && n >= 1 && n <= ONBOARDING_STEPS) {
+            initialStep = Math.min(n, resumeFromMeta);
+          }
+        }
+      }
+      setOnboardingStep(initialStep);
       resumeStepHydratedUserIdRef.current = userIdForResume;
     }
     const emailUser = userResult.user ?? latestSession?.user ?? session.user;

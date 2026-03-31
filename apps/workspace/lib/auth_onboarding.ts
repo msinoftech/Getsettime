@@ -4,10 +4,9 @@ import type { SupabaseClient, User } from "@supabase/supabase-js";
 export const WORKSPACE_ONBOARDING_STEP_COUNT = 4;
 
 /**
- * First step the user should land on: last completed step + 1, clamped to 1..WORKSPACE_ONBOARDING_STEP_COUNT.
- * `onboarding_last_completed_step` in user metadata: 0 = none, 1 = step 1 done, …, 4 = all steps done.
+ * Parsed `onboarding_last_completed_step`: 0 = none, 1 = step 1 done, …, 4 = all steps done.
  */
-export function workspaceOnboardingResumeStep(
+export function workspaceOnboardingLastCompletedStep(
   userMetadata: Record<string, unknown> | null | undefined
 ): number {
   const raw = userMetadata?.onboarding_last_completed_step;
@@ -17,10 +16,18 @@ export function workspaceOnboardingResumeStep(
       : typeof raw === "string"
         ? parseInt(raw, 10)
         : NaN;
-  const lastDone =
-    Number.isFinite(n) && n >= 0
-      ? Math.min(WORKSPACE_ONBOARDING_STEP_COUNT, Math.floor(n))
-      : 0;
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return Math.min(WORKSPACE_ONBOARDING_STEP_COUNT, Math.floor(n));
+}
+
+/**
+ * First step the user should land on: last completed step + 1, clamped to 1..WORKSPACE_ONBOARDING_STEP_COUNT.
+ * `onboarding_last_completed_step` in user metadata: 0 = none, 1 = step 1 done, …, 4 = all steps done.
+ */
+export function workspaceOnboardingResumeStep(
+  userMetadata: Record<string, unknown> | null | undefined
+): number {
+  const lastDone = workspaceOnboardingLastCompletedStep(userMetadata);
   return Math.min(WORKSPACE_ONBOARDING_STEP_COUNT, Math.max(1, lastDone + 1));
 }
 
@@ -34,7 +41,7 @@ export function workspaceOnboardingRegisterUrl(
 
 /**
  * Workspace admins must finish onboarding while `onboarding_completed` is false.
- * Legacy users: `onboarding_completed` missing → fall back to workspace type/profession.
+ * Legacy users: `onboarding_completed` missing → use saved step progress, else workspace type/profession.
  */
 export function workspaceAdminNeedsOnboardingWizard(
   userMetadata: Record<string, unknown> | null | undefined,
@@ -43,6 +50,11 @@ export function workspaceAdminNeedsOnboardingWizard(
   const oc = userMetadata?.onboarding_completed;
   if (oc === true) return false;
   if (oc === false) return true;
+
+  const lastDone = workspaceOnboardingLastCompletedStep(userMetadata);
+  if (lastDone > 0 && lastDone < WORKSPACE_ONBOARDING_STEP_COUNT) return true;
+  if (lastDone >= WORKSPACE_ONBOARDING_STEP_COUNT) return true;
+
   return !workspaceHasProfessionOrType;
 }
 
