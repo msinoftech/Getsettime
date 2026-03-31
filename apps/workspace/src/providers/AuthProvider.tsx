@@ -2,7 +2,14 @@
 
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react'
 import { supabase } from '@/lib/supabaseClient'
+import { installWorkspaceApiUnauthorizedHandler } from '@/src/lib/install_workspace_api_unauthorized_handler'
 import { useRouter, usePathname } from 'next/navigation'
+import type { User as SupabaseUser } from '@supabase/supabase-js'
+import {
+  workspaceAdminIncompleteOnboarding,
+  isAllowedPathDuringWorkspaceOnboarding,
+  workspaceOnboardingRegisterUrl,
+} from '@/lib/auth_onboarding'
 
 type User = any
 
@@ -22,7 +29,7 @@ export const useAuth = () => useContext(AuthContext)
 const PUBLIC_ROUTES = ["/login", "/register", "/forgot-password", "/reset-password", "/auth/login", "/auth/register", "/auth/forgot-password", "/auth/callback", "/invite-accept", "/my-bookings"];
 
 // Reserved first path segments (app routes) - embed booking uses /[workspaceSlug] or /[workspaceSlug]/[eventTypeSlug]
-const RESERVED_FIRST_SEGMENTS = ['login', 'register', 'forgot-password', 'reset-password', 'auth', 'invite-accept', 'event-type', 'routingform', 'workflows', 'availability', 'team-members', 'departments', 'services', 'profile', 'integrations', 'contacts', 'billings', 'bookings', 'settings', 'booking-preview', 'api', '_next'];
+const RESERVED_FIRST_SEGMENTS = ['login', 'register', 'forgot-password', 'reset-password', 'auth', 'invite-accept', 'event-type', 'routingform', 'workflows', 'availability', 'team-members', 'departments', 'services', 'profile', 'integrations', 'contacts', 'billings', 'bookings', 'settings', 'roles-permissions', 'booking-preview', 'api', '_next'];
 function isPublicRoutePattern(pathname: string): boolean {
   const segments = pathname.split('/').filter(Boolean);
   return (segments.length === 1 || segments.length === 2) && !RESERVED_FIRST_SEGMENTS.includes(segments[0]);
@@ -40,6 +47,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true)
   const router = useRouter()
   const pathname = usePathname()
+
+  useEffect(() => {
+    installWorkspaceApiUnauthorizedHandler()
+  }, [])
 
   useEffect(() => {
     // Get current session and verify role
@@ -92,6 +103,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setLoading(false)
           return
         }
+
+        if (
+          userRole === 'workspace_admin' &&
+          !isPublicPath(pathname) &&
+          !isAllowedPathDuringWorkspaceOnboarding(pathname)
+        ) {
+          const incomplete = await workspaceAdminIncompleteOnboarding(
+            supabase,
+            currentUser as SupabaseUser
+          )
+          if (incomplete) {
+            const meta = currentUser.user_metadata as Record<string, unknown> | undefined
+            router.push(workspaceOnboardingRegisterUrl(meta ?? {}))
+            setUser(currentUser)
+            setLoading(false)
+            return
+          }
+        }
       }
 
       setUser(currentUser)
@@ -142,6 +171,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setUser(currentUser)
           return
         }
+
+        if (
+          userRole === 'workspace_admin' &&
+          !isPublicPath(pathname) &&
+          !isAllowedPathDuringWorkspaceOnboarding(pathname)
+        ) {
+          const incomplete = await workspaceAdminIncompleteOnboarding(
+            supabase,
+            currentUser as SupabaseUser
+          )
+          if (incomplete) {
+            const meta = currentUser.user_metadata as Record<string, unknown> | undefined
+            router.push(workspaceOnboardingRegisterUrl(meta ?? {}))
+            setUser(currentUser)
+            return
+          }
+        }
       }
 
       setUser(currentUser)
@@ -149,11 +195,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!session && !isPublicPath(pathname)) {
         router.push('/login')
       }
-      
-      if (session && pathname === '/login') {
-        const loginRole = session.user?.user_metadata?.role
-        router.push(loginRole === 'customer' ? '/my-bookings' : '/')
-      }
+      // Post-login navigation is handled by LoginForm (onboarding, bootstrap, role targets) to avoid racing redirects.
     })
 
     return () => {

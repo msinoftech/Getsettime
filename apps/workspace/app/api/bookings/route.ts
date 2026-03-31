@@ -78,7 +78,7 @@ export async function GET(req: NextRequest) {
     // Build query with search filter, event_types and contacts join
     let query = supabase
       .from('bookings')
-      .select('*, event_types(title), contacts(name, phone, email)', { count: 'exact' })
+      .select('*, event_types(title, duration_minutes), contacts(name, phone, email)', { count: 'exact' })
       .eq('workspace_id', workspaceId)
       .order(orderColumn, { ascending });
 
@@ -89,7 +89,9 @@ export async function GET(req: NextRequest) {
       query = query.lt('start_at', now);
     }
     if (sortBy === 'new') {
-      query = query.eq('is_viewed', false);
+      query = query.or(
+        'is_viewed.eq.false,and(is_reschedule_viewed.eq.false,status.eq.reschedule)'
+      );
     }
 
     // Apply search filter if provided
@@ -437,7 +439,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    // Build notification context (names may be missing; fall back to "Not assigned")
+    // Build notification context (omit department/provider in emails when not set)
     let providerEmail: string | undefined;
     let providerName: string | undefined;
     let departmentName: string | undefined;
@@ -499,9 +501,6 @@ export async function POST(req: NextRequest) {
       console.error('Error resolving provider details:', providerErr);
     }
 
-    const providerLabel = providerName?.trim() ? providerName : (service_provider_id ? 'Assigned (details unavailable)' : 'Not assigned');
-    const departmentLabel = departmentName?.trim() ? departmentName : (department_id ? 'Assigned (details unavailable)' : 'Not assigned');
-
     // Send email notifications after successful booking creation (best-effort)
     try {
       if (invitee_email && invitee_email.trim()) {
@@ -510,10 +509,10 @@ export async function POST(req: NextRequest) {
         const emailData = {
           inviteeName: invitee_name.trim(),
           inviteeEmail: invitee_email.trim(),
-          providerName: providerLabel,
+          ...(providerName?.trim() ? { providerName: providerName.trim() } : {}),
           providerEmail: providerEmail,
           eventTypeName,
-          departmentName: departmentLabel,
+          ...(departmentName?.trim() ? { departmentName: departmentName.trim() } : {}),
           startTime: start_at,
           endTime: end_at || start_at,
           duration: durationMinutes,
@@ -551,20 +550,15 @@ export async function POST(req: NextRequest) {
         };
         const when = new Date(start_at).toLocaleString('en-US', whenOpts);
 
-        // const message = [
-        //   'Booking confirmed',
-        //   `Event: ${eventTypeName}`,
-        //   `Department: ${departmentLabel}`,
-        //   `Service Provider: ${providerLabel}`,
-        //   `When: ${when}`,
-        //   metadata?.notes ? `Notes: ${String(metadata.notes)}` : '',
-        // ]
-
-        const message = [
-          'Booking confirmed' + ' ' + `Event: ${eventTypeName}` + ' ' + `Department: ${departmentLabel}` + ' ' + `Service Provider: ${providerLabel}` + ' ' + `When: ${when}` + ' ' + (metadata?.notes ? `Notes: ${String(metadata.notes)}` : ''),
-        ]
-          .filter((s) => s && String(s).trim().length > 0)
-          .join('\n');
+        const whatsappParts = [
+          'Booking confirmed',
+          `Event: ${eventTypeName}`,
+          ...(departmentName?.trim() ? [`Department: ${departmentName.trim()}`] : []),
+          ...(providerName?.trim() ? [`Service Provider: ${providerName.trim()}`] : []),
+          `When: ${when}`,
+          ...(metadata?.notes ? [`Notes: ${String(metadata.notes)}`] : []),
+        ];
+        const message = whatsappParts.join(' ');
 
         await fetch(`${origin}/api/whatsapp`, {
           method: 'POST',
@@ -666,6 +660,7 @@ export async function PATCH(req: NextRequest) {
       payment_id,
       metadata,
       is_viewed,
+      is_reschedule_viewed,
     } = body;
 
     if (!id) {
@@ -677,6 +672,23 @@ export async function PATCH(req: NextRequest) {
     if (!workspaceId) {
       return NextResponse.json({ error: 'Workspace ID not found' }, { status: 400 });
     }
+
+    const { data: existingRow, error: existingError } = await supabase
+      .from('bookings')
+      .select(
+        'start_at, end_at, status, invitee_name, invitee_email, event_type_id, service_provider_id, department_id'
+      )
+      .eq('id', id)
+      .eq('workspace_id', workspaceId)
+      .single();
+
+    if (existingError || !existingRow) {
+      return NextResponse.json({ error: 'Booking not found or access denied' }, { status: 404 });
+    }
+
+    const nextStatusRaw = status !== undefined ? status : existingRow.status;
+    const nextIsRescheduleStatus =
+      String(nextStatusRaw ?? '').toLowerCase() === 'reschedule';
 
     const updateData: Record<string, unknown> = {};
     if (event_type_id !== undefined) updateData.event_type_id = event_type_id || null;
@@ -692,6 +704,21 @@ export async function PATCH(req: NextRequest) {
     if (payment_id !== undefined) updateData.payment_id = payment_id || null;
     if (metadata !== undefined) updateData.metadata = metadata || null;
     if (is_viewed !== undefined) updateData.is_viewed = is_viewed;
+    if (is_reschedule_viewed !== undefined) {
+      updateData.is_reschedule_viewed = is_reschedule_viewed;
+    }
+
+    const normEnd = (v: string | null | undefined) => v ?? null;
+    const startChanged =
+      start_at !== undefined && start_at !== existingRow.start_at;
+    const endChanged =
+      end_at !== undefined &&
+      normEnd(end_at) !== normEnd(existingRow.end_at);
+    const timeChanged = startChanged || endChanged;
+    if (timeChanged && nextIsRescheduleStatus) {
+      updateData.is_reschedule_viewed = false;
+    }
+
     const { data, error } = await supabase
       .from('bookings')
       .update(updateData)
@@ -709,10 +736,86 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ error: 'Booking not found or access denied' }, { status: 404 });
     }
 
+    const finalIsReschedule =
+      String(data?.status ?? '').toLowerCase() === 'reschedule';
+    const shouldSendRescheduleEmails = timeChanged && finalIsReschedule;
+
+    if (shouldSendRescheduleEmails) {
+      try {
+        let providerEmail: string | undefined;
+        let providerName: string | undefined;
+        let departmentName: string | undefined;
+        let eventTypeName = 'Appointment';
+        let durationMinutes = 30;
+
+        if (data.event_type_id) {
+          const { data: et } = await supabase
+            .from('event_types')
+            .select('title, duration_minutes')
+            .eq('id', data.event_type_id)
+            .single();
+          if (et) {
+            eventTypeName = et.title || eventTypeName;
+            durationMinutes = et.duration_minutes || durationMinutes;
+          }
+        }
+
+        if (data.department_id) {
+          const { data: dept } = await supabase
+            .from('departments')
+            .select('name')
+            .eq('id', data.department_id)
+            .single();
+          departmentName = dept?.name || undefined;
+        }
+
+        const serviceRoleKey = process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY;
+        if (data.service_provider_id && serviceRoleKey) {
+          const adminClient = createClient(supabaseUrl, serviceRoleKey, {
+            auth: { autoRefreshToken: false, persistSession: false },
+          });
+          const { data: providerUserData, error: providerErr } =
+            await adminClient.auth.admin.getUserById(data.service_provider_id);
+          if (!providerErr && providerUserData?.user) {
+            const u = providerUserData.user;
+            providerEmail = u.email || undefined;
+            providerName =
+              u.user_metadata?.name ||
+              u.email?.split('@')[0] ||
+              'Service Provider';
+          }
+        }
+
+        const prevStart = existingRow.start_at ?? undefined;
+        const prevEnd = existingRow.end_at ?? undefined;
+        const newStart = data.start_at ?? prevStart;
+        const newEnd = data.end_at ?? prevEnd ?? newStart;
+
+        const { sendBookingRescheduleEmails } = await import('@/lib/email-service');
+        await sendBookingRescheduleEmails({
+          inviteeName: data.invitee_name || 'Invitee',
+          ...(data.invitee_email?.trim()
+            ? { inviteeEmail: data.invitee_email.trim() }
+            : {}),
+          ...(providerName?.trim() ? { providerName: providerName.trim() } : {}),
+          ...(providerEmail?.trim() ? { providerEmail: providerEmail.trim() } : {}),
+          eventTypeName,
+          ...(departmentName?.trim() ? { departmentName: departmentName.trim() } : {}),
+          startTime: newStart!,
+          endTime: newEnd!,
+          duration: durationMinutes,
+          ...(prevStart ? { previousStartTime: prevStart } : {}),
+          ...(prevEnd ? { previousEndTime: prevEnd } : {}),
+        });
+      } catch (emailErr) {
+        console.error('Error sending reschedule emails (dashboard):', emailErr);
+      }
+    }
+
     await appendActivityLog(workspaceId, {
       type: 'booking',
       action: 'updated',
-      title: 'Booking updated',
+      title: timeChanged && finalIsReschedule ? 'Booking rescheduled' : 'Booking updated',
       description: `${data?.invitee_name || 'Someone'} (${data?.status || 'pending'})`,
     });
 

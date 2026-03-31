@@ -42,6 +42,7 @@ const PATH_TO_MENU: Record<string, string> = {
   "/settings": "settings",
   "/billings": "billings",
   "/contacts": "contacts",
+  "/roles-permissions": "roles-permissions",
 };
 
 function pathnameToActiveMenu(pathname: string): string {
@@ -267,6 +268,10 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
           <Link href="/contacts" className={`group flex items-center px-3 py-2 text-sm font-medium rounded-md ${ activeMenu === "contacts" ? "bg-blue-50 text-blue-600" : "text-gray-700 hover:bg-gray-50" }`} onClick={handleNavClick}>
             <FcAddressBook className="h-5 w-5 mr-3" />
             Contacts
+          </Link>
+          <Link href="/roles-permissions" className={`group flex items-center px-3 py-2 text-sm font-medium rounded-md ${ activeMenu === "roles-permissions" ? "bg-blue-50 text-blue-600" : "text-gray-700 hover:bg-gray-50" }`} onClick={handleNavClick}>
+            <FcList className="h-5 w-5 mr-3" />
+            Roles &amp; permissions
           </Link>
           <Link href="/settings" className={`group flex items-center px-3 py-2 text-sm font-medium rounded-md ${ activeMenu === "settings" ? "bg-blue-50 text-blue-600" : "text-gray-700 hover:bg-gray-50" }`} onClick={handleNavClick}>
             <FcSettings className="h-5 w-5 mr-3" />

@@ -169,6 +169,7 @@ export async function POST(req: NextRequest) {
         start_at,
         end_at: end_at || null,
         status: 'reschedule',
+        is_reschedule_viewed: false,
       })
       .eq('id', booking.id)
       .select()
@@ -229,15 +230,16 @@ export async function POST(req: NextRequest) {
     } catch { /* non-blocking */ }
 
     try {
-      if (booking.invitee_email) {
+      const inviteeEmailTrimmed = booking.invitee_email?.trim();
+      if (inviteeEmailTrimmed || providerEmail?.trim()) {
         const { sendBookingRescheduleEmails } = await import('@/lib/email-service');
         await sendBookingRescheduleEmails({
           inviteeName: booking.invitee_name || 'Invitee',
-          inviteeEmail: booking.invitee_email,
-          providerName: providerName || 'Not assigned',
-          providerEmail,
+          ...(inviteeEmailTrimmed ? { inviteeEmail: inviteeEmailTrimmed } : {}),
+          ...(providerName?.trim() ? { providerName: providerName.trim() } : {}),
+          ...(providerEmail?.trim() ? { providerEmail: providerEmail.trim() } : {}),
           eventTypeName,
-          departmentName: departmentName || 'Not assigned',
+          ...(departmentName?.trim() ? { departmentName: departmentName.trim() } : {}),
           startTime: start_at,
           endTime: end_at || start_at,
           duration: durationMinutes,

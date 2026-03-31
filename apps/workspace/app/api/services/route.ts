@@ -1,6 +1,33 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { appendActivityLog } from '@/lib/activity-log';
+
+async function resolveDepartmentIdForWorkspace(
+  supabase: SupabaseClient,
+  workspaceId: number | string,
+  raw: unknown
+): Promise<number | null> {
+  if (raw === undefined || raw === null || raw === '') {
+    return null;
+  }
+  const id =
+    typeof raw === 'number'
+      ? raw
+      : parseInt(String(raw).trim(), 10);
+  if (!Number.isFinite(id) || id <= 0) {
+    throw new Error('Invalid department');
+  }
+  const { data, error } = await supabase
+    .from('departments')
+    .select('id')
+    .eq('id', id)
+    .eq('workspace_id', workspaceId)
+    .maybeSingle();
+  if (error || !data) {
+    throw new Error('Department not found in this workspace');
+  }
+  return id;
+}
 
 /**
  * Creates an authenticated Supabase client using the anon key (respects RLS)
@@ -56,7 +83,7 @@ export async function GET(req: NextRequest) {
     // RLS automatically filters by workspace_id from JWT
     const { data, error } = await supabase
       .from('services')
-      .select('*')
+      .select('*, departments(name)')
       .order('created_at', { ascending: false });
 
     if (error) {
@@ -88,7 +115,7 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json();
-    const { name, description, price } = body;
+    const { name, description, price, department_id } = body;
 
     if (!name || name.trim() === '') {
       return NextResponse.json({ error: 'Service name is required' }, { status: 400 });
@@ -99,6 +126,18 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Workspace ID not found' }, { status: 400 });
     }
 
+    let departmentIdResolved: number | null = null;
+    try {
+      departmentIdResolved = await resolveDepartmentIdForWorkspace(
+        supabase,
+        workspaceId,
+        department_id
+      );
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Invalid department';
+      return NextResponse.json({ error: msg }, { status: 400 });
+    }
+
     // RLS validates workspace_id matches JWT; we provide it for INSERT WITH CHECK policy
     const { data, error } = await supabase
       .from('services')
@@ -107,8 +146,9 @@ export async function POST(req: NextRequest) {
         name: name.trim(),
         description: description?.trim() || null,
         price: price ? parseFloat(price) : null,
+        department_id: departmentIdResolved,
       })
-      .select()
+      .select('*, departments(name)')
       .single();
 
     if (error) {
@@ -147,7 +187,7 @@ export async function PUT(req: NextRequest) {
     }
 
     const body = await req.json();
-    const { id, name, description, price } = body;
+    const { id, name, description, price, department_id } = body;
 
     if (!id) {
       return NextResponse.json({ error: 'Service ID is required' }, { status: 400 });
@@ -157,16 +197,40 @@ export async function PUT(req: NextRequest) {
       return NextResponse.json({ error: 'Service name is required' }, { status: 400 });
     }
 
+    const workspaceId = user.user_metadata?.workspace_id;
+    if (!workspaceId) {
+      return NextResponse.json({ error: 'Workspace ID not found' }, { status: 400 });
+    }
+
+    let departmentIdResolved: number | null | undefined = undefined;
+    if (department_id !== undefined) {
+      try {
+        departmentIdResolved = await resolveDepartmentIdForWorkspace(
+          supabase,
+          workspaceId,
+          department_id
+        );
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : 'Invalid department';
+        return NextResponse.json({ error: msg }, { status: 400 });
+      }
+    }
+
+    const updatePayload: Record<string, unknown> = {
+      name: name.trim(),
+      description: description?.trim() || null,
+      price: price ? parseFloat(price) : null,
+    };
+    if (departmentIdResolved !== undefined) {
+      updatePayload.department_id = departmentIdResolved;
+    }
+
     // RLS automatically filters by workspace_id from JWT
     const { data, error } = await supabase
       .from('services')
-      .update({
-        name: name.trim(),
-        description: description?.trim() || null,
-        price: price ? parseFloat(price) : null,
-      })
+      .update(updatePayload)
       .eq('id', id)
-      .select()
+      .select('*, departments(name)')
       .single();
 
     if (error) {
@@ -178,15 +242,12 @@ export async function PUT(req: NextRequest) {
       return NextResponse.json({ error: 'Service not found or unauthorized' }, { status: 404 });
     }
 
-    const workspaceId = user.user_metadata?.workspace_id;
-    if (workspaceId) {
-      await appendActivityLog(workspaceId, {
-        type: 'service',
-        action: 'updated',
-        title: 'Service updated',
-        description: data?.name || name.trim(),
-      });
-    }
+    await appendActivityLog(workspaceId, {
+      type: 'service',
+      action: 'updated',
+      title: 'Service updated',
+      description: data?.name || name.trim(),
+    });
 
     return NextResponse.json({ service: data });
   } catch (err: unknown) {

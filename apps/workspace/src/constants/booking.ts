@@ -73,6 +73,8 @@ export const BOOKING_EMPTY_MESSAGES = {
 
 // Config
 export const SCROLL_LOAD_DISTANCE = 200;
+/** Upper bound on days in the horizontal strip (auto-load until scrollable or cap). */
+export const STRIP_MAX_DAYS = 180;
 export const SUCCESS_REDIRECT_MS = 3700;
 export const DAYS_BATCH_SIZE = 10;
 export const CALENDAR_BUFFER_DAYS = 30;

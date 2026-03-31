@@ -100,10 +100,10 @@ export async function POST(
         await sendBookingCancellationEmails({
           inviteeName: booking.invitee_name || 'Invitee',
           inviteeEmail: booking.invitee_email,
-          providerName: providerName || 'Not assigned',
+          ...(providerName?.trim() ? { providerName: providerName.trim() } : {}),
           providerEmail,
           eventTypeName,
-          departmentName: departmentName || 'Not assigned',
+          ...(departmentName?.trim() ? { departmentName: departmentName.trim() } : {}),
           startTime: booking.start_at || '',
           endTime: booking.end_at || booking.start_at || '',
           duration: durationMinutes,

@@ -8,6 +8,7 @@ import type { NormalizedIntakeForm } from '@/src/utils/intakeForm';
 import { normalizeIntakeForm } from '@/src/utils/intakeForm';
 import type { Service, Department, ServiceProvider } from '@/src/types/booking-entities';
 import type { Booking } from '@/src/types/booking';
+import { getEventTypeDurationInner } from '@/src/utils/booking';
 
 type BookingPreviewData = Omit<Booking, 'id' | 'workspace_id' | 'host_user_id'>;
 
@@ -219,6 +220,10 @@ function BookingPreviewContent({
   const displayPhone =
     booking.invitee_phone?.trim() || booking.contacts?.phone?.trim() || 'N/A';
 
+  const eventDurationInner = getEventTypeDurationInner(
+    booking.event_types?.duration_minutes
+  );
+
   const departmentName = department?.name || 'N/A';
   const providerName =
     serviceProvider?.raw_user_meta_data?.full_name ||
@@ -289,6 +294,12 @@ function BookingPreviewContent({
               </span>
               <span className="text-slate-800">
                 {booking.event_types?.title || 'N/A'}
+                {eventDurationInner != null && (
+                  <span className="text-slate-500">
+                    {' '}
+                    ({eventDurationInner})
+                  </span>
+                )}
               </span>
             </div>
             <div className="flex flex-col sm:flex-row sm:items-center">

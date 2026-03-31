@@ -13,6 +13,7 @@ import {
   FcAutomatic,
   FcBusinessman,
   FcGraduationCap,
+  FcOrgUnit,
 } from "@app/icons";
 
 const PATH_TO_MENU: Record<string, string> = {
@@ -20,6 +21,7 @@ const PATH_TO_MENU: Record<string, string> = {
   "/users": "users",
   "/workspaces": "workspaces",
   "/professions": "professions",
+  "/departments": "departments",
   "/bookings": "bookings",
   "/settings": "settings",
 };
@@ -128,6 +130,11 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
           <Link href="/professions" className={`group flex items-center px-3 py-2 text-sm font-medium rounded-md ${ activeMenu === "professions" ? "bg-blue-50 text-blue-600" : "text-gray-700 hover:bg-gray-50" }`} onClick={handleNavClick}>
             <FcGraduationCap className="h-5 w-5 mr-3" />
             Professions
+          </Link>        
+
+          <Link href="/departments" className={`group flex items-center px-3 py-2 text-sm font-medium rounded-md ${ activeMenu === "departments" ? "bg-blue-50 text-blue-600" : "text-gray-700 hover:bg-gray-50" }`} onClick={handleNavClick}>
+            <FcOrgUnit className="h-5 w-5 mr-3" />
+            Departments
           </Link>        
           
           <Link href="/bookings" className={`group flex items-center px-3 py-2 text-sm font-medium rounded-md ${ activeMenu === "bookings" ? "bg-blue-50 text-blue-600" : "text-gray-700 hover:bg-gray-50" }`} onClick={handleNavClick}>

@@ -3,14 +3,72 @@ import { useState, useEffect, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
+import {
+  workspaceAdminNeedsOnboardingWizard,
+  workspaceOnboardingResumeStep,
+} from "@/lib/auth_onboarding";
 import { supabase } from "@/lib/supabaseClient";
 import AvailabilityTimesheet from "@/src/components/Settings/AvailabilityTimesheet";
 import AlertMessage from "@/src/components/Auth/AlertMessage";
 
+/** Row from professions_list (onboarding catalog), not workspace professions.id */
 type Profession = { id: number; name: string };
 
 const ONBOARDING_STEPS = 4;
 const OTHER_VALUE = "__other__";
+
+function read_google_calendar_sync(meta: Record<string, unknown>): boolean {
+  const v = meta.google_calendar_sync;
+  if (v === true) return true;
+  if (v === false) return false;
+  if (v === "true" || v === "1") return true;
+  if (v === "false" || v === "0") return false;
+  return false;
+}
+
+/**
+ * Serialize refreshSession across this module. Concurrent refreshSession() calls can consume the
+ * refresh token twice and clear the session (user then sees "Not signed in" on the next API call).
+ */
+let authRefreshChain: Promise<void> = Promise.resolve();
+
+async function enqueueAuthRefresh(): Promise<void> {
+  const next = authRefreshChain.then(() => supabase.auth.refreshSession());
+  authRefreshChain = next.then(() => undefined).catch(() => undefined);
+  await next;
+}
+
+/**
+ * updateUser() needs a client session. Do not call refreshSession() when a session already exists —
+ * right after OAuth, extra refreshes can fail or rotate tokens in a way that clears the session.
+ */
+async function ensureSupabaseSessionOrThrow(): Promise<void> {
+  let { data: { session } } = await supabase.auth.getSession();
+  if (session?.user) return;
+  await enqueueAuthRefresh();
+  ({ data: { session } } = await supabase.auth.getSession());
+  if (!session?.user) {
+    throw new Error("Not signed in or session expired. Please sign in again.");
+  }
+}
+
+/** Bearer + JSON headers for workspace API routes; refresh only if access_token is missing. */
+async function headers_for_workspace_api(): Promise<Record<string, string>> {
+  let { data: { session } } = await supabase.auth.getSession();
+  let token = session?.access_token;
+  if (!token) {
+    await enqueueAuthRefresh();
+    ({ data: { session } } = await supabase.auth.getSession());
+    token = session?.access_token;
+  }
+  if (!token) {
+    throw new Error("Not signed in or session expired. Please sign in again.");
+  }
+  return {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${token}`,
+  };
+}
 
 export default function RegisterForm() {
   const router = useRouter();
@@ -52,15 +110,28 @@ export default function RegisterForm() {
   const registeringRef = useRef(false);
   const bootstrapPromiseRef = useRef<Promise<number | null> | null>(null);
   const autoGoogleTriggeredRef = useRef(false);
+  const emailFromUrlAppliedRef = useRef(false);
+  /** Apply metadata resume step only once per user after login / first load; do not override Back/Next. */
+  const resumeStepHydratedUserIdRef = useRef<string | null>(null);
 
-  const resolveMode = async (session: { user: { user_metadata?: Record<string, unknown>; email?: string; email_confirmed_at?: string }; access_token: string } | null) => {
+  const EMAIL_PARAM_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+  const resolveMode = async (session: {
+    user: {
+      id: string;
+      user_metadata?: Record<string, unknown>;
+      email?: string;
+      email_confirmed_at?: string;
+    };
+    access_token: string;
+  } | null) => {
     if (!session?.user) {
+      resumeStepHydratedUserIdRef.current = null;
       setOnboardingMode(false);
       return;
     }
-    const meta = session.user.user_metadata ?? {};
+    let meta = session.user.user_metadata ?? {};
     let wid = meta.workspace_id as number | undefined;
-    const isOnboardingParam = searchParams.get("onboarding") === "1";
     const isConfirmedParam = searchParams.get("confirmed") === "1";
 
     if (!wid && (isConfirmedParam || session.user.email_confirmed_at)) {
@@ -80,7 +151,7 @@ export default function RegisterForm() {
       const resolvedWid = await promise;
       if (resolvedWid != null) {
         wid = resolvedWid;
-        await supabase.auth.refreshSession();
+        await enqueueAuthRefresh();
       }
       bootstrapPromiseRef.current = null;
     }
@@ -89,49 +160,156 @@ export default function RegisterForm() {
       setOnboardingMode(false);
       return;
     }
-    setWorkspaceId(wid);
-    const { data: ws } = await supabase.from("workspaces").select("type, profession_id").eq("id", wid).maybeSingle();
-    const hasType = !!ws?.type || !!ws?.profession_id;
-    if (isOnboardingParam || isConfirmedParam || !hasType) {
-      setOnboardingMode(true);
-      setWorkspaceType(ws?.type ?? null);
 
-      // Fetch professions list
-      const profRes = await fetch("/api/professions", {
-        headers: { Authorization: `Bearer ${session.access_token}` },
-      });
-      if (profRes.ok) {
-        const profBody = await profRes.json();
-        setProfessions(profBody.professions ?? []);
-        if (ws?.profession_id) {
-          setSelectedProfessionId(String(ws.profession_id));
+    const userRole = meta.role as string | undefined;
+    if (userRole && userRole !== "workspace_admin") {
+      router.replace(userRole === "customer" ? "/my-bookings" : "/");
+      return;
+    }
+
+    setWorkspaceId(wid);
+
+    const authHeaders = { Authorization: `Bearer ${session.access_token}` };
+
+    const wsRes = await fetch("/api/workspace", { headers: authHeaders });
+    if (!wsRes.ok) {
+      resumeStepHydratedUserIdRef.current = null;
+      setOnboardingMode(false);
+      return;
+    }
+    const wsBody = (await wsRes.json()) as {
+      workspace?: {
+        type?: string | null;
+        profession_id?: number | null;
+        profession_name?: string | null;
+      };
+    };
+    const ws = wsBody.workspace ?? null;
+
+    const hasType = !!ws?.type || !!ws?.profession_id;
+    const wizardIncomplete = workspaceAdminNeedsOnboardingWizard(meta, hasType);
+    if (!wizardIncomplete) {
+      resumeStepHydratedUserIdRef.current = null;
+      router.replace("/");
+      return;
+    }
+
+    // Load latest user_metadata without refreshSession (avoids breaking a brand-new OAuth session).
+    const { data: userResult, error: getUserErr } = await supabase.auth.getUser();
+    if (!getUserErr && userResult.user?.user_metadata) {
+      meta = userResult.user.user_metadata as Record<string, unknown>;
+    }
+
+    const { data: { session: latestSession } } = await supabase.auth.getSession();
+    const tokenAfterRefresh = latestSession?.access_token ?? session.access_token;
+    const authHeadersFresh: Record<string, string> = {
+      Authorization: `Bearer ${tokenAfterRefresh}`,
+    };
+
+    setWorkspaceType(ws?.type ?? null);
+
+    // Catalog from professions_list; prefill from workspace.type (step 1) and/or server-resolved profession_name
+    const profRes = await fetch("/api/professions", { headers: authHeadersFresh });
+    let catalogList: Profession[] = [];
+    if (profRes.ok) {
+      const profBody = await profRes.json();
+      catalogList = (profBody.professions ?? []) as Profession[];
+    }
+    setProfessions(catalogList);
+
+    let resolvedCatalogProfessionId = "";
+    const labelForProfession =
+      (typeof ws?.type === "string" && ws.type.trim()) ||
+      (typeof ws?.profession_name === "string" && ws.profession_name.trim()) ||
+      "";
+
+    if (labelForProfession) {
+      if (catalogList.length > 0) {
+        const match = catalogList.find(
+          (x) => x.name.toLowerCase() === labelForProfession.toLowerCase()
+        );
+        if (match) {
+          resolvedCatalogProfessionId = String(match.id);
+          setSelectedProfessionId(String(match.id));
+        } else {
+          resolvedCatalogProfessionId = OTHER_VALUE;
+          setSelectedProfessionId(OTHER_VALUE);
+          setCustomProfession(labelForProfession);
+        }
+      } else {
+        resolvedCatalogProfessionId = OTHER_VALUE;
+        setSelectedProfessionId(OTHER_VALUE);
+        setCustomProfession(labelForProfession);
+      }
+    }
+
+    // Prefill department from workspace when step 1 was saved earlier
+    const wsDeptRes = await fetch("/api/departments", { headers: authHeadersFresh });
+    if (wsDeptRes.ok) {
+      const deptJson = (await wsDeptRes.json()) as { departments?: { name: string }[] };
+      const savedName = deptJson.departments?.[0]?.name?.trim();
+      if (savedName) {
+        let suggestionNames: string[] = [];
+        if (
+          resolvedCatalogProfessionId &&
+          resolvedCatalogProfessionId !== OTHER_VALUE &&
+          /^\d+$/.test(resolvedCatalogProfessionId)
+        ) {
+          const sRes = await fetch(
+            `/api/superadmin/departments?profession_id=${encodeURIComponent(resolvedCatalogProfessionId)}`
+          );
+          if (sRes.ok) {
+            const sj = (await sRes.json()) as { departments?: string[] };
+            suggestionNames = Array.isArray(sj.departments) ? sj.departments : [];
+          }
+        }
+        const exactInSuggestions = suggestionNames.find(
+          (n) => n.toLowerCase() === savedName.toLowerCase()
+        );
+        if (exactInSuggestions) {
+          setSelectedDepartment(exactInSuggestions);
+        } else {
+          setSelectedDepartment(OTHER_VALUE);
+          setCustomDepartment(savedName);
         }
       }
-
-      // Fetch department name suggestions via superadmin proxy (same-origin, avoids CORS)
-      const deptRes = await fetch("/api/superadmin/departments");
-      if (deptRes.ok) {
-        const deptBody = await deptRes.json();
-        const suggestions: string[] = deptBody.departments ?? [];
-        setDepartmentSuggestions(suggestions);
-      }
-      const stepParam = searchParams.get("step");
-      const stepNum = stepParam ? Math.min(ONBOARDING_STEPS, Math.max(1, parseInt(stepParam, 10) || 1)) : 1;
-      setOnboardingStep(Number.isNaN(stepNum) ? 1 : stepNum);
-      setOnboardingUser({
-        email: session.user.email ?? undefined,
-        google_calendar_sync: !!session.user.user_metadata?.google_calendar_sync,
-      });
-      setCalendarConnecting(false);
-    } else {
-      router.replace("/");
     }
+
+    setOnboardingMode(true);
+    const userIdForResume =
+      userResult.user?.id ?? latestSession?.user?.id ?? session.user.id;
+    // Initial login / first load: land on first incomplete step from metadata.
+    // Later resolveMode runs (auth events, searchParams) must not override Back/Next.
+    if (resumeStepHydratedUserIdRef.current !== userIdForResume) {
+      setOnboardingStep(workspaceOnboardingResumeStep(meta));
+      resumeStepHydratedUserIdRef.current = userIdForResume;
+    }
+    const emailUser = userResult.user ?? latestSession?.user ?? session.user;
+    setOnboardingUser({
+      email: emailUser.email ?? undefined,
+      google_calendar_sync: read_google_calendar_sync(meta),
+    });
+    setCalendarConnecting(false);
   };
+
+  // Prefill email from /register?email=... (e.g. from login no-account modal)
+  useEffect(() => {
+    const em = searchParams.get("email");
+    if (emailFromUrlAppliedRef.current || !em || !EMAIL_PARAM_RE.test(em)) return;
+    setEmail(em);
+    emailFromUrlAppliedRef.current = true;
+  }, [searchParams]);
 
   // Resolve session: show onboarding for new users (Google signup or email/password after confirm)
   useEffect(() => {
     const errorParam = searchParams.get("error");
-    if (errorParam) setError(decodeURIComponent(errorParam));
+    if (errorParam) {
+      if (errorParam === "user_not_found") {
+        setError("No account found. Try signing up or use a different email.");
+      } else {
+        setError(decodeURIComponent(errorParam));
+      }
+    }
 
     const run = async () => {
       const { data: { session } } = await supabase.auth.getSession();
@@ -156,6 +334,42 @@ export default function RegisterForm() {
     }
   }, [searchParams, onboardingMode]);
 
+  useEffect(() => {
+    if (onboardingMode !== true) return;
+
+    if (!selectedProfessionId || selectedProfessionId === OTHER_VALUE) {
+      setDepartmentSuggestions([]);
+      return;
+    }
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(
+          `/api/superadmin/departments?profession_id=${encodeURIComponent(selectedProfessionId)}`
+        );
+        const data = await res.json();
+        if (cancelled || !res.ok) return;
+        const list = data.departments;
+        setDepartmentSuggestions(Array.isArray(list) ? list : []);
+      } catch {
+        if (!cancelled) setDepartmentSuggestions([]);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [onboardingMode, selectedProfessionId]);
+
+  const persistOnboardingStep = async (lastCompleted: number) => {
+    await ensureSupabaseSessionOrThrow();
+    const { error: uerr } = await supabase.auth.updateUser({
+      data: { onboarding_last_completed_step: lastCompleted },
+    });
+    if (uerr) throw new Error(uerr.message);
+  };
+
   const saveStep1 = async (): Promise<boolean> => {
     const isOtherProfession = selectedProfessionId === OTHER_VALUE;
     const isOtherDepartment = selectedDepartment === OTHER_VALUE;
@@ -167,42 +381,24 @@ export default function RegisterForm() {
     setOnboardingSaving(true);
     setError("");
     try {
-      const token = (await supabase.auth.getSession()).data.session?.access_token;
-      const headers: Record<string, string> = { "Content-Type": "application/json" };
-      if (token) headers.Authorization = `Bearer ${token}`;
+      const headers = await headers_for_workspace_api();
 
-      // Resolve profession
-      let professionId: number;
-      let professionName: string;
+      const professionName = isOtherProfession
+        ? customProfession.trim()
+        : professions.find((p) => p.id === Number(selectedProfessionId))?.name ?? "";
+
+      const workspaceBody = isOtherProfession
+        ? { custom_profession: professionName }
+        : { professions_list_id: Number(selectedProfessionId) };
 
       if (isOtherProfession) {
-        const res = await fetch("/api/professions", {
-          method: "POST",
-          headers,
-          body: JSON.stringify({ name: customProfession.trim() }),
-        });
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({}));
-          throw new Error(err.error ?? "Failed to create profession");
-        }
-        const { profession } = await res.json();
-        professionId = profession.id;
-        professionName = profession.name;
-        setProfessions((prev) =>
-          prev.some((p) => p.id === professionId) ? prev : [...prev, { id: professionId, name: professionName }]
-        );
-        setSelectedProfessionId(String(professionId));
         setCustomProfession("");
-      } else {
-        professionId = Number(selectedProfessionId);
-        professionName = professions.find((p) => p.id === professionId)?.name ?? "";
       }
 
-      // Save profession to workspace
       const workspaceRes = await fetch("/api/workspace", {
         method: "PUT",
         headers,
-        body: JSON.stringify({ type: professionName, profession_id: professionId }),
+        body: JSON.stringify(workspaceBody),
       });
       if (!workspaceRes.ok) {
         const err = await workspaceRes.json().catch(() => ({}));
@@ -231,6 +427,7 @@ export default function RegisterForm() {
       }
 
       setWorkspaceType(professionName);
+      await persistOnboardingStep(1);
       return true;
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Failed to save");
@@ -241,12 +438,12 @@ export default function RegisterForm() {
   };
 
   const saveStep4 = async (): Promise<boolean> => {
-    const token = (await supabase.auth.getSession()).data.session?.access_token;
     setOnboardingSaving(true);
     setError("");
     try {
+      const headers = await headers_for_workspace_api();
       const getRes = await fetch("/api/settings", {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        headers: { Authorization: headers.Authorization },
       });
       const existingSettings = getRes.ok ? (await getRes.json()).settings ?? {} : {};
       const merged = {
@@ -260,10 +457,7 @@ export default function RegisterForm() {
       };
       const postRes = await fetch("/api/settings", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
+        headers,
         body: JSON.stringify({ settings: merged }),
       });
       if (!postRes.ok) {
@@ -285,16 +479,43 @@ export default function RegisterForm() {
       const ok = await saveStep1();
       if (ok) setOnboardingStep(2);
     } else if (onboardingStep === 2) {
+      try {
+        await persistOnboardingStep(2);
+      } catch (e: unknown) {
+        setError(e instanceof Error ? e.message : "Failed to save progress");
+        return;
+      }
       setOnboardingStep(3);
     } else if (onboardingStep === 3) {
       if (!step3Saved) {
         setError("Save working hours first, then click Next.");
         return;
       }
+      try {
+        await persistOnboardingStep(3);
+      } catch (e: unknown) {
+        setError(e instanceof Error ? e.message : "Failed to save progress");
+        return;
+      }
       setOnboardingStep(4);
     } else if (onboardingStep === 4) {
       const ok = await saveStep4();
-      if (ok) router.replace("/");
+      if (!ok) return;
+      try {
+        await ensureSupabaseSessionOrThrow();
+      } catch (e: unknown) {
+        setError(e instanceof Error ? e.message : "Failed to save progress");
+        return;
+      }
+      const { error: onboardErr } = await supabase.auth.updateUser({
+        data: { onboarding_completed: true, onboarding_last_completed_step: 4 },
+      });
+      if (onboardErr) {
+        setError(onboardErr.message || "Failed to finish setup");
+        return;
+      }
+      await supabase.auth.getUser();
+      router.replace("/");
     }
   };
 
@@ -399,7 +620,7 @@ export default function RegisterForm() {
             </div>
           </div>
 
-          {error && (
+          {error && onboardingStep !== 3 && (
             <div className="mb-4">
               <AlertMessage type="error" message={error} />
             </div>
@@ -419,6 +640,8 @@ export default function RegisterForm() {
                       onClick={() => {
                         setSelectedProfessionId(String(p.id));
                         setCustomProfession("");
+                        setSelectedDepartment("");
+                        setCustomDepartment("");
                       }}
                       className={`flex items-center gap-3 px-4 py-3 rounded-xl border-2 text-left font-medium transition ${
                         selectedProfessionId === String(p.id)
@@ -431,7 +654,11 @@ export default function RegisterForm() {
                   ))}
                   <button
                     type="button"
-                    onClick={() => setSelectedProfessionId(OTHER_VALUE)}
+                    onClick={() => {
+                      setSelectedProfessionId(OTHER_VALUE);
+                      setSelectedDepartment("");
+                      setCustomDepartment("");
+                    }}
                     className={`flex items-center gap-3 px-4 py-3 rounded-xl border-2 text-left font-medium transition ${
                       selectedProfessionId === OTHER_VALUE
                         ? "border-blue-600 bg-blue-50 text-blue-700"
@@ -456,7 +683,11 @@ export default function RegisterForm() {
               {/* Department */}
               <div>
                 <h2 className="text-lg font-semibold text-gray-800 mb-1">Department</h2>
-                <p className="text-sm text-gray-500 mb-4">Choose or add your department</p>
+                <p className="text-sm text-gray-500 mb-4">
+                  {selectedProfessionId && selectedProfessionId !== OTHER_VALUE
+                    ? "Suggestions match the profession you selected above. You can still add a custom department."
+                    : "Choose a catalog profession first to see suggested departments, or use Other and enter your own."}
+                </p>
                 <select
                   id="department"
                   value={selectedDepartment}
@@ -470,7 +701,7 @@ export default function RegisterForm() {
                   {departmentSuggestions.map((name) => (
                     <option key={name} value={name}>{name}</option>
                   ))}
-                  <option value={OTHER_VALUE}>Other — add new</option>
+                  <option value={OTHER_VALUE}>Other</option>
                 </select>
                 {selectedDepartment === OTHER_VALUE && (
                   <input
@@ -598,28 +829,33 @@ export default function RegisterForm() {
             </div>
           )}
 
-          <div className="mt-6 flex justify-between">
-            {onboardingStep > 1 ? (
+          <div className="mt-6 space-y-3">
+            {error && onboardingStep === 3 && (
+              <AlertMessage type="error" message={error} />
+            )}
+            <div className="flex justify-between">
+              {onboardingStep > 1 ? (
+                <button
+                  type="button"
+                  onClick={() => { setError(""); setOnboardingStep((s) => s - 1); }}
+                  disabled={onboardingSaving}
+                  className="px-6 py-3 rounded-lg border border-gray-300 text-gray-700 font-medium hover:bg-gray-50 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Back
+                </button>
+              ) : <span />}
               <button
                 type="button"
-                onClick={() => { setError(""); setOnboardingStep((s) => s - 1); }}
-                disabled={onboardingSaving}
-                className="px-6 py-3 rounded-lg border border-gray-300 text-gray-700 font-medium hover:bg-gray-50 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                onClick={handleOnboardingNext}
+                disabled={onboardingSaving || (onboardingStep === 1 && (
+                  (selectedProfessionId === OTHER_VALUE ? !customProfession.trim() : !selectedProfessionId) ||
+                  (selectedDepartment === OTHER_VALUE ? !customDepartment.trim() : !selectedDepartment)
+                ))}
+                className="px-6 py-3 rounded-lg bg-blue-600 text-white font-medium hover:bg-blue-700 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                Back
+                {onboardingSaving ? "Saving…" : onboardingStep === 4 ? "Finish" : "Next"}
               </button>
-            ) : <span />}
-            <button
-              type="button"
-              onClick={handleOnboardingNext}
-              disabled={onboardingSaving || (onboardingStep === 1 && (
-                (selectedProfessionId === OTHER_VALUE ? !customProfession.trim() : !selectedProfessionId) ||
-                (selectedDepartment === OTHER_VALUE ? !customDepartment.trim() : !selectedDepartment)
-              ))}
-              className="px-6 py-3 rounded-lg bg-blue-600 text-white font-medium hover:bg-blue-700 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {onboardingSaving ? "Saving…" : onboardingStep === 4 ? "Finish" : "Next"}
-            </button>
+            </div>
           </div>
         </div>
       </div>
@@ -664,7 +900,9 @@ export default function RegisterForm() {
               </svg>
               <div>
                 <p className="font-medium">Account created successfully!</p>
-                <p className="text-sm">Check your email to confirm your account. After confirming, you'll complete setup and be redirected to the dashboard.</p>
+                <p className="text-sm">
+                  Check your email and confirm your address. Then go to the login page and sign in with your password. After sign-in, you&apos;ll finish setup (profession, availability, and more) if you haven&apos;t already.
+                </p>
               </div>
             </div>
           )}

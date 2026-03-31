@@ -218,13 +218,21 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${session.access_token}`,
         },
-        body: JSON.stringify({ id: bookingId, is_viewed: true }),
+        body: JSON.stringify({
+          id: bookingId,
+          is_viewed: true,
+          is_reschedule_viewed: true,
+        }),
       });
 
       setBookings((prev) =>
         debouncedSort === 'new'
           ? prev.filter((b) => b.id !== bookingId)
-          : prev.map((b) => (b.id === bookingId ? { ...b, is_viewed: true } : b))
+          : prev.map((b) =>
+              b.id === bookingId
+                ? { ...b, is_viewed: true, is_reschedule_viewed: true }
+                : b
+            )
       );
 
       window.dispatchEvent(new Event('bookings-viewed-update'));
@@ -233,11 +241,19 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
     }
   }, [debouncedSort]);
 
-  const handleEdit = useCallback((booking: Booking) => {
-    if (!booking.is_viewed) markBookingAsViewed(booking.id);
-    setEditingBooking(booking);
-    setShowForm(true);
-  }, [markBookingAsViewed]);
+  const handleEdit = useCallback(
+    (booking: Booking) => {
+      const needsRescheduleAck =
+        booking.is_reschedule_viewed === false &&
+        String(booking.status ?? '').toLowerCase() === 'reschedule';
+      if (!booking.is_viewed || needsRescheduleAck) {
+        markBookingAsViewed(booking.id);
+      }
+      setEditingBooking(booking);
+      setShowForm(true);
+    },
+    [markBookingAsViewed]
+  );
 
   const handleCreate = useCallback(() => {
     setEditingBooking(null);
@@ -255,6 +271,7 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
       debouncedEventType,
       debouncedSort
     );
+    window.dispatchEvent(new Event('bookings-viewed-update'));
   }, [
     currentPage,
     debouncedFilter,
@@ -281,6 +298,7 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
       debouncedEventType,
       debouncedSort
     );
+    window.dispatchEvent(new Event('bookings-viewed-update'));
   }, [
     currentPage,
     debouncedFilter,
@@ -297,7 +315,14 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
   }, []);
 
   const handleCloseModal = useCallback(() => {
-    if (selectedBooking && !selectedBooking.is_viewed) {
+    const selectedNeedsRescheduleAck =
+      selectedBooking &&
+      selectedBooking.is_reschedule_viewed === false &&
+      String(selectedBooking.status ?? '').toLowerCase() === 'reschedule';
+    if (
+      selectedBooking &&
+      (!selectedBooking.is_viewed || selectedNeedsRescheduleAck)
+    ) {
       markBookingAsViewed(selectedBooking.id);
     }
     setIsModalOpen(false);
@@ -312,6 +337,8 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
         date: formatDate(booking.start_at),
         time: formatTime(booking.start_at),
         type: booking.event_types?.title || "N/A",
+        event_type_duration_minutes:
+          booking.event_types?.duration_minutes ?? null,
         status: booking.status || "Pending",
         service_provider_name: getServiceProviderName(
           booking.service_provider_id,
@@ -321,6 +348,7 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
           ? `${formatDate(booking.created_at)} ${formatTime(booking.created_at)}`
           : "N/A",
         is_viewed: booking.is_viewed ?? true,
+        is_reschedule_viewed: booking.is_reschedule_viewed ?? true,
       })),
     [bookings, serviceProviders]
   );

@@ -14,7 +14,9 @@ export interface SessionResult {
 }
 
 /**
- * Create a session for a user using temporary password flow
+ * Create a session for a user using temporary password flow.
+ * Updating the password via admin API typically invalidates other refresh sessions for that user,
+ * so older browsers lose valid tokens after a new Google/password session is issued here.
  */
 export async function createUserSession(
   params: CreateSessionParams

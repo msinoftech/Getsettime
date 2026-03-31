@@ -27,10 +27,13 @@ export type Booking = {
   followup_email_skipped_at: string | null;
   public_code: string | null;
   is_viewed: boolean;
+  /** False after a time change until acknowledged in the bookings UI. */
+  is_reschedule_viewed?: boolean;
   created_at: string;
   updated_at: string;
   event_types?: {
     title: string;
+    duration_minutes?: number | null;
   } | null;
   contacts?: {
     name: string | null;

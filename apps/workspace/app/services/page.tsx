@@ -1,9 +1,11 @@
 "use client";
 import { useState, useEffect } from "react";
+import Link from "next/link";
 import { supabase } from "@/lib/supabaseClient";
 import { AlertModal } from "@/src/components/ui/AlertModal";
 import { ConfirmModal } from "@/src/components/ui/ConfirmModal";
 import { ServiceSkeleton } from "@/src/components/ui/ServiceSkeleton";
+import { useDepartments } from "@/src/hooks/useBookingLookups";
 
 interface Service {
   id: string;
@@ -11,11 +13,21 @@ interface Service {
   name: string;
   description: string | null;
   price: number | null;
+  department_id?: number | string | null;
+  departments?: { name: string } | { name: string }[] | null;
   created_at: string;
   updated_at: string;
 }
 
+function serviceDepartmentLabel(service: Service): string | null {
+  const d = service.departments;
+  if (d == null) return null;
+  if (Array.isArray(d)) return d[0]?.name ?? null;
+  return d.name ?? null;
+}
+
 export default function ServicesPage() {
+  const { data: departments, loading: departmentsLoading } = useDepartments();
   const [services, setServices] = useState<Service[]>([]);
   const [showServiceForm, setShowServiceForm] = useState(false);
   const [editingService, setEditingService] = useState<Service | null>(null);
@@ -23,6 +35,7 @@ export default function ServicesPage() {
     name: "",
     description: "",
     price: "",
+    department_id: "",
   });
   const [loading, setLoading] = useState(false);
   const [initialLoading, setInitialLoading] = useState(true);
@@ -58,7 +71,7 @@ export default function ServicesPage() {
 
   const handleNewService = () => {
     setEditingService(null);
-    setServiceFormData({ name: "", description: "", price: "" });
+    setServiceFormData({ name: "", description: "", price: "", department_id: "" });
     setShowServiceForm(true);
   };
 
@@ -68,6 +81,10 @@ export default function ServicesPage() {
       name: service.name,
       description: service.description || "",
       price: service.price?.toString() || "",
+      department_id:
+        service.department_id != null && service.department_id !== ""
+          ? String(service.department_id)
+          : "",
     });
     setShowServiceForm(true);
   };
@@ -75,7 +92,7 @@ export default function ServicesPage() {
   const handleServiceFormCancel = () => {
     setShowServiceForm(false);
     setEditingService(null);
-    setServiceFormData({ name: "", description: "", price: "" });
+    setServiceFormData({ name: "", description: "", price: "", department_id: "" });
   };
 
   const handleServiceFormSubmit = async (e: React.FormEvent) => {
@@ -194,7 +211,9 @@ export default function ServicesPage() {
           </div>
         ) : (
           <div className="space-y-3">
-            {services.map((service) => (
+            {services.map((service) => {
+              const deptLabel = serviceDepartmentLabel(service);
+              return (
               <div key={service.id} className="flex flex-wrap items-start justify-between gap-4 p-4 rounded-xl border border-slate-200 bg-white hover:shadow-sm transition">
                 <div className="flex-grow">
                   <div className="flex items-center gap-2">
@@ -208,7 +227,15 @@ export default function ServicesPage() {
                   {service.description && (
                     <p className="mt-1 text-sm text-slate-600 line-clamp-2">{service.description}</p>
                   )}
-                  <p className="mt-2 text-xs text-slate-400">
+                  <p className="mt-2 text-xs text-slate-500">
+                    <span className="text-slate-400">Department: </span>
+                    {deptLabel ? (
+                      <span className="font-medium text-slate-700">{deptLabel}</span>
+                    ) : (
+                      <span className="text-slate-400">None</span>
+                    )}
+                  </p>
+                  <p className="mt-1 text-xs text-slate-400">
                     Created {new Date(service.created_at).toLocaleDateString()}
                   </p>
                 </div>
@@ -228,7 +255,8 @@ export default function ServicesPage() {
                   </button>
                 </div>
               </div>
-            ))}
+            );
+            })}
           </div>
         )}
       </div>
@@ -297,6 +325,37 @@ export default function ServicesPage() {
                     />
                   </div>
                   <p className="mt-1 text-xs text-slate-500">Leave empty if price varies or is discussed separately</p>
+                </div>
+
+                <div>
+                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                    <label htmlFor="service-department" className="text-sm font-medium text-slate-700">
+                      Department <span className="text-slate-400 font-normal">(optional)</span>
+                    </label>
+                    <Link
+                      href="/departments"
+                      className="text-sm font-semibold text-indigo-700 hover:text-indigo-900 underline-offset-2 hover:underline shrink-0"
+                    >
+                      Add department
+                    </Link>
+                  </div>
+                  <select
+                    id="service-department"
+                    value={serviceFormData.department_id}
+                    onChange={(e) =>
+                      setServiceFormData({ ...serviceFormData, department_id: e.target.value })
+                    }
+                    disabled={departmentsLoading}
+                    className="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition bg-white disabled:opacity-60"
+                  >
+                    <option value="">Select department</option>
+                    {departments.map((d) => (
+                      <option key={d.id} value={d.id}>
+                        {d.name}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="mt-1 text-xs text-slate-500">Group this service under a department for reporting and booking</p>
                 </div>
 
                 <div className="flex gap-3 justify-end pt-6 border-t border-slate-200">

@@ -90,13 +90,32 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const { name, description, meta_data } = body;
 
-    if (!name || name.trim() === '') {
-      return NextResponse.json({ error: 'Department name is required' }, { status: 400 });
-    }
-
     const workspaceId = user.user_metadata?.workspace_id;
     if (!workspaceId) {
       return NextResponse.json({ error: 'Workspace ID not found' }, { status: 400 });
+    }
+
+    const trimmedName = typeof name === 'string' ? name.trim() : '';
+    if (!trimmedName) {
+      return NextResponse.json({ error: 'Department name is required' }, { status: 400 });
+    }
+
+    const { data: existingWorkspaceDepts, error: existingErr } = await supabase
+      .from('departments')
+      .select('*')
+      .eq('workspace_id', workspaceId);
+
+    if (existingErr) {
+      console.error('Error checking existing departments:', existingErr);
+      return NextResponse.json({ error: existingErr.message }, { status: 500 });
+    }
+
+    const lowerDept = trimmedName.toLowerCase();
+    const departmentReuse = (existingWorkspaceDepts ?? []).find(
+      (d) => typeof d.name === 'string' && d.name.toLowerCase() === lowerDept
+    );
+    if (departmentReuse) {
+      return NextResponse.json({ department: departmentReuse, reused: true });
     }
 
     // RLS validates workspace_id matches JWT; we provide it for INSERT WITH CHECK policy
@@ -107,19 +126,31 @@ export async function POST(req: NextRequest) {
       if (typeof meta_data === 'string') {
         // If it's a string, try to parse it
         try {
-          finalMetaData = JSON.parse(meta_data);
+          const parsed = JSON.parse(meta_data) as Record<string, unknown>;
+          finalMetaData = {
+            ...parsed,
+            services: Array.isArray(parsed.services) ? parsed.services : [],
+            service_providers: Array.isArray(parsed.service_providers)
+              ? parsed.service_providers
+              : [],
+          };
         } catch {
-          finalMetaData = { services: [] };
+          finalMetaData = { services: [], service_providers: [] };
         }
       } else if (typeof meta_data === 'object' && meta_data !== null && !Array.isArray(meta_data)) {
-        // If it's already an object, use it directly
-        finalMetaData = meta_data as Record<string, unknown>;
+        const o = meta_data as Record<string, unknown>;
+        finalMetaData = {
+          ...o,
+          services: Array.isArray(o.services) ? o.services : [],
+          service_providers: Array.isArray(o.service_providers)
+            ? o.service_providers
+            : [],
+        };
       } else {
-        finalMetaData = { services: [] };
+        finalMetaData = { services: [], service_providers: [] };
       }
     } else {
-      // If no meta_data provided, set to null (or empty object)
-      finalMetaData = { services: [] };
+      finalMetaData = { services: [], service_providers: [] };
     }
     
     console.log('=== CREATE DEPARTMENT DEBUG ===');
@@ -136,8 +167,8 @@ export async function POST(req: NextRequest) {
     // Create the insert payload
     const insertPayload = {
       workspace_id: workspaceId,
-      name: name.trim(),
-      description: description?.trim() || null,
+      name: trimmedName,
+      description: typeof description === 'string' ? description.trim() || null : null,
       meta_data: finalMetaData,
     };
     
@@ -230,27 +261,24 @@ export async function PUT(req: NextRequest) {
       }
     }
 
-    // Merge meta_data: preserve existing keys, update services
+    // Merge meta_data: preserve existing keys; update services / service_providers when sent
     const existingMetaData = (existing.meta_data as Record<string, unknown>) || {};
-    let mergedMetaData: Record<string, unknown>;
-    
-    if (parsedMetaData && 'services' in parsedMetaData) {
-      // If meta_data with services is provided, merge it with existing
-      mergedMetaData = {
-        ...existingMetaData,
-        // Explicitly set services array (even if empty) - this ensures services are always saved
-        services: Array.isArray(parsedMetaData.services) ? parsedMetaData.services : [],
-      };
-    } else {
-      // If no meta_data provided, keep existing
-      mergedMetaData = existingMetaData;
+    let mergedMetaData: Record<string, unknown> = { ...existingMetaData };
+
+    if (parsedMetaData) {
+      if ('services' in parsedMetaData) {
+        mergedMetaData.services = Array.isArray(parsedMetaData.services)
+          ? parsedMetaData.services
+          : [];
+      }
+      if ('service_providers' in parsedMetaData) {
+        mergedMetaData.service_providers = Array.isArray(
+          parsedMetaData.service_providers
+        )
+          ? parsedMetaData.service_providers
+          : [];
+      }
     }
-    
-    console.log('Updating department - existing meta_data:', existingMetaData);
-    console.log('Updating department - incoming meta_data:', meta_data);
-    console.log('Updating department - parsed meta_data:', parsedMetaData);
-    console.log('Updating department - merged meta_data:', mergedMetaData);
-    console.log('Updating department - merged meta_data JSON:', JSON.stringify(mergedMetaData));
 
     // RLS automatically filters by workspace_id from JWT
     // Supabase jsonb columns expect a JavaScript object/array, not a JSON string

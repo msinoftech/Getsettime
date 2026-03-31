@@ -37,3 +37,15 @@ export function getDisplayEmail(b: Booking): string {
 export function getDisplayPhone(b: Booking): string {
   return b.invitee_phone?.trim() || b.contacts?.phone?.trim() || 'N/A';
 }
+
+/** Inner label for parentheses, e.g. "1min" or "5mins"; null when not shown. */
+export function getEventTypeDurationInner(
+  minutes: number | null | undefined
+): string | null {
+  if (typeof minutes !== 'number' || !Number.isFinite(minutes) || minutes <= 0) {
+    return null;
+  }
+  const n = Math.round(minutes);
+  if (n <= 0) return null;
+  return n === 1 ? '1min' : `${n}mins`;
+}

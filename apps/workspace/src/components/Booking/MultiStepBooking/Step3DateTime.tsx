@@ -8,9 +8,8 @@ import {
   BOOKING_LOADING_MESSAGES,
   BOOKING_STEP_TITLES,
   DAY_NAMES,
-  DEFAULT_ACCENT_COLOR,
-  DEFAULT_PRIMARY_COLOR,
   SCROLL_LOAD_DISTANCE,
+  STRIP_MAX_DAYS,
 } from '@/src/constants/booking';
 import { getCalendarDays, isToday, normalizeDate } from '@/src/utils/bookingTime';
 import { isDateAvailable } from '@/src/utils/bookingAvailability';
@@ -42,6 +41,8 @@ interface Step3DateTimeProps {
   continueDisabled?: boolean;
   previousStartAt?: string | null;
   previousEndAt?: string | null;
+  /** Matches useTimeslots lead time (e.g. embed reschedule). */
+  minLeadTimeMinutes?: number;
 }
 
 export function Step3DateTime({
@@ -71,6 +72,7 @@ export function Step3DateTime({
   continueDisabled,
   previousStartAt,
   previousEndAt,
+  minLeadTimeMinutes = 0,
 }: Step3DateTimeProps) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const selectedDateRef = useRef<HTMLButtonElement | null>(null);
@@ -94,25 +96,36 @@ export function Step3DateTime({
 
   useEffect(() => {
     const container = scrollContainerRef.current;
-    if (!container || showCalendar) return;
+    if (!container) return;
+
     const checkAndLoadMore = () => {
       if (isLoadingMoreRef.current) return;
       const { scrollLeft, scrollWidth, clientWidth } = container;
-      if (scrollWidth <= clientWidth) return;
-      if (scrollWidth - (scrollLeft + clientWidth) < SCROLL_LOAD_DISTANCE) {
+      const hasOverflow = scrollWidth > clientWidth + 2;
+      const distanceToEnd = scrollWidth - (scrollLeft + clientWidth);
+      const nearEnd = hasOverflow && distanceToEnd < SCROLL_LOAD_DISTANCE;
+      const stripDoesNotFillWidth = !hasOverflow && days.length < STRIP_MAX_DAYS;
+      if (nearEnd || stripDoesNotFillWidth) {
         loadMoreDates();
       }
     };
+
     const rafId = requestAnimationFrame(checkAndLoadMore);
     container.addEventListener('scroll', checkAndLoadMore, { passive: true });
+    const resizeObserver = new ResizeObserver(() => {
+      requestAnimationFrame(checkAndLoadMore);
+    });
+    resizeObserver.observe(container);
+
     return () => {
       cancelAnimationFrame(rafId);
       container.removeEventListener('scroll', checkAndLoadMore);
+      resizeObserver.disconnect();
     };
-  }, [loadMoreDates, showCalendar]);
+  }, [loadMoreDates, days.length]);
 
   useEffect(() => {
-    if (selectedDate && selectedDateRef.current && scrollContainerRef.current && !showCalendar) {
+    if (selectedDate && selectedDateRef.current && scrollContainerRef.current) {
       const timer = setTimeout(() => {
         const container = scrollContainerRef.current;
         const button = selectedDateRef.current;
@@ -123,10 +136,16 @@ export function Step3DateTime({
       }, 100);
       return () => clearTimeout(timer);
     }
-  }, [selectedDate, showCalendar]);
+  }, [selectedDate]);
 
   const checkDateAvailable = (date: Date) =>
-    isDateAvailable(date, availabilitySettings, selectedType, existingBookings);
+    isDateAvailable(
+      date,
+      availabilitySettings,
+      selectedType,
+      existingBookings,
+      minLeadTimeMinutes
+    );
 
   const hasNewSelection = Boolean(selectedDate && selectedTime);
 
@@ -183,7 +202,7 @@ export function Step3DateTime({
       )}
 
       <div className="relative">
-        <div className="flex items-center justify-between mb-3 sm:mb-4">
+        <div className="relative z-20 flex items-center justify-between mb-3 sm:mb-4">
           <div className="flex items-center gap-2">
             <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-gradient-to-br from-indigo-100 to-indigo-200 flex items-center justify-center flex-shrink-0">
               <svg className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -192,19 +211,24 @@ export function Step3DateTime({
             </div>
             <div className="text-xs sm:text-sm font-bold text-gray-700 uppercase tracking-wide">{BOOKING_BUTTON_LABELS.pickDay}</div>
           </div>
-          <button
-            onClick={onToggleCalendar}
-            className="text-xs sm:text-sm text-indigo-600 hover:text-indigo-700 font-medium flex items-center gap-1 cursor-pointer"
-          >
-            {showCalendar ? BOOKING_BUTTON_LABELS.hideCalendar : BOOKING_BUTTON_LABELS.showCalendar}
-            <svg className={`w-4 h-4 transition-transform ${showCalendar ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-            </svg>
-          </button>
-        </div>
+          <div className="relative shrink-0">
+            <button
+              type="button"
+              onClick={onToggleCalendar}
+              className="text-xs sm:text-sm text-indigo-600 hover:text-indigo-700 font-medium flex items-center gap-1 cursor-pointer"
+            >
+              {showCalendar ? BOOKING_BUTTON_LABELS.hideCalendar : BOOKING_BUTTON_LABELS.showCalendar}
+              <svg className={`w-4 h-4 transition-transform ${showCalendar ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
 
-        {showCalendar ? (
-          <div className="absolute right-0 top-full mt-2 w-full sm:w-auto min-w-[280px] grid rounded-2xl overflow-hidden border text-sm z-50 shadow-lg border-slate-200 bg-white text-slate-700">
+            {showCalendar && (
+              <div
+                className="absolute right-0 top-full mt-1 w-[min(100vw-1.5rem,320px)] sm:w-auto sm:min-w-[280px] grid rounded-2xl overflow-hidden border text-sm shadow-xl border-slate-200 bg-white text-slate-700"
+                role="dialog"
+                aria-label="Select a date"
+              >
             <div className="bg-indigo-600 text-white flex items-center justify-between px-1 py-1">
               <button onClick={() => onNavigateMonth('prev')} className="w-8 h-8 rounded-lg cursor-pointer flex items-center justify-center transition-colors">
                 <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -280,12 +304,15 @@ export function Step3DateTime({
                 );
               })}
             </div>
+              </div>
+            )}
           </div>
-        ) : (
-          <div className="w-full min-w-0 overflow-hidden">
-            <div
-              ref={scrollContainerRef}
-              className="flex flex-nowrap gap-2 sm:gap-3 overflow-x-auto overflow-y-hidden py-2 sm:pb-3 -mx-1 px-1 scroll-smooth [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar-track]:bg-gray-100 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-gray-300"
+        </div>
+
+        <div className="relative z-0 w-full min-w-0 overflow-hidden">
+          <div
+            ref={scrollContainerRef}
+            className="flex flex-nowrap gap-2 sm:gap-3 overflow-x-auto overflow-y-hidden py-2 sm:pb-3 -mx-1 px-1 scroll-smooth [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar-track]:bg-gray-100 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-gray-300"
           >
             {days
               .filter((d) => {
@@ -297,8 +324,6 @@ export function Step3DateTime({
               .map((d) => {
                 const isSelected = selectedDate?.toDateString() === d.toDateString();
                 const isTodayDate = isToday(d);
-                const primary = workspacePrimaryColor || DEFAULT_PRIMARY_COLOR;
-                const accent = workspaceAccentColor || primary || DEFAULT_ACCENT_COLOR;
                 return (
                   <button
                     key={d.toISOString()}
@@ -327,9 +352,8 @@ export function Step3DateTime({
                   </button>
                 );
               })}
-            </div>
           </div>
-        )}
+        </div>
       </div>
 
       <div>

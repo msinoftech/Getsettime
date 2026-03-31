@@ -449,6 +449,9 @@ const WorkspacesPage: React.FC = () => {
                       Logo
                     </th>
                     <th className="px-6 py-4 text-left text-sm font-bold text-slate-700 tracking-wider">
+                      ID
+                    </th>
+                    <th className="px-6 py-4 text-left text-sm font-bold text-slate-700 tracking-wider">
                       Name
                     </th>
                     <th className="px-6 py-4 text-left text-sm font-bold text-slate-700 tracking-wider">
@@ -487,6 +490,14 @@ const WorkspacesPage: React.FC = () => {
                             </div>
                           )}
                        </div>
+                      </td>
+                      <td className="px-6 py-4 align-middle text-sm text-slate-700 max-w-[14rem]" data-label="ID">
+                        <code
+                          className="text-xs bg-slate-100 px-2 py-1 rounded text-slate-700 break-all font-mono"
+                          title={workspace.id}
+                        >
+                          {workspace.id}
+                        </code>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap align-middle text-sm text-slate-700" data-label="Name">
                         <div className="item-align-end flex items-center gap-3">

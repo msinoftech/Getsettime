@@ -9,6 +9,7 @@ import {
   storeCallbackToken,
   saveGoogleCalendarIntegration,
 } from '@/lib/auth-service';
+import { workspaceAdminNeedsOnboardingWizard } from '@/lib/auth_onboarding';
 
 interface GoogleSignupData {
   access_token: string;
@@ -138,6 +139,18 @@ export async function GET(req: Request) {
         });
       }
 
+      const { data: freshUserData } = await supabaseAdmin.auth.admin.getUserById(userId);
+      const metaNow = (freshUserData?.user?.user_metadata ?? {}) as Record<string, unknown>;
+      const role = metaNow.role as string | undefined;
+      const { data: wsRow } = await supabaseAdmin
+        .from('workspaces')
+        .select('type, profession_id')
+        .eq('id', workspaceResult.workspaceId)
+        .maybeSingle();
+      const hasWorkspaceProfile = !!(wsRow?.type || wsRow?.profession_id);
+      const needsOnboarding =
+        role === 'workspace_admin' && workspaceAdminNeedsOnboardingWizard(metaNow, hasWorkspaceProfile);
+
       // Create session
       const { data: sessionData, error: sessionError } = await createUserSession({
         email,
@@ -166,7 +179,10 @@ export async function GET(req: Request) {
       // Redirect to callback
       const origin = process.env.NEXT_PUBLIC_APP_URL?.trim() || (typeof req.url === 'string' && req.url.startsWith('http') ? new URL(req.url).origin : '');
       const returnTo = req.url ? new URL(req.url).searchParams.get('returnTo') : null;
-      const nextPath = returnTo && returnTo.startsWith('/') ? returnTo : '/';
+      let nextPath = returnTo && returnTo.startsWith('/') ? returnTo : '/';
+      if (needsOnboarding) {
+        nextPath = '/register?onboarding=1';
+      }
       const res = NextResponse.redirect(`${origin.replace(/\/$/, '')}/auth/callback?next=${encodeURIComponent(nextPath)}&t=${callbackId}`);
       res.cookies.set('sb_callback_t', callbackId, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', path: '/', maxAge: 60 });
       return res;
@@ -183,6 +199,8 @@ export async function GET(req: Request) {
           google_calendar_sync: enableCalendarSync,
           google_id,
           picture: data.picture,
+          onboarding_completed: false,
+          onboarding_last_completed_step: 0,
         },
       });
 
@@ -221,6 +239,8 @@ export async function GET(req: Request) {
           google_calendar_sync: enableCalendarSync,
           google_id,
           picture: data.picture,
+          onboarding_completed: false,
+          onboarding_last_completed_step: 0,
         },
         supabaseAdmin,
         workspaceResult.isNewWorkspace
@@ -281,8 +301,14 @@ export async function GET(req: Request) {
       res.cookies.set('sb_callback_t', callbackId, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', path: '/', maxAge: 60 });
       return res;
     } else {
-      // User doesn't exist and this is a login attempt
-      return NextResponse.redirect(new URL('/register?error=user_not_found', req.url));
+      // User doesn't exist and this is a login attempt — send to login with email for no-account modal
+      const origin =
+        process.env.NEXT_PUBLIC_APP_URL?.trim() ||
+        (typeof req.url === 'string' && req.url.startsWith('http') ? new URL(req.url).origin : '') ||
+        '';
+      const base = `${origin.replace(/\/$/, '')}/login`;
+      const params = new URLSearchParams({ no_account: '1', email });
+      return NextResponse.redirect(`${base}?${params.toString()}`);
     }
   } catch (error: any) {
     console.error('Google signup error:', error);

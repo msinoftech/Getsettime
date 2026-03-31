@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
+import { resolvePostAuthNavigationPath } from "@/lib/auth_onboarding";
 
 export default function AuthCallbackContent() {
   const router = useRouter();
@@ -26,7 +27,15 @@ export default function AuthCallbackContent() {
         if (!cancelled) setError(USER_FRIENDLY_ERROR);
         return false;
       }
-      if (!cancelled) router.replace(nextPath);
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      if (!session?.user) {
+        if (!cancelled) router.replace(nextPath.startsWith("/") ? nextPath : "/");
+        return true;
+      }
+      const dest = await resolvePostAuthNavigationPath(supabase, session.user, nextPath || "/");
+      if (!cancelled) router.replace(dest);
       return true;
     };
 

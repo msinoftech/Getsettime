@@ -15,7 +15,8 @@ const createTransporter = () => {
 
 interface BookingEmailData {
   inviteeName: string;
-  inviteeEmail: string;
+  /** When omitted, only provider/admin reschedule notification is sent (if providerEmail is set). */
+  inviteeEmail?: string;
   providerName?: string;
   providerEmail?: string;
   eventTypeName: string;
@@ -46,10 +47,33 @@ const formatDateTime = (dateString: string, timezone?: string): string => {
   return date.toLocaleString('en-US', options);
 };
 
+/** Treat legacy/placeholder labels as empty so rows are omitted in HTML emails. */
+const is_placeholder_assignment_label = (raw: string | undefined): boolean => {
+  const t = raw?.trim().toLowerCase();
+  if (!t) return true;
+  return t === 'not assigned' || t === 'assigned (details unavailable)';
+};
+
+const booking_email_department_row = (data: BookingEmailData): string => {
+  const v = data.departmentName?.trim();
+  if (!v || is_placeholder_assignment_label(data.departmentName)) return '';
+  return `
+        <div class="detail-row">
+          <span class="label">Department:</span> ${v}
+        </div>`;
+};
+
+const booking_email_provider_row = (data: BookingEmailData): string => {
+  const v = data.providerName?.trim();
+  if (!v || is_placeholder_assignment_label(data.providerName)) return '';
+  return `
+        <div class="detail-row">
+          <span class="label">Service Provider:</span> ${v}
+        </div>`;
+};
+
 // Email template for the user (invitee)
 const getUserEmailTemplate = (data: BookingEmailData): string => {
-  const departmentLabel = data.departmentName?.trim() ? data.departmentName : 'Not assigned';
-  const providerLabel = data.providerName?.trim() ? data.providerName : 'Not assigned';
   return `
 <!DOCTYPE html>
 <html>
@@ -79,13 +103,7 @@ const getUserEmailTemplate = (data: BookingEmailData): string => {
         <h2 style="margin-top: 0; color: #4F46E5;">Booking Details</h2>
         <div class="detail-row">
           <span class="label">Event:</span> ${data.eventTypeName}
-        </div>
-        <div class="detail-row">
-          <span class="label">Department:</span> ${departmentLabel}
-        </div>
-        <div class="detail-row">
-          <span class="label">Service Provider:</span> ${providerLabel}
-        </div>
+        </div>${booking_email_department_row(data)}${booking_email_provider_row(data)}
         <div class="detail-row">
           <span class="label">Start Time:</span> ${formatDateTime(data.startTime, data.timezone)}
         </div>
@@ -118,7 +136,6 @@ const getUserEmailTemplate = (data: BookingEmailData): string => {
 
 // Email template for the service provider (admin)
 const getProviderEmailTemplate = (data: BookingEmailData): string => {
-  const departmentLabel = data.departmentName?.trim() ? data.departmentName : 'Not assigned';
   return `
 <!DOCTYPE html>
 <html>
@@ -151,14 +168,11 @@ const getProviderEmailTemplate = (data: BookingEmailData): string => {
           <span class="label">Client Name:</span> ${data.inviteeName}
         </div>
         <div class="detail-row">
-          <span class="label">Client Email:</span> ${data.inviteeEmail}
+          <span class="label">Client Email:</span> ${data.inviteeEmail?.trim() ? data.inviteeEmail : 'Not provided'}
         </div>
         <div class="detail-row">
           <span class="label">Event Type:</span> ${data.eventTypeName}
-        </div>
-        <div class="detail-row">
-          <span class="label">Department:</span> ${departmentLabel}
-        </div>
+        </div>${booking_email_department_row(data)}
         <div class="detail-row">
           <span class="label">Start Time:</span> ${formatDateTime(data.startTime, data.timezone)}
         </div>
@@ -195,11 +209,14 @@ const getProviderEmailTemplate = (data: BookingEmailData): string => {
 // Send email to the user (invitee)
 export const sendUserBookingEmail = async (data: BookingEmailData): Promise<void> => {
   try {
+    if (!data.inviteeEmail?.trim()) {
+      throw new Error('Invitee email is required');
+    }
     const transporter = createTransporter();
     
     await transporter.sendMail({
       from: `"GetSetTime" <${process.env.SMTP_USER}>`,
-      to: data.inviteeEmail,
+      to: data.inviteeEmail.trim(),
       subject: `Booking Confirmation - ${data.eventTypeName}`,
       html: getUserEmailTemplate(data),
     });
@@ -276,8 +293,6 @@ export const sendBookingConfirmationEmails = async (data: BookingEmailData): Pro
 
 // 24h reminder email template
 const getReminderEmailTemplate = (data: BookingEmailData): string => {
-  const departmentLabel = data.departmentName?.trim() ? data.departmentName : 'Not assigned';
-  const providerLabel = data.providerName?.trim() ? data.providerName : 'Not assigned';
   return `
 <!DOCTYPE html>
 <html>
@@ -307,13 +322,7 @@ const getReminderEmailTemplate = (data: BookingEmailData): string => {
         <h2 style="margin-top: 0; color: #D97706;">Appointment Details</h2>
         <div class="detail-row">
           <span class="label">Event:</span> ${data.eventTypeName}
-        </div>
-        <div class="detail-row">
-          <span class="label">Department:</span> ${departmentLabel}
-        </div>
-        <div class="detail-row">
-          <span class="label">Service Provider:</span> ${providerLabel}
-        </div>
+        </div>${booking_email_department_row(data)}${booking_email_provider_row(data)}
         <div class="detail-row">
           <span class="label">Start Time:</span> ${formatDateTime(data.startTime, data.timezone)}
         </div>
@@ -423,8 +432,6 @@ export const sendFollowUpEmail = async (data: BookingEmailData): Promise<void> =
 // --- Reschedule email templates ---
 
 const getUserRescheduleEmailTemplate = (data: BookingEmailData): string => {
-  const departmentLabel = data.departmentName?.trim() ? data.departmentName : 'Not assigned';
-  const providerLabel = data.providerName?.trim() ? data.providerName : 'Not assigned';
   return `
 <!DOCTYPE html>
 <html>
@@ -455,13 +462,7 @@ const getUserRescheduleEmailTemplate = (data: BookingEmailData): string => {
         <h2 style="margin-top: 0; color: #D97706;">Updated Booking Details</h2>
         <div class="detail-row">
           <span class="label">Event:</span> ${data.eventTypeName}
-        </div>
-        <div class="detail-row">
-          <span class="label">Department:</span> ${departmentLabel}
-        </div>
-        <div class="detail-row">
-          <span class="label">Service Provider:</span> ${providerLabel}
-        </div>
+        </div>${booking_email_department_row(data)}${booking_email_provider_row(data)}
         ${data.previousStartTime ? `
         <div class="detail-row">
           <span class="label">Previous Time:</span> <span class="old-time">${formatDateTime(data.previousStartTime, data.timezone)}</span>
@@ -492,7 +493,6 @@ const getUserRescheduleEmailTemplate = (data: BookingEmailData): string => {
 };
 
 const getProviderRescheduleEmailTemplate = (data: BookingEmailData): string => {
-  const departmentLabel = data.departmentName?.trim() ? data.departmentName : 'Not assigned';
   return `
 <!DOCTYPE html>
 <html>
@@ -518,7 +518,7 @@ const getProviderRescheduleEmailTemplate = (data: BookingEmailData): string => {
     </div>
     <div class="content">
       <p>Dear ${data.providerName || 'Service Provider'},</p>
-      <p>A booking has been rescheduled by the client. Please review the updated details:</p>
+      <p>This booking's date or time has been updated. Please review the details below:</p>
       
       <div class="booking-details">
         <h2 style="margin-top: 0; color: #D97706;">Updated Booking Details</h2>
@@ -526,14 +526,11 @@ const getProviderRescheduleEmailTemplate = (data: BookingEmailData): string => {
           <span class="label">Client Name:</span> ${data.inviteeName}
         </div>
         <div class="detail-row">
-          <span class="label">Client Email:</span> ${data.inviteeEmail}
+          <span class="label">Client Email:</span> ${data.inviteeEmail?.trim() ? data.inviteeEmail : 'Not provided'}
         </div>
         <div class="detail-row">
           <span class="label">Event Type:</span> ${data.eventTypeName}
-        </div>
-        <div class="detail-row">
-          <span class="label">Department:</span> ${departmentLabel}
-        </div>
+        </div>${booking_email_department_row(data)}
         ${data.previousStartTime ? `
         <div class="detail-row">
           <span class="label">Previous Time:</span> <span class="old-time">${formatDateTime(data.previousStartTime, data.timezone)}</span>
@@ -574,12 +571,12 @@ export const sendBookingRescheduleEmails = async (data: BookingEmailData): Promi
   let userEmailSent = false;
   let providerEmailSent = false;
 
-  if (data.inviteeEmail) {
+  if (data.inviteeEmail?.trim()) {
     try {
       const transporter = createTransporter();
       await transporter.sendMail({
         from: `"GetSetTime" <${process.env.SMTP_USER}>`,
-        to: data.inviteeEmail,
+        to: data.inviteeEmail.trim(),
         subject: `Booking Rescheduled - ${data.eventTypeName}`,
         html: getUserRescheduleEmailTemplate(data),
       });
@@ -590,12 +587,12 @@ export const sendBookingRescheduleEmails = async (data: BookingEmailData): Promi
     }
   }
 
-  if (data.providerEmail) {
+  if (data.providerEmail?.trim()) {
     try {
       const transporter = createTransporter();
       await transporter.sendMail({
         from: `"GetSetTime Bookings" <${process.env.SMTP_USER}>`,
-        to: data.providerEmail,
+        to: data.providerEmail.trim(),
         subject: `Booking Rescheduled - ${data.eventTypeName} with ${data.inviteeName}`,
         html: getProviderRescheduleEmailTemplate(data),
       });
@@ -612,8 +609,6 @@ export const sendBookingRescheduleEmails = async (data: BookingEmailData): Promi
 // --- Cancellation email templates ---
 
 const getUserCancellationEmailTemplate = (data: BookingEmailData): string => {
-  const departmentLabel = data.departmentName?.trim() ? data.departmentName : 'Not assigned';
-  const providerLabel = data.providerName?.trim() ? data.providerName : 'Not assigned';
   return `
 <!DOCTYPE html>
 <html>
@@ -643,13 +638,7 @@ const getUserCancellationEmailTemplate = (data: BookingEmailData): string => {
         <h2 style="margin-top: 0; color: #DC2626;">Cancelled Booking Details</h2>
         <div class="detail-row">
           <span class="label">Event:</span> ${data.eventTypeName}
-        </div>
-        <div class="detail-row">
-          <span class="label">Department:</span> ${departmentLabel}
-        </div>
-        <div class="detail-row">
-          <span class="label">Service Provider:</span> ${providerLabel}
-        </div>
+        </div>${booking_email_department_row(data)}${booking_email_provider_row(data)}
         <div class="detail-row">
           <span class="label">Start Time:</span> ${formatDateTime(data.startTime, data.timezone)}
         </div>
@@ -675,7 +664,6 @@ const getUserCancellationEmailTemplate = (data: BookingEmailData): string => {
 };
 
 const getProviderCancellationEmailTemplate = (data: BookingEmailData): string => {
-  const departmentLabel = data.departmentName?.trim() ? data.departmentName : 'Not assigned';
   return `
 <!DOCTYPE html>
 <html>
@@ -708,14 +696,11 @@ const getProviderCancellationEmailTemplate = (data: BookingEmailData): string =>
           <span class="label">Client Name:</span> ${data.inviteeName}
         </div>
         <div class="detail-row">
-          <span class="label">Client Email:</span> ${data.inviteeEmail}
+          <span class="label">Client Email:</span> ${data.inviteeEmail?.trim() ? data.inviteeEmail : 'Not provided'}
         </div>
         <div class="detail-row">
           <span class="label">Event Type:</span> ${data.eventTypeName}
-        </div>
-        <div class="detail-row">
-          <span class="label">Department:</span> ${departmentLabel}
-        </div>
+        </div>${booking_email_department_row(data)}
         <div class="detail-row">
           <span class="label">Start Time:</span> ${formatDateTime(data.startTime, data.timezone)}
         </div>
@@ -819,9 +804,7 @@ export const sendConfirmationEmail = async (
     <div class="content">
       <p>Hi ${name || 'there'},</p>
       <p>Thanks for signing up for GetSetTime. Please confirm your email address by clicking the button below.</p>
-      <p><a href="${confirmationUrl}" class="button">Confirm email</a></p>
-      <p>Or copy and paste this link into your browser:</p>
-      <p style="word-break: break-all; font-size: 12px; color: #666;">${confirmationUrl}</p>
+      <p><a href="${confirmationUrl}" class="button" style="display:inline-block;background-color:#4F46E5;color:#ffffff !important;-webkit-text-fill-color:#ffffff;padding:12px 24px;text-decoration:none !important;border-radius:8px;margin:16px 0;font-family:Arial,sans-serif;font-size:16px;font-weight:600;">Confirm email</a></p>
       <p>This link expires in 24 hours. If you didn't create an account, you can ignore this email.</p>
       <div class="footer">
         <p>&copy; ${new Date().getFullYear()} GetSetTime. All rights reserved.</p>

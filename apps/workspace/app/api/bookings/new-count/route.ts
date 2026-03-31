@@ -35,7 +35,9 @@ export async function GET(req: NextRequest) {
       .from('bookings')
       .select('*', { count: 'exact', head: true })
       .eq('workspace_id', workspaceId)
-      .eq('is_viewed', false);
+      .or(
+        'is_viewed.eq.false,and(is_reschedule_viewed.eq.false,status.eq.reschedule)'
+      );
 
     if (error) {
       console.error('Error fetching new bookings count:', error);

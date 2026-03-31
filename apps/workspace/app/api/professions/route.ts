@@ -32,8 +32,9 @@ export async function GET(req: NextRequest) {
 
     const supabase = createSupabaseServerClient();
     const { data, error } = await supabase
-      .from('professions')
+      .from('professions_list')
       .select('id, name')
+      .eq('enabled', true)
       .order('id', { ascending: true });
 
     if (error) {
@@ -41,56 +42,6 @@ export async function GET(req: NextRequest) {
     }
 
     return NextResponse.json({ professions: data || [] });
-  } catch (err: unknown) {
-    const error = err as Error;
-    return NextResponse.json({ error: error?.message || 'Server error' }, { status: 500 });
-  }
-}
-
-export async function POST(req: NextRequest) {
-  try {
-    const token = getAuthToken(req);
-    if (!token) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    const user = await getAuthUser(token);
-    if (!user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    const body = await req.json();
-    const { name } = body;
-
-    if (!name || typeof name !== 'string' || !name.trim()) {
-      return NextResponse.json({ error: 'Profession name is required' }, { status: 400 });
-    }
-
-    const trimmed = name.trim();
-    const supabase = createSupabaseServerClient();
-
-    // Check for existing (case-insensitive)
-    const { data: existing } = await supabase
-      .from('professions')
-      .select('id, name')
-      .ilike('name', trimmed)
-      .maybeSingle();
-
-    if (existing) {
-      return NextResponse.json({ profession: existing });
-    }
-
-    const { data, error } = await supabase
-      .from('professions')
-      .insert({ name: trimmed })
-      .select('id, name')
-      .single();
-
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
-    }
-
-    return NextResponse.json({ profession: data }, { status: 201 });
   } catch (err: unknown) {
     const error = err as Error;
     return NextResponse.json({ error: error?.message || 'Server error' }, { status: 500 });

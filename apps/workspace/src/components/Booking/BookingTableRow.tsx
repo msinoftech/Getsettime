@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import { getEventTypeDurationInner } from '@/src/utils/booking';
 import { StatusBadge } from './StatusBadge';
 
 export interface DisplayBooking {
@@ -9,10 +10,13 @@ export interface DisplayBooking {
   date: string;
   time: string;
   type: string;
+  /** Event type duration when provided by API */
+  event_type_duration_minutes?: number | null;
   status: string;
   service_provider_name: string;
   created_at: string;
   is_viewed: boolean;
+  is_reschedule_viewed: boolean;
 }
 
 interface BookingTableRowProps {
@@ -28,6 +32,10 @@ export function BookingTableRow({
   onEdit,
   onDelete,
 }: BookingTableRowProps) {
+  const eventDurationInner = getEventTypeDurationInner(
+    displayBooking.event_type_duration_minutes
+  );
+
   return (
     <tr className="bg-white border border-slate-200 hover:bg-slate-50 transition-colors">
       <td
@@ -41,6 +49,12 @@ export function BookingTableRow({
               New
             </span>
           )}
+          {!displayBooking.is_reschedule_viewed &&
+            displayBooking.status.toLowerCase() === 'reschedule' && (
+            <span className="ml-2 inline-flex items-center rounded-full bg-purple-100 px-2 py-0.5 text-xs font-semibold text-purple-800">
+              Reschedule
+            </span>
+          )}
         </span>
       </td>
       <td
@@ -48,13 +62,17 @@ export function BookingTableRow({
         data-label="Date-Time"
       >
         <span className="text-slate-700">{displayBooking.date} - {displayBooking.time}</span>
-        <span className="text-slate-700"></span>
       </td>
       <td
         className="px-6 py-4 whitespace-nowrap align-middle text-sm"
         data-label="Type"
       >
-        <span className="text-sm text-slate-500">{displayBooking.type}</span>
+        <span className="text-sm text-slate-500">
+          {displayBooking.type}
+          {eventDurationInner != null && (
+            <span className="text-slate-400"> ({eventDurationInner})</span>
+          )}
+        </span>
       </td>
       <td
         className="px-6 py-4 whitespace-nowrap align-middle text-sm"

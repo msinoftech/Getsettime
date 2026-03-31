@@ -521,6 +521,7 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
                   <Step3DateTime
                     selectedDate={selectedDate}
                     selectedTime={selectedTime}
+                    minLeadTimeMinutes={isRescheduleMode ? 60 : 0}
                     timeslots={timeslots}
                     days={days}
                     currentMonth={currentMonth}

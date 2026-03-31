@@ -18,6 +18,8 @@ export function WorkspaceTableSkeleton() {
       <table className="w-full">
         <thead className="bg-slate-50 border-b border-slate-200">
           <tr className="border border-slate-200">
+            <th className="px-6 py-4 text-left text-sm font-bold text-slate-700 tracking-wider">Logo</th>
+            <th className="px-6 py-4 text-left text-sm font-bold text-slate-700 tracking-wider">ID</th>
             <th className="px-6 py-4 text-left text-sm font-bold text-slate-700 tracking-wider">Name</th>
             <th className="px-6 py-4 text-left text-sm font-bold text-slate-700 tracking-wider">Slug</th>
             <th className="px-6 py-4 text-left text-sm font-bold text-slate-700 tracking-wider">Colors</th>
@@ -29,10 +31,13 @@ export function WorkspaceTableSkeleton() {
           {Array.from({ length: SKELETON_ROWS }).map((_, i) => (
             <tr key={i} className="bg-white border border-slate-200">
               <td className="px-6 py-4">
-                <div className="flex items-center gap-3">
-                  <SkeletonBar className="h-10 w-10 rounded-lg shrink-0" />
-                  <SkeletonBar className="h-4 w-28" />
-                </div>
+                <SkeletonBar className="h-10 w-10 rounded-lg shrink-0" />
+              </td>
+              <td className="px-6 py-4 max-w-[14rem]">
+                <SkeletonBar className="h-6 w-full max-w-[12rem] rounded" />
+              </td>
+              <td className="px-6 py-4">
+                <SkeletonBar className="h-4 w-28" />
               </td>
               <td className="px-6 py-4"><SkeletonBar className="h-6 w-28 rounded" /></td>
               <td className="px-6 py-4">

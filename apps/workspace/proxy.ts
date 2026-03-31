@@ -9,7 +9,7 @@ export default function proxy(request: NextRequest) {
   // Public routes that don't require authentication (embed booking: /[workspaceSlug] or /[workspaceSlug]/[eventTypeSlug])
   const publicRoutes = ['/login', '/register', '/forgot-password', '/reset-password'];
   const segments = pathname.split('/').filter(Boolean);
-  const isEmbedRoute = (segments.length === 1 || segments.length === 2) && !['login', 'register', 'forgot-password', 'reset-password', 'auth', 'invite-accept', 'event-type', 'routingform', 'workflows', 'availability', 'team-members', 'departments', 'services', 'profile', 'integrations', 'contacts', 'billings', 'bookings', 'settings', 'api', '_next'].includes(segments[0]);
+  const isEmbedRoute = (segments.length === 1 || segments.length === 2) && !['login', 'register', 'forgot-password', 'reset-password', 'auth', 'invite-accept', 'event-type', 'routingform', 'workflows', 'availability', 'team-members', 'departments', 'services', 'profile', 'integrations', 'contacts', 'billings', 'bookings', 'settings', 'roles-permissions', 'api', '_next'].includes(segments[0]);
   const isPublicRoute = publicRoutes.some(route => pathname.startsWith(route)) || isEmbedRoute;
 
   // If accessing public routes, allow
@@ -53,9 +53,10 @@ export const config = {
      * Match all request paths except for the ones starting with:
      * - _next/static (static files)
      * - _next/image (image optimization files)
+     * - _next/webpack-hmr (dev WebSocket HMR — must not hit proxy/middleware)
      * - favicon.ico (favicon file)
      */
-    '/((?!_next/static|_next/image|favicon.ico).*)',
+    '/((?!_next/static|_next/image|_next/webpack-hmr|favicon.ico).*)',
   ],
 };
 

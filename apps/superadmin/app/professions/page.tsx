@@ -7,6 +7,7 @@ interface Profession {
   id: number;
   name: string;
   created_at: string;
+  enabled: boolean;
 }
 
 const ProfessionsPage: React.FC = () => {
@@ -28,14 +29,20 @@ const ProfessionsPage: React.FC = () => {
     try {
       setLoading(true);
       setError(null);
-      const response = await fetch('/api/professions');
+      const response = await fetch('/api/professions-list');
       const data = await response.json();
 
       if (!response.ok) {
         throw new Error(data.error || 'Failed to fetch professions');
       }
 
-      setProfessions(data.professions || []);
+      const list = (data.professions || []) as Profession[];
+      setProfessions(
+        list.map((p) => ({
+          ...p,
+          enabled: p.enabled !== false,
+        }))
+      );
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Failed to load professions';
       console.error('Error fetching professions:', err);
@@ -102,16 +109,17 @@ const ProfessionsPage: React.FC = () => {
     try {
       const payload = { name: formData.name.trim() };
 
-      const url = editingProfession
-        ? `/api/professions/${editingProfession.id}`
-        : '/api/professions';
-      const method = editingProfession ? 'PUT' : 'POST';
-
-      const response = await fetch(url, {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
+      const response = editingProfession
+        ? await fetch(`/api/professions-list/${editingProfession.id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          })
+        : await fetch('/api/professions-list', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
 
       const data = await response.json();
 
@@ -132,6 +140,28 @@ const ProfessionsPage: React.FC = () => {
     }
   };
 
+  const toggleProfessionEnabled = async (profession: Profession) => {
+    try {
+      const response = await fetch(`/api/professions-list/${profession.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: !profession.enabled }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setError(data.error || 'Failed to update profession');
+        return;
+      }
+      setProfessions((prev) =>
+        prev.map((p) =>
+          p.id === profession.id ? { ...p, enabled: !profession.enabled } : p
+        )
+      );
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to update profession');
+    }
+  };
+
   const handleDeleteConfirm = async () => {
     if (!deletingProfession) return;
 
@@ -139,7 +169,7 @@ const ProfessionsPage: React.FC = () => {
     setError(null);
 
     try {
-      const response = await fetch(`/api/professions/${deletingProfession.id}`, {
+      const response = await fetch(`/api/professions-list/${deletingProfession.id}`, {
         method: 'DELETE',
       });
 
@@ -194,9 +224,17 @@ const ProfessionsPage: React.FC = () => {
         <header className="flex flex-wrap justify-between relative gap-3">
           <div className="space-y-3">
             <h1 className="text-xl font-semibold text-slate-800">Professions</h1>
-            <p className="text-xs text-slate-500">Manage profession categories for workspaces</p>
+            <p className="text-xs text-slate-500">
+              Global onboarding catalog (professions_list). When a user picks an option or enters Other, a matching row is created or reused in the professions table and linked to their workspace.
+            </p>
           </div>
-          <button onClick={handleAdd} className="cursor-pointer text-sm font-bold text-indigo-600 transition">+ Add Profession</button>
+          <button
+            type="button"
+            onClick={handleAdd}
+            className="self-start inline-flex items-center rounded-lg bg-indigo-600 px-3 py-2 text-xs font-medium text-white hover:bg-indigo-700"
+          >
+            + Add profession
+          </button>
         </header>
       </section>
 
@@ -248,7 +286,7 @@ const ProfessionsPage: React.FC = () => {
         ) : professions.length === 0 ? (
           <div className="p-8 text-center text-slate-500">
             <p className="text-lg mb-2">No professions found</p>
-            <p className="text-sm">Click &quot;Add Profession&quot; to create your first profession</p>
+            <p className="text-sm">Use &quot;Add profession&quot; above or seed via migration/SQL.</p>
           </div>
         ) : filteredProfessions.length === 0 ? (
           <div className="p-8 text-center text-slate-500">
@@ -262,7 +300,7 @@ const ProfessionsPage: React.FC = () => {
                   Clear filters
                 </button>
               ) : (
-                'Click "Add Profession" to create your first profession'
+                'Adjust filters or add catalog rows in superadmin'
               )}
             </p>
           </div>
@@ -274,6 +312,9 @@ const ProfessionsPage: React.FC = () => {
                   <tr className="border border-slate-200">
                     <th className="px-6 py-4 text-left text-sm font-bold text-slate-700 tracking-wider">
                       Name
+                    </th>
+                    <th className="px-6 py-4 text-left text-sm font-bold text-slate-700 tracking-wider">
+                      Enabled
                     </th>
                     <th className="px-6 py-4 text-left text-sm font-bold text-slate-700 tracking-wider">
                       Created
@@ -288,6 +329,17 @@ const ProfessionsPage: React.FC = () => {
                     <tr key={profession.id} className="bg-white border border-slate-200 hover:bg-slate-50 transition-colors">
                       <td className="px-6 py-4 whitespace-nowrap align-middle text-sm" data-label="Name">
                         <span className="font-semibold text-slate-900">{profession.name}</span>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap align-middle text-sm" data-label="Enabled">
+                        <label className="inline-flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={profession.enabled}
+                            onChange={() => toggleProfessionEnabled(profession)}
+                            className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                          />
+                          <span className="text-slate-600">{profession.enabled ? 'On' : 'Off'}</span>
+                        </label>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap align-middle text-sm" data-label="Created">
                         {new Date(profession.created_at).toLocaleDateString()}
@@ -334,7 +386,9 @@ const ProfessionsPage: React.FC = () => {
           <section className={`relative h-full w-full max-w-xl transform bg-white shadow-2xl transition-transform duration-300 ${ isModalOpen ? 'translate-x-0' : 'translate-x-full' }`}>
             <div className="flex items-center justify-between border-b border-gray-200 px-6 py-4">
               <div>
-                <h2 className="text-lg font-semibold text-gray-800">{editingProfession ? 'Edit Profession' : 'Add New Profession'}</h2>
+                <h2 className="text-lg font-semibold text-gray-800">
+                  {editingProfession ? 'Edit profession' : 'Add profession'}
+                </h2>
               </div>
               <button className="rounded-full p-2 text-gray-500 transition hover:bg-gray-100 hover:text-gray-700" aria-label="Close form" onClick={closeModal}>
                 <svg className="h-5 w-5" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" viewBox="0 0 24 24">

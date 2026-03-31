@@ -26,6 +26,12 @@ const inputBase =
 const selectBase =
   'w-full px-3 py-2 rounded-md border border-gray-200 bg-white text-sm text-gray-900 focus:ring-2 focus:ring-indigo-500 focus:outline-none';
 
+const BOOKING_SORT_OPTIONS_WORKSPACE = BOOKING_SORT_OPTIONS.map((opt) =>
+  opt.value === 'new'
+    ? { ...opt, label: 'New / Reschedule alerts' }
+    : opt
+);
+
 export function BookingFilters({
   filter,
   dateFilter,
@@ -148,7 +154,7 @@ export function BookingFilters({
               className={`min-w-0 ${selectBase}`}
               aria-label="Sort bookings"
             >
-              {BOOKING_SORT_OPTIONS.map(({ value, label }) => (
+              {BOOKING_SORT_OPTIONS_WORKSPACE.map(({ value, label }) => (
                 <option key={value} value={value}>
                   {label}
                 </option>

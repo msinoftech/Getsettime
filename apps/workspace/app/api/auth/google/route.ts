@@ -4,7 +4,7 @@ import { getGoogleOAuthClient } from '@/lib/googleClient';
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { enableCalendarSync, isSignup, returnTo } = body;
+    const { enableCalendarSync, isSignup, returnTo, loginHint } = body;
 
     // Validate environment variables
     if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
@@ -40,13 +40,17 @@ export async function POST(req: Request) {
       ...(typeof returnTo === 'string' && returnTo ? { returnTo } : {}),
     });
 
-    const authUrl = oauth2Client.generateAuthUrl({
+    const authOptions: Parameters<typeof oauth2Client.generateAuthUrl>[0] = {
       access_type: 'offline', // Request refresh token
       scope: scopes,
       prompt: isSignup ? 'consent' : 'select_account', // Force consent on signup
       state: Buffer.from(state).toString('base64'), // Encode state
       include_granted_scopes: true,
-    });
+    };
+    if (typeof loginHint === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(loginHint.trim())) {
+      authOptions.login_hint = loginHint.trim();
+    }
+    const authUrl = oauth2Client.generateAuthUrl(authOptions);
 
     return NextResponse.json({ authUrl });
   } catch (error: any) {

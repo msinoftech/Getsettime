@@ -1,11 +1,8 @@
 import type { AvailabilitySettings, Booking, EventType } from '@/src/types/bookingForm';
 import {
+  buildTimeslotsForDay,
   formatLocalDateString,
   getDayName,
-  getIndividualSlotKey,
-  isTimeSlotBooked,
-  isTimeSlotInPast,
-  isTimeSlotOnBreak,
   normalizeDate,
   parseTimeToMinutes,
 } from './bookingTime';
@@ -15,7 +12,8 @@ export function isDateAvailable(
   date: Date,
   availabilitySettings: AvailabilitySettings | null,
   selectedType: EventType | null,
-  existingBookings: Booking[]
+  existingBookings: Booking[],
+  minLeadTimeMinutes = 0
 ): boolean {
   if (!availabilitySettings?.timesheet || !selectedType) return false;
 
@@ -52,38 +50,12 @@ export function isDateAvailable(
     if (allHoursDisabled) return false;
   }
 
-  const duration = selectedType.duration_minutes || 30;
-  const startMinutes = parseTimeToMinutes(daySchedule.startTime);
-  const endMinutes = parseTimeToMinutes(daySchedule.endTime);
-  const normalizedDate = normalizeDate(date);
-
-  for (let slotStartMinutes = startMinutes; slotStartMinutes < endMinutes; slotStartMinutes += duration) {
-    const slotEndMinutes = slotStartMinutes + duration;
-    if (slotEndMinutes > endMinutes) break;
-    if (isTimeSlotOnBreak(slotStartMinutes, slotEndMinutes, daySchedule.breaks || [])) continue;
-
-    const slotHour = Math.floor(slotStartMinutes / 60);
-    const slotMinute = slotStartMinutes % 60;
-    const slotStart = new Date(normalizedDate);
-    slotStart.setHours(slotHour, slotMinute, 0, 0);
-    const slotEnd = new Date(slotStart);
-    slotEnd.setMinutes(slotEnd.getMinutes() + duration);
-
-    if (isTimeSlotBooked(slotStart, slotEnd, date, existingBookings)) continue;
-
-    const slotEndHour = Math.floor(slotEndMinutes / 60);
-    let isOverrideDisabled = false;
-    for (let hour = slotHour; hour <= slotEndHour; hour++) {
-      const individualKey = getIndividualSlotKey(normalizedDate, hour);
-      const individualOverride = availabilitySettings?.individual?.[individualKey];
-      if (individualOverride === false) {
-        isOverrideDisabled = true;
-        break;
-      }
-    }
-    if (isOverrideDisabled) continue;
-    if (isTimeSlotInPast(slotStart, date)) continue;
-    return true;
-  }
-  return false;
+  const slots = buildTimeslotsForDay(
+    selectedType,
+    date,
+    availabilitySettings,
+    existingBookings,
+    minLeadTimeMinutes
+  );
+  return slots.some((s) => !s.disabled);
 }

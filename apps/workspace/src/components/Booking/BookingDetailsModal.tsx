@@ -8,6 +8,7 @@ import {
   getDisplayName,
   getDisplayEmail,
   getDisplayPhone,
+  getEventTypeDurationInner,
 } from '@/src/utils/booking';
 import { StatusBadge } from './StatusBadge';
 import type {
@@ -35,6 +36,10 @@ export function BookingDetailsModal({
   departments,
   serviceProviders,
 }: BookingDetailsModalProps) {
+  const eventDurationInner = getEventTypeDurationInner(
+    booking.event_types?.duration_minutes
+  );
+
   const intakeForm = booking.metadata?.intake_form as
     | Record<string, unknown>
     | undefined;
@@ -150,6 +155,12 @@ export function BookingDetailsModal({
                 </span>
                 <span className="text-slate-800">
                   {booking.event_types?.title || 'N/A'}
+                  {eventDurationInner != null && (
+                    <span className="text-slate-500">
+                      {' '}
+                      ({eventDurationInner})
+                    </span>
+                  )}
                 </span>
               </div>
               <div className="flex flex-col sm:flex-row sm:items-center">

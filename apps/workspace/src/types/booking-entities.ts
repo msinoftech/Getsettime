@@ -21,6 +21,8 @@ export type ServiceProvider = {
 export type Service = {
   id: string;
   name: string;
+  department_id?: number | string | null;
+  departments?: { name: string } | null;
 };
 
 export type { IntakeFormSettings } from './workspace';

@@ -2,16 +2,24 @@
 
 import { useEffect, useState } from 'react';
 
+export interface DashboardServiceRow {
+  id: string;
+  name: string;
+  department_name: string | null;
+}
+
 export interface DashboardCounts {
   bookings: number;
   teamMembers: number;
   services: number;
+  servicesRows: DashboardServiceRow[];
 }
 
 const INITIAL_COUNTS: DashboardCounts = {
   bookings: 0,
   teamMembers: 0,
   services: 0,
+  servicesRows: [],
 };
 
 export function useDashboardCounts(user: { id?: string } | null) {
@@ -61,9 +69,24 @@ export function useDashboardCounts(user: { id?: string } | null) {
           : 0;
         const teamMembers = teamMembersResult?.teamMembers?.length ?? 0;
         const services = servicesResult?.services?.length ?? 0;
+        const rawServices = (servicesResult?.services ?? []) as Array<{
+          id: string;
+          name: string;
+          departments?: { name: string } | { name: string }[] | null;
+        }>;
+        const servicesRows: DashboardServiceRow[] = rawServices.map((s) => {
+          const d = s.departments;
+          const department_name =
+            d == null
+              ? null
+              : Array.isArray(d)
+                ? (d[0]?.name ?? null)
+                : (d.name ?? null);
+          return { id: String(s.id), name: s.name, department_name };
+        });
 
         setState({
-          counts: { bookings, teamMembers, services },
+          counts: { bookings, teamMembers, services, servicesRows },
           loading: false,
         });
       } catch (error) {

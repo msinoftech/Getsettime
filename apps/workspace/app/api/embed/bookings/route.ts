@@ -422,7 +422,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Build notification context (names may be missing; fall back to "Not assigned")
+    // Build notification context (omit department/provider in emails when not set)
     let providerEmail: string | undefined;
     let providerName: string | undefined;
     let departmentName: string | undefined;
@@ -486,9 +486,6 @@ export async function POST(req: NextRequest) {
       console.error('Error resolving provider details:', providerErr);
     }
 
-    const providerLabel = providerName?.trim() ? providerName : (service_provider_id ? 'Assigned (details unavailable)' : 'Not assigned');
-    const departmentLabel = departmentName?.trim() ? departmentName : (department_id ? 'Assigned (details unavailable)' : 'Not assigned');
-
     // Send email notifications after successful booking creation (best-effort)
     try {
       if (invitee_email && invitee_email.trim()) {
@@ -497,10 +494,10 @@ export async function POST(req: NextRequest) {
         const emailData = {
           inviteeName: invitee_name.trim(),
           inviteeEmail: invitee_email.trim(),
-          providerName: providerLabel,
+          ...(providerName?.trim() ? { providerName: providerName.trim() } : {}),
           providerEmail: providerEmail,
           eventTypeName,
-          departmentName: departmentLabel,
+          ...(departmentName?.trim() ? { departmentName: departmentName.trim() } : {}),
           startTime: start_at,
           endTime: end_at || start_at,
           duration: durationMinutes,
@@ -539,11 +536,17 @@ export async function POST(req: NextRequest) {
         };
         const when = new Date(start_at).toLocaleString('en-US', whenOpts);
 
-        const message = [
-          'Booking confirmed' + ' ' + `Event: ${eventTypeName}` + ' ' + `Department: ${departmentLabel}` + ' ' + `Service Provider: ${providerLabel}` + ' ' + `When: ${when}` + ' ' + (metadataPayload.notes ? `Notes: ${String(metadataPayload.notes)}` : ''),
-        ]
-          .filter((s) => s && String(s).trim().length > 0)
-          .join('\n');
+        const whatsappParts = [
+          'Booking confirmed',
+          `Event: ${eventTypeName}`,
+          ...(departmentName?.trim() ? [`Department: ${departmentName.trim()}`] : []),
+          ...(providerName?.trim() ? [`Service Provider: ${providerName.trim()}`] : []),
+          `When: ${when}`,
+          ...(metadataPayload.notes
+            ? [`Notes: ${String(metadataPayload.notes)}`]
+            : []),
+        ];
+        const message = whatsappParts.join(' ');
 
         await fetch(`${origin}/api/whatsapp`, {
           method: 'POST',

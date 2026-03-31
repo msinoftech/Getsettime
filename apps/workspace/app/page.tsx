@@ -107,6 +107,34 @@ const Dashboard: React.FC = () => {
         </div>
       </section>
 
+      {/* Services overview */}
+      {counts.servicesRows.length > 0 && (
+        <section aria-label="services-overview" className="rounded-xl border border-[#e6ebff] bg-white p-5 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3 mb-4">
+            <h2 className="text-base font-semibold text-slate-800">Services</h2>
+            <Link href="/services" className="text-sm font-medium text-indigo-600 hover:text-indigo-800">
+              Manage services
+            </Link>
+          </div>
+          <ul className="divide-y divide-slate-100">
+            {counts.servicesRows.map((row) => (
+              <li key={row.id} className="flex flex-wrap items-center justify-between gap-2 py-3 first:pt-0">
+                <span className="font-medium text-slate-800">{row.name}</span>
+                <span className="text-sm text-slate-500">
+                  {row.department_name ? (
+                    <span className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-700">
+                      {row.department_name}
+                    </span>
+                  ) : (
+                    <span className="text-slate-400">No department</span>
+                  )}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       {/* Chart Section */}
       <section aria-label="chart-section" className="relative">
         <div className="grid grid-cols-1 sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3 gap-4 sm:gap-6">

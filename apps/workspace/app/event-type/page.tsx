@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { useAuth } from "@/src/providers/AuthProvider";
 import { AlertModal } from "@/src/components/ui/AlertModal";
@@ -32,6 +32,9 @@ export default function EventTypes() {
   const [copiedId, setCopiedId] = useState<number | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
   const [alertMessage, setAlertMessage] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const submitInFlightRef = useRef(false);
   const [form, setForm] = useState({
     title: "",
     duration_minutes: "",
@@ -126,19 +129,40 @@ export default function EventTypes() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setFormError(null);
 
     if (!form.title.trim()) return;
+
+    const durationStr = form.duration_minutes.trim();
+    if (!durationStr) {
+      setFormError("Please enter a duration in minutes.");
+      return;
+    }
+    if (!/^\d+$/.test(durationStr)) {
+      setFormError("Duration must be a whole number of minutes (1 or more).");
+      return;
+    }
+    const durationMinutes = parseInt(durationStr, 10);
+    if (durationMinutes < 1) {
+      setFormError("Duration must be at least 1 minute.");
+      return;
+    }
+
+    if (submitInFlightRef.current) return;
+    submitInFlightRef.current = true;
+    setSubmitting(true);
 
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session?.access_token) {
         console.error("No access token found");
+        setFormError("You are not signed in. Please refresh and try again.");
         return;
       }
 
       const payload = {
         title: form.title,
-        duration_minutes: form.duration_minutes || null,
+        duration_minutes: durationMinutes,
         buffer_before: form.buffer_before || null,
         buffer_after: form.buffer_after || null,
         location_type: form.location_type || null,
@@ -158,6 +182,7 @@ export default function EventTypes() {
         if (!response.ok) {
           const error = await response.json();
           console.error("Error updating event type:", error);
+          setFormError(typeof error?.error === "string" ? error.error : "Could not update event type.");
           return;
         }
 
@@ -179,6 +204,7 @@ export default function EventTypes() {
         if (!response.ok) {
           const error = await response.json();
           console.error("Error creating event type:", error);
+          setFormError(typeof error?.error === "string" ? error.error : "Could not create event type.");
           return;
         }
 
@@ -195,13 +221,19 @@ export default function EventTypes() {
         is_public: false,
       });
       setShowForm(false);
+      setFormError(null);
       await fetchEventTypes();
     } catch (err) {
       console.error("Error:", err);
+      setFormError("Something went wrong. Please try again.");
+    } finally {
+      submitInFlightRef.current = false;
+      setSubmitting(false);
     }
   };
 
   const handleEdit = (item: EventType) => {
+    setFormError(null);
     setEditingId(item.id);
     setForm({
       title: item.title,
@@ -258,6 +290,7 @@ export default function EventTypes() {
       location_type: "",
       is_public: false,
     });
+    setFormError(null);
     setShowForm(false);
     setEditingId(null);
   };
@@ -271,6 +304,7 @@ export default function EventTypes() {
       location_type: "",
       is_public: false,
     });
+    setFormError(null);
     setEditingId(null);
     setShowForm(true);
   };
@@ -304,6 +338,7 @@ export default function EventTypes() {
     // Allow empty string or only digits
     if (value === '' || /^\d+$/.test(value)) {
       setForm({ ...form, [field]: value });
+      if (field === "duration_minutes" && formError) setFormError(null);
     }
   };
 
@@ -366,7 +401,11 @@ export default function EventTypes() {
               </button>
             </div>
             <div className="p-5">
-              <form onSubmit={handleSubmit} className="grid md:grid-cols-2 gap-4 p-5 rounded-xl border border-slate-200 bg-gray-50/70">
+              <form
+                onSubmit={handleSubmit}
+                className="grid md:grid-cols-2 gap-4 p-5 rounded-xl border border-slate-200 bg-gray-50/70"
+                aria-describedby={formError ? "event-type-form-error" : undefined}
+              >
                 <div>
                   <label htmlFor="title" className="block text-sm font-medium text-slate-700 mb-1">Event Title</label>
                   <input
@@ -391,9 +430,17 @@ export default function EventTypes() {
                     onChange={(e) => handleNumberInput(e, 'duration_minutes')}
                     onKeyPress={handleNumberKeyPress}
                     placeholder="e.g. 30"
-                    className="w-full px-4 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-indigo-500 outline-none"
+                    className={`w-full px-4 py-2 rounded-lg border focus:ring-2 focus:ring-indigo-500 outline-none ${
+                      formError ? "border-red-500" : "border-slate-300"
+                    }`}
                   />
                 </div>
+
+                {formError && (
+                  <p id="event-type-form-error" className="md:col-span-2 text-sm text-red-600" role="alert">
+                    {formError}
+                  </p>
+                )}
 
                 <div>
                   <label htmlFor="buffer_before" className="block text-sm font-medium text-slate-700 mb-1">Buffer Before (minutes)</label>
@@ -454,8 +501,18 @@ export default function EventTypes() {
                 </div>
 
                 <div className="md:col-span-2 flex justify-end gap-2 mt-2">
-                  <button type="submit" className="px-5 py-2.5 rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 transition font-medium">
-                    {editingId ? "Update Event" : "Add Event"}
+                  <button
+                    type="submit"
+                    disabled={submitting}
+                    className="px-5 py-2.5 rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 transition font-medium disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {submitting
+                      ? editingId
+                        ? "Updating…"
+                        : "Adding…"
+                      : editingId
+                        ? "Update Event"
+                        : "Add Event"}
                   </button>
                 </div>
               </form>
