@@ -55,79 +55,83 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     // Get current session and verify role
     const getSession = async () => {
-      const { data, error } = await supabase.auth.getSession()
-      if (error) {
-        console.error(error)
-        setLoading(false)
+      try {
+        const { data, error } = await supabase.auth.getSession()
+        if (error) {
+          console.error(error)
+          if (!isPublicPath(pathname)) {
+            router.push('/login')
+          }
+          return
+        }
+
+        const session = data.session
+        const currentUser = session?.user ?? null
+
+        // If user is logged in, verify role and deactivated status
+        if (currentUser) {
+          const userRole = currentUser.user_metadata?.role
+          const isDeactivated = currentUser.user_metadata?.deactivated === true
+          const isAuthCallback = pathname === "/auth/callback"
+
+          // Check if user is deactivated
+          if (isDeactivated) {
+            await supabase.auth.signOut()
+            setUser(null)
+            if (!isPublicPath(pathname)) {
+              router.push('/login')
+            }
+            return
+          }
+
+          // Block superadmin and only allow workspace roles
+          // NOTE: For /auth/callback allow a temporary missing role so the callback page can set it.
+          if (!isAuthCallback && (!userRole || !ALLOWED_ROLES.includes(userRole))) {
+            await supabase.auth.signOut()
+            setUser(null)
+            if (!isPublicPath(pathname)) {
+              router.push('/login')
+            }
+            return
+          }
+
+          if (userRole === 'customer' && !pathname.startsWith('/my-bookings') && !isPublicPath(pathname)) {
+            router.push('/my-bookings')
+            setUser(currentUser)
+            return
+          }
+
+          if (
+            userRole === 'workspace_admin' &&
+            !isPublicPath(pathname) &&
+            !isAllowedPathDuringWorkspaceOnboarding(pathname)
+          ) {
+            const incomplete = await workspaceAdminIncompleteOnboarding(
+              supabase,
+              currentUser as SupabaseUser
+            )
+            if (incomplete) {
+              const meta = currentUser.user_metadata as Record<string, unknown> | undefined
+              router.push(workspaceOnboardingRegisterUrl(meta ?? {}))
+              setUser(currentUser)
+              return
+            }
+          }
+        }
+
+        setUser(currentUser)
+
+        if (!session && !isPublicPath(pathname)) {
+          router.push('/login')
+        }
+      } catch (err) {
+        console.error(err)
+        setUser(null)
         if (!isPublicPath(pathname)) {
           router.push('/login')
         }
-        return
-      }
-
-      const session = data.session
-      const currentUser = session?.user ?? null
-      
-      // If user is logged in, verify role and deactivated status
-      if (currentUser) {
-        const userRole = currentUser.user_metadata?.role
-        const isDeactivated = currentUser.user_metadata?.deactivated === true
-        const isAuthCallback = pathname === "/auth/callback"
-
-        // Check if user is deactivated
-        if (isDeactivated) {
-          await supabase.auth.signOut()
-          setUser(null)
-          setLoading(false)
-          if (!isPublicPath(pathname)) {
-            router.push('/login')
-          }
-          return
-        }
-
-        // Block superadmin and only allow workspace roles
-        // NOTE: For /auth/callback allow a temporary missing role so the callback page can set it.
-        if (!isAuthCallback && (!userRole || !ALLOWED_ROLES.includes(userRole))) {
-          await supabase.auth.signOut()
-          setUser(null)
-          setLoading(false)
-          if (!isPublicPath(pathname)) {
-            router.push('/login')
-          }
-          return
-        }
-
-        if (userRole === 'customer' && !pathname.startsWith('/my-bookings') && !isPublicPath(pathname)) {
-          router.push('/my-bookings')
-          setUser(currentUser)
-          setLoading(false)
-          return
-        }
-
-        if (
-          userRole === 'workspace_admin' &&
-          !isPublicPath(pathname) &&
-          !isAllowedPathDuringWorkspaceOnboarding(pathname)
-        ) {
-          const incomplete = await workspaceAdminIncompleteOnboarding(
-            supabase,
-            currentUser as SupabaseUser
-          )
-          if (incomplete) {
-            const meta = currentUser.user_metadata as Record<string, unknown> | undefined
-            router.push(workspaceOnboardingRegisterUrl(meta ?? {}))
-            setUser(currentUser)
-            setLoading(false)
-            return
-          }
-        }
-      }
-
-      setUser(currentUser)
-      setLoading(false)
-      
-      if (!session && !isPublicPath(pathname)) {
-        router.push('/login')
+      } finally {
+        setLoading(false)
       }
     }
 
@@ -137,65 +141,75 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      const currentUser = session?.user ?? null
-      
-      // If user is logged in, verify role and deactivated status
-      if (currentUser) {
-        const userRole = currentUser.user_metadata?.role
-        const isDeactivated = currentUser.user_metadata?.deactivated === true
-        const isAuthCallback = pathname === "/auth/callback"
+      try {
+        const currentUser = session?.user ?? null
 
-        // Check if user is deactivated
-        if (isDeactivated) {
-          await supabase.auth.signOut()
-          setUser(null)
-          if (!isPublicPath(pathname)) {
-            router.push('/login')
+        // If user is logged in, verify role and deactivated status
+        if (currentUser) {
+          const userRole = currentUser.user_metadata?.role
+          const isDeactivated = currentUser.user_metadata?.deactivated === true
+          const isAuthCallback = pathname === "/auth/callback"
+
+          // Check if user is deactivated
+          if (isDeactivated) {
+            await supabase.auth.signOut()
+            setUser(null)
+            if (!isPublicPath(pathname)) {
+              router.push('/login')
+            }
+            return
           }
-          return
-        }
 
-        // Block superadmin and only allow workspace roles
-        // NOTE: For /auth/callback allow a temporary missing role so the callback page can set it.
-        if (!isAuthCallback && (!userRole || !ALLOWED_ROLES.includes(userRole))) {
-          await supabase.auth.signOut()
-          setUser(null)
-          if (!isPublicPath(pathname)) {
-            router.push('/login')
+          // Block superadmin and only allow workspace roles
+          // NOTE: For /auth/callback allow a temporary missing role so the callback page can set it.
+          if (!isAuthCallback && (!userRole || !ALLOWED_ROLES.includes(userRole))) {
+            await supabase.auth.signOut()
+            setUser(null)
+            if (!isPublicPath(pathname)) {
+              router.push('/login')
+            }
+            return
           }
-          return
-        }
 
-        if (userRole === 'customer' && !pathname.startsWith('/my-bookings') && !isPublicPath(pathname)) {
-          router.push('/my-bookings')
-          setUser(currentUser)
-          return
-        }
-
-        if (
-          userRole === 'workspace_admin' &&
-          !isPublicPath(pathname) &&
-          !isAllowedPathDuringWorkspaceOnboarding(pathname)
-        ) {
-          const incomplete = await workspaceAdminIncompleteOnboarding(
-            supabase,
-            currentUser as SupabaseUser
-          )
-          if (incomplete) {
-            const meta = currentUser.user_metadata as Record<string, unknown> | undefined
-            router.push(workspaceOnboardingRegisterUrl(meta ?? {}))
+          if (userRole === 'customer' && !pathname.startsWith('/my-bookings') && !isPublicPath(pathname)) {
+            router.push('/my-bookings')
             setUser(currentUser)
             return
           }
-        }
-      }
 
-      setUser(currentUser)
-      
-      if (!session && !isPublicPath(pathname)) {
-        router.push('/login')
+          if (
+            userRole === 'workspace_admin' &&
+            !isPublicPath(pathname) &&
+            !isAllowedPathDuringWorkspaceOnboarding(pathname)
+          ) {
+            const incomplete = await workspaceAdminIncompleteOnboarding(
+              supabase,
+              currentUser as SupabaseUser
+            )
+            if (incomplete) {
+              const meta = currentUser.user_metadata as Record<string, unknown> | undefined
+              router.push(workspaceOnboardingRegisterUrl(meta ?? {}))
+              setUser(currentUser)
+              return
+            }
+          }
+        }
+
+        setUser(currentUser)
+
+        if (!session && !isPublicPath(pathname)) {
+          router.push('/login')
+        }
+        // Post-login navigation is handled by LoginForm (onboarding, bootstrap, role targets) to avoid racing redirects.
+      } catch (err) {
+        console.error(err)
+        setUser(null)
+        if (!isPublicPath(pathname)) {
+          router.push('/login')
+        }
+      } finally {
+        setLoading(false)
       }
-      // Post-login navigation is handled by LoginForm (onboarding, bootstrap, role targets) to avoid racing redirects.
     })
 
     return () => {

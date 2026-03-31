@@ -1,8 +1,5 @@
 import type { NextConfig } from "next";
 
-const superadminApiUrl =
-  process.env.NEXT_PUBLIC_SUPERADMIN_API_URL || "http://localhost:3000";
-
 const nextConfig: NextConfig = {
   /**
    * If you open dev via a LAN hostname (e.g. http://192.168.1.5:3001) and HMR stays
@@ -17,14 +14,6 @@ const nextConfig: NextConfig = {
           .filter(Boolean),
       }
     : {}),
-  async rewrites() {
-    return [
-      {
-        source: "/api/superadmin/:path*",
-        destination: `${superadminApiUrl}/api/:path*`,
-      },
-    ];
-  },
 };
 
 export default nextConfig;

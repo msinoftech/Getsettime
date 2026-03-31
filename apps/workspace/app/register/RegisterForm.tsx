@@ -256,7 +256,8 @@ export default function RegisterForm() {
           /^\d+$/.test(resolvedCatalogProfessionId)
         ) {
           const sRes = await fetch(
-            `/api/superadmin/departments?profession_id=${encodeURIComponent(resolvedCatalogProfessionId)}`
+            `/api/catalog/departments?profession_id=${encodeURIComponent(resolvedCatalogProfessionId)}`,
+            { headers: authHeadersFresh }
           );
           if (sRes.ok) {
             const sj = (await sRes.json()) as { departments?: string[] };
@@ -345,8 +346,10 @@ export default function RegisterForm() {
     let cancelled = false;
     (async () => {
       try {
+        const headers = await headers_for_workspace_api();
         const res = await fetch(
-          `/api/superadmin/departments?profession_id=${encodeURIComponent(selectedProfessionId)}`
+          `/api/catalog/departments?profession_id=${encodeURIComponent(selectedProfessionId)}`,
+          { headers }
         );
         const data = await res.json();
         if (cancelled || !res.ok) return;
@@ -390,10 +393,6 @@ export default function RegisterForm() {
       const workspaceBody = isOtherProfession
         ? { custom_profession: professionName }
         : { professions_list_id: Number(selectedProfessionId) };
-
-      if (isOtherProfession) {
-        setCustomProfession("");
-      }
 
       const workspaceRes = await fetch("/api/workspace", {
         method: "PUT",

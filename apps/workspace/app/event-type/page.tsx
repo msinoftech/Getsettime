@@ -1,11 +1,18 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, type FormEvent } from "react";
+import { createPortal } from "react-dom";
 import { supabase } from "@/lib/supabaseClient";
 import { useAuth } from "@/src/providers/AuthProvider";
 import { AlertModal } from "@/src/components/ui/AlertModal";
 import { ConfirmModal } from "@/src/components/ui/ConfirmModal";
 import { EventTypeSkeleton } from "@/src/components/ui/EventTypeSkeleton";
+import {
+  EventTypeFormLayout,
+  split_duration_minutes,
+  total_duration_minutes,
+  type event_type_form_state,
+} from "@/src/features/event-types/EventTypeFormLayout";
 
 interface EventType {
   id: number;
@@ -35,14 +42,31 @@ export default function EventTypes() {
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const submitInFlightRef = useRef(false);
-  const [form, setForm] = useState({
+  const empty_form = (): event_type_form_state => ({
     title: "",
-    duration_minutes: "",
+    duration_hours: "",
+    duration_minutes_part: "",
     buffer_before: "",
     buffer_after: "",
     location_type: "",
     is_public: false,
   });
+
+  const [form, setForm] = useState<event_type_form_state>(empty_form);
+  const [portalReady, setPortalReady] = useState(false);
+
+  useEffect(() => {
+    setPortalReady(true);
+  }, []);
+
+  useEffect(() => {
+    if (!showForm) return;
+    const previous_overflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previous_overflow;
+    };
+  }, [showForm]);
 
   const fetchWorkspaceSlug = async () => {
     console.log("=== Fetching Workspace Slug START ===");
@@ -127,24 +151,15 @@ export default function EventTypes() {
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setFormError(null);
 
     if (!form.title.trim()) return;
 
-    const durationStr = form.duration_minutes.trim();
-    if (!durationStr) {
-      setFormError("Please enter a duration in minutes.");
-      return;
-    }
-    if (!/^\d+$/.test(durationStr)) {
-      setFormError("Duration must be a whole number of minutes (1 or more).");
-      return;
-    }
-    const durationMinutes = parseInt(durationStr, 10);
+    const durationMinutes = total_duration_minutes(form.duration_hours, form.duration_minutes_part);
     if (durationMinutes < 1) {
-      setFormError("Duration must be at least 1 minute.");
+      setFormError("Duration must be at least 1 minute (set hours and/or minutes).");
       return;
     }
 
@@ -212,14 +227,7 @@ export default function EventTypes() {
         setItems((prev) => [result.data, ...prev]);
       }
 
-      setForm({
-        title: "",
-        duration_minutes: "",
-        buffer_before: "",
-        buffer_after: "",
-        location_type: "",
-        is_public: false,
-      });
+      setForm(empty_form());
       setShowForm(false);
       setFormError(null);
       await fetchEventTypes();
@@ -235,9 +243,13 @@ export default function EventTypes() {
   const handleEdit = (item: EventType) => {
     setFormError(null);
     setEditingId(item.id);
+    const { duration_hours, duration_minutes_part } = split_duration_minutes(
+      item.duration_minutes ?? undefined
+    );
     setForm({
       title: item.title,
-      duration_minutes: item.duration_minutes?.toString() || "",
+      duration_hours,
+      duration_minutes_part,
       buffer_before: item.buffer_before?.toString() || "",
       buffer_after: item.buffer_after?.toString() || "",
       location_type: item.location_type || "",
@@ -282,28 +294,14 @@ export default function EventTypes() {
   };
 
   const handleCancel = () => {
-    setForm({
-      title: "",
-      duration_minutes: "",
-      buffer_before: "",
-      buffer_after: "",
-      location_type: "",
-      is_public: false,
-    });
+    setForm(empty_form());
     setFormError(null);
     setShowForm(false);
     setEditingId(null);
   };
 
   const handleNewEvent = () => {
-    setForm({
-      title: "",
-      duration_minutes: "",
-      buffer_before: "",
-      buffer_after: "",
-      location_type: "",
-      is_public: false,
-    });
+    setForm(empty_form());
     setFormError(null);
     setEditingId(null);
     setShowForm(true);
@@ -332,34 +330,6 @@ export default function EventTypes() {
     }
   };
 
-  // Handle number input - only allow numeric values
-  const handleNumberInput = (e: React.ChangeEvent<HTMLInputElement>, field: 'duration_minutes' | 'buffer_before' | 'buffer_after') => {
-    const value = e.target.value;
-    // Allow empty string or only digits
-    if (value === '' || /^\d+$/.test(value)) {
-      setForm({ ...form, [field]: value });
-      if (field === "duration_minutes" && formError) setFormError(null);
-    }
-  };
-
-  // Prevent non-numeric keys from being pressed
-  const handleNumberKeyPress = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    // Allow: backspace, delete, tab, escape, enter, and numbers
-    if (
-      ['Backspace', 'Delete', 'Tab', 'Escape', 'Enter'].includes(e.key) ||
-      // Allow Ctrl+A, Ctrl+C, Ctrl+V, Ctrl+X
-      (e.key === 'a' && e.ctrlKey) ||
-      (e.key === 'c' && e.ctrlKey) ||
-      (e.key === 'v' && e.ctrlKey) ||
-      (e.key === 'x' && e.ctrlKey) ||
-      // Allow numbers
-      /^\d$/.test(e.key)
-    ) {
-      return;
-    }
-    e.preventDefault();
-  };
-
   return (
     <section className="space-y-8 mr-auto rounded-2xl">
       <header className="flex flex-wrap justify-between relative gap-3">
@@ -385,141 +355,38 @@ export default function EventTypes() {
         </button>
       </header>
 
-      {showForm && (
-        <div className={`fixed inset-0 z-99999 m-0 flex justify-end transition-opacity duration-200 ${ showForm ? 'pointer-events-auto opacity-100' :  'pointer-events-none opacity-0'}`}>
-          <div className={`absolute inset-0 bg-black/40 transition-opacity duration-300 ${ showForm ? 'opacity-100' : 'opacity-0' }`} aria-hidden="true" onClick={handleCancel}/>
-          <div className={`relative h-full w-full max-w-xl transform bg-white shadow-2xl transition-transform duration-300 ${ showForm ? 'translate-x-0' : 'translate-x-full' }`}>
-            <div className="flex items-center justify-between border-b border-gray-200 px-6 py-4">
-              <div>
-                <h3 className="text-lg font-semibold text-slate-800">{editingId ? "Update Event" : "Create New Event"}</h3>
-                <p className="text-xs uppercase tracking-wide text-gray-500">{editingId ? "Modify your event details below." : "Quickly set up a new event for client scheduling."}</p>
-              </div>
-              <button className="rounded-full p-2 text-gray-500 transition hover:bg-gray-100 hover:text-gray-700" onClick={handleCancel} aria-label="Close event form">
-                <svg className="h-5 w-5" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" viewBox="0 0 24 24">
-                  <path d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-            <div className="p-5">
-              <form
+      {showForm &&
+        portalReady &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-[100000] flex min-h-0 flex-col"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="event-type-form-heading"
+          >
+            <button
+              type="button"
+              className="absolute inset-0 bg-black/40"
+              aria-label="Close event form"
+              onClick={handleCancel}
+            />
+            <div className="relative z-10 flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain">
+              <EventTypeFormLayout
+                value={form}
+                onChange={(next) => {
+                  setForm(next);
+                  if (formError) setFormError(null);
+                }}
+                editingId={editingId}
+                formError={formError}
+                submitting={submitting}
                 onSubmit={handleSubmit}
-                className="grid md:grid-cols-2 gap-4 p-5 rounded-xl border border-slate-200 bg-gray-50/70"
-                aria-describedby={formError ? "event-type-form-error" : undefined}
-              >
-                <div>
-                  <label htmlFor="title" className="block text-sm font-medium text-slate-700 mb-1">Event Title</label>
-                  <input
-                    id="title"
-                    type="text"
-                    value={form.title}
-                    onChange={(e) => setForm({ ...form, title: e.target.value })}
-                    placeholder="e.g. 30-min Discovery Call"
-                    className="w-full px-4 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-indigo-500 outline-none"
-                    required
-                  />
-                </div>
-
-                <div>
-                  <label htmlFor="duration_minutes" className="block text-sm font-medium text-slate-700 mb-1">Duration (minutes)</label>
-                  <input
-                    id="duration_minutes"
-                    type="text"
-                    inputMode="numeric"
-                    min="1"
-                    value={form.duration_minutes}
-                    onChange={(e) => handleNumberInput(e, 'duration_minutes')}
-                    onKeyPress={handleNumberKeyPress}
-                    placeholder="e.g. 30"
-                    className={`w-full px-4 py-2 rounded-lg border focus:ring-2 focus:ring-indigo-500 outline-none ${
-                      formError ? "border-red-500" : "border-slate-300"
-                    }`}
-                  />
-                </div>
-
-                {formError && (
-                  <p id="event-type-form-error" className="md:col-span-2 text-sm text-red-600" role="alert">
-                    {formError}
-                  </p>
-                )}
-
-                <div>
-                  <label htmlFor="buffer_before" className="block text-sm font-medium text-slate-700 mb-1">Buffer Before (minutes)</label>
-                  <input
-                    id="buffer_before"
-                    type="text"
-                    inputMode="numeric"
-                    min="0"
-                    value={form.buffer_before}
-                    onChange={(e) => handleNumberInput(e, 'buffer_before')}
-                    onKeyPress={handleNumberKeyPress}
-                    placeholder="e.g. 5"
-                    className="w-full px-4 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-indigo-500 outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label htmlFor="buffer_after" className="block text-sm font-medium text-slate-700 mb-1">Buffer After (minutes)</label>
-                  <input
-                    id="buffer_after"
-                    type="text"
-                    inputMode="numeric"
-                    min="0"
-                    value={form.buffer_after}
-                    onChange={(e) => handleNumberInput(e, 'buffer_after')}
-                    onKeyPress={handleNumberKeyPress}
-                    placeholder="e.g. 5"
-                    className="w-full px-4 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-indigo-500 outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label htmlFor="location_type" className="block text-sm font-medium text-slate-700 mb-1">Location Type</label>
-                  <select
-                    id="location_type"
-                    value={form.location_type}
-                    onChange={(e) => setForm({ ...form, location_type: e.target.value })}
-                    className="w-full px-4 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-indigo-500 outline-none"
-                  >
-                    <option value="">Select location type</option>
-                    <option value="in_person">In Person</option>
-                    <option value="phone">Phone</option>
-                    <option value="video">Video Call</option>
-                    <option value="custom">Custom</option>
-                  </select>
-                </div>
-
-                <div className="flex items-center">
-                  <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
-                    <input
-                      type="checkbox"
-                      checked={form.is_public}
-                      onChange={(e) => setForm({ ...form, is_public: e.target.checked })}
-                      className="rounded border-slate-300"
-                    />
-                    Public Event
-                  </label>
-                </div>
-
-                <div className="md:col-span-2 flex justify-end gap-2 mt-2">
-                  <button
-                    type="submit"
-                    disabled={submitting}
-                    className="px-5 py-2.5 rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 transition font-medium disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    {submitting
-                      ? editingId
-                        ? "Updating…"
-                        : "Adding…"
-                      : editingId
-                        ? "Update Event"
-                        : "Add Event"}
-                  </button>
-                </div>
-              </form>
+                onCancel={handleCancel}
+              />
             </div>
-          </div>
-        </div>
-      )}
+          </div>,
+          document.body
+        )}
 
       {loading ? (
         <EventTypeSkeleton />
