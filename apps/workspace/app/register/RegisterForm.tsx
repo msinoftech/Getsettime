@@ -1,10 +1,11 @@
 "use client";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
 import {
   workspaceAdminNeedsOnboardingWizard,
+  workspaceOnboardingLastCompletedStep,
   workspaceOnboardingResumeStep,
 } from "@/lib/auth_onboarding";
 import { supabase } from "@/lib/supabaseClient";
@@ -115,6 +116,18 @@ export default function RegisterForm() {
   const resumeStepHydratedUserIdRef = useRef<string | null>(null);
 
   const EMAIL_PARAM_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+  const goToOnboardingStep = useCallback(
+    (step: number) => {
+      const s = Math.min(Math.max(step, 1), ONBOARDING_STEPS);
+      setOnboardingStep(s);
+      const params = new URLSearchParams(searchParams.toString());
+      params.set("onboarding", "1");
+      params.set("step", String(s));
+      router.replace(`/register?${params.toString()}`);
+    },
+    [router, searchParams]
+  );
 
   const resolveMode = async (session: {
     user: {
@@ -283,13 +296,19 @@ export default function RegisterForm() {
     // Later resolveMode runs (auth events, searchParams) must not override Back/Next.
     if (resumeStepHydratedUserIdRef.current !== userIdForResume) {
       const resumeFromMeta = workspaceOnboardingResumeStep(meta);
+      const lastDone = workspaceOnboardingLastCompletedStep(meta);
       let initialStep = resumeFromMeta;
       if (searchParams.get("onboarding") === "1") {
         const rawStep = searchParams.get("step");
         if (rawStep !== null) {
           const n = parseInt(rawStep, 10);
           if (Number.isFinite(n) && n >= 1 && n <= ONBOARDING_STEPS) {
-            initialStep = Math.min(n, resumeFromMeta);
+            // Stale ?step= (e.g. step=2 in URL while resume=3 after saving step 2) must not clamp UI to 2 via Math.min.
+            if (lastDone >= n && n < resumeFromMeta) {
+              initialStep = resumeFromMeta;
+            } else {
+              initialStep = Math.min(n, resumeFromMeta);
+            }
           }
         }
       }
@@ -487,27 +506,31 @@ export default function RegisterForm() {
     setError("");
     if (onboardingStep === 1) {
       const ok = await saveStep1();
-      if (ok) setOnboardingStep(2);
+      if (ok) goToOnboardingStep(2);
     } else if (onboardingStep === 2) {
+      setOnboardingSaving(true);
       try {
         await persistOnboardingStep(2);
+        goToOnboardingStep(3);
       } catch (e: unknown) {
         setError(e instanceof Error ? e.message : "Failed to save progress");
-        return;
+      } finally {
+        setOnboardingSaving(false);
       }
-      setOnboardingStep(3);
     } else if (onboardingStep === 3) {
       if (!step3Saved) {
         setError("Save working hours first, then click Next.");
         return;
       }
+      setOnboardingSaving(true);
       try {
         await persistOnboardingStep(3);
+        goToOnboardingStep(4);
       } catch (e: unknown) {
         setError(e instanceof Error ? e.message : "Failed to save progress");
-        return;
+      } finally {
+        setOnboardingSaving(false);
       }
-      setOnboardingStep(4);
     } else if (onboardingStep === 4) {
       const ok = await saveStep4();
       if (!ok) return;
@@ -847,7 +870,10 @@ export default function RegisterForm() {
               {onboardingStep > 1 ? (
                 <button
                   type="button"
-                  onClick={() => { setError(""); setOnboardingStep((s) => s - 1); }}
+                  onClick={() => {
+                    setError("");
+                    goToOnboardingStep(onboardingStep - 1);
+                  }}
                   disabled={onboardingSaving}
                   className="px-6 py-3 rounded-lg border border-gray-300 text-gray-700 font-medium hover:bg-gray-50 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
