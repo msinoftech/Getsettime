@@ -5,6 +5,26 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { resolvePostAuthNavigationPath } from "@/lib/auth_onboarding";
 
+const CALLBACK_TOKEN_FETCH_TIMEOUT_MS = 20_000;
+
+function assignToAppPath(path: string) {
+  if (typeof window === "undefined") return;
+  const href = path.startsWith("http") ? path : new URL(path, window.location.origin).href;
+  window.location.assign(href);
+}
+
+function fetchWithTimeout(url: string, init?: RequestInit): Promise<Response> {
+  if (typeof AbortSignal !== "undefined" && "timeout" in AbortSignal) {
+    return fetch(url, {
+      ...init,
+      signal: AbortSignal.timeout(CALLBACK_TOKEN_FETCH_TIMEOUT_MS),
+    });
+  }
+  const ctrl = new AbortController();
+  const id = window.setTimeout(() => ctrl.abort(), CALLBACK_TOKEN_FETCH_TIMEOUT_MS);
+  return fetch(url, { ...init, signal: ctrl.signal }).finally(() => clearTimeout(id));
+}
+
 export default function AuthCallbackContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -31,19 +51,44 @@ export default function AuthCallbackContent() {
         data: { session },
       } = await supabase.auth.getSession();
       if (!session?.user) {
-        if (!cancelled) router.replace(nextPath.startsWith("/") ? nextPath : "/");
+        assignToAppPath(nextPath.startsWith("/") ? nextPath : "/");
         return true;
       }
-      const dest = await resolvePostAuthNavigationPath(supabase, session.user, nextPath || "/");
-      if (!cancelled) router.replace(dest);
+      let dest: string;
+      try {
+        dest = await resolvePostAuthNavigationPath(supabase, session.user, nextPath || "/");
+      } catch {
+        try {
+          await supabase.auth.signOut({ scope: "local" });
+        } catch {
+          /* ignore */
+        }
+        if (!cancelled) setError(USER_FRIENDLY_ERROR);
+        return true;
+      }
+      assignToAppPath(dest);
       return true;
     };
 
     const finalize = async () => {
       // Prefer one-time token: cookie first, then ?t= (works when cookie not sent, e.g. private browsing)
-      let tokenRes = await fetch("/api/auth/callback-tokens", { credentials: "include" });
+      let tokenRes: Response;
+      try {
+        tokenRes = await fetchWithTimeout("/api/auth/callback-tokens", { credentials: "include" });
+      } catch {
+        if (!cancelled) setError(USER_FRIENDLY_ERROR);
+        return;
+      }
       if (!tokenRes.ok && t) {
-        tokenRes = await fetch(`/api/auth/callback-tokens?t=${encodeURIComponent(t)}`);
+        try {
+          tokenRes = await fetchWithTimeout(
+            `/api/auth/callback-tokens?t=${encodeURIComponent(t)}`,
+            { credentials: "include" }
+          );
+        } catch {
+          if (!cancelled) setError(USER_FRIENDLY_ERROR);
+          return;
+        }
       }
       if (tokenRes.ok) {
         try {
@@ -87,7 +132,10 @@ export default function AuthCallbackContent() {
       }
     };
 
-    finalize();
+    void finalize().catch((err) => {
+      console.error(err);
+      if (!cancelled) setError(USER_FRIENDLY_ERROR);
+    });
   }, [code, t, nextPath, router]);
 
   return (

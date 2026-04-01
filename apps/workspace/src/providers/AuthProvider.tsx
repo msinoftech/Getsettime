@@ -1,10 +1,14 @@
 'use client' // if using App Router
 
-import { createContext, useContext, useEffect, useState, ReactNode } from 'react'
+import { createContext, useContext, useCallback, useEffect, useMemo, useState, ReactNode } from 'react'
 import { supabase } from '@/lib/supabaseClient'
 import { installWorkspaceApiUnauthorizedHandler } from '@/src/lib/install_workspace_api_unauthorized_handler'
+import { IdleSessionWarningModal } from '@/src/components/ui/IdleSessionWarningModal'
+import { useIdleLogout } from '@/src/hooks/useIdleLogout'
+import { useRemoteSessionInvalidation } from '@/src/hooks/useRemoteSessionInvalidation'
+import { getWorkspaceIdleLogoutDurations } from '@/src/utils/workspace_idle_logout'
 import { useRouter, usePathname } from 'next/navigation'
-import type { User as SupabaseUser } from '@supabase/supabase-js'
+import type { Session, User as SupabaseUser } from '@supabase/supabase-js'
 import {
   workspaceAdminIncompleteOnboarding,
   isAllowedPathDuringWorkspaceOnboarding,
@@ -42,88 +46,158 @@ function isPublicPath(pathname: string): boolean {
 // Allowed roles for workspace app
 const ALLOWED_ROLES = ['workspace_admin', 'customer', 'manager', 'service_provider'];
 
+const ONBOARDING_AUTH_CHECK_TIMEOUT_MS = 15_000;
+
+async function workspaceAdminIncompleteOnboardingWithTimeout(
+  supabaseClient: Parameters<typeof workspaceAdminIncompleteOnboarding>[0],
+  user: SupabaseUser
+): Promise<boolean> {
+  return Promise.race([
+    workspaceAdminIncompleteOnboarding(supabaseClient, user),
+    new Promise<boolean>((_, reject) => {
+      window.setTimeout(
+        () => reject(new Error('ONBOARDING_CHECK_TIMEOUT')),
+        ONBOARDING_AUTH_CHECK_TIMEOUT_MS
+      );
+    }),
+  ]);
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [loading, setLoading] = useState(true)
   const router = useRouter()
   const pathname = usePathname()
+  const idleDurations = useMemo(() => getWorkspaceIdleLogoutDurations(), [])
+
+  const handleIdleLogout = useCallback(async () => {
+    try {
+      await supabase.auth.signOut()
+    } catch (err) {
+      console.error(err)
+    }
+    router.push('/login?reason=idle')
+  }, [router])
+
+  const { showWarning, secondsRemaining, staySignedIn } = useIdleLogout(
+    Boolean(user) && !loading,
+    idleDurations.idleMs,
+    idleDurations.warningMs,
+    handleIdleLogout
+  )
+
+  useRemoteSessionInvalidation(Boolean(user) && !loading, pathname)
 
   useEffect(() => {
     installWorkspaceApiUnauthorizedHandler()
   }, [])
 
   useEffect(() => {
-    // Get current session and verify role
-    const getSession = async () => {
+    const clearInvalidSession = async () => {
+      try {
+        await supabase.auth.signOut({ scope: 'local' })
+      } catch {
+        /* ignore */
+      }
+      setUser(null)
+      if (!isPublicPath(pathname)) {
+        router.push('/login?reason=session_invalid')
+      }
+    }
+
+    const syncAuthFromSession = async (session: Session | null) => {
+      if (!session?.user) {
+        setUser(null)
+        if (!isPublicPath(pathname)) {
+          router.push('/login')
+        }
+        return
+      }
+
+      const isAuthCallback = pathname === '/auth/callback'
+
+      // OAuth callback sets the session client-side; Supabase /auth/v1/user can briefly return 403
+      // while the access token propagates. Verifying here would sign the user out (clearInvalidSession)
+      // without redirect on this public route — leaving /auth/callback stuck on "Finishing sign-in…".
+      let currentUser: SupabaseUser
+      if (isAuthCallback) {
+        currentUser = session.user as SupabaseUser
+      } else {
+        const { data: verified, error: verifyErr } = await supabase.auth.getUser()
+        if (verifyErr || !verified.user) {
+          console.error(verifyErr ?? new Error('getUser returned no user'))
+          await clearInvalidSession()
+          return
+        }
+        currentUser = verified.user
+      }
+
+      const userRole = currentUser.user_metadata?.role
+      const isDeactivated = currentUser.user_metadata?.deactivated === true
+
+      if (isDeactivated) {
+        await supabase.auth.signOut()
+        setUser(null)
+        if (!isPublicPath(pathname)) {
+          router.push('/login')
+        }
+        return
+      }
+
+      if (!isAuthCallback && (!userRole || !ALLOWED_ROLES.includes(userRole))) {
+        await supabase.auth.signOut()
+        setUser(null)
+        if (!isPublicPath(pathname)) {
+          router.push('/login')
+        }
+        return
+      }
+
+      if (userRole === 'customer' && !pathname.startsWith('/my-bookings') && !isPublicPath(pathname)) {
+        router.push('/my-bookings')
+        setUser(currentUser)
+        return
+      }
+
+      if (
+        userRole === 'workspace_admin' &&
+        !isPublicPath(pathname) &&
+        !isAllowedPathDuringWorkspaceOnboarding(pathname)
+      ) {
+        let incomplete: boolean
+        try {
+          incomplete = await workspaceAdminIncompleteOnboardingWithTimeout(
+            supabase,
+            currentUser as SupabaseUser
+          )
+        } catch (e) {
+          console.error(e)
+          await clearInvalidSession()
+          return
+        }
+        if (incomplete) {
+          const meta = currentUser.user_metadata as Record<string, unknown> | undefined
+          router.push(workspaceOnboardingRegisterUrl(meta ?? {}))
+          setUser(currentUser)
+          return
+        }
+      }
+
+      setUser(currentUser)
+    }
+
+    const runInitial = async () => {
       try {
         const { data, error } = await supabase.auth.getSession()
         if (error) {
           console.error(error)
+          setUser(null)
           if (!isPublicPath(pathname)) {
             router.push('/login')
           }
           return
         }
-
-        const session = data.session
-        const currentUser = session?.user ?? null
-
-        // If user is logged in, verify role and deactivated status
-        if (currentUser) {
-          const userRole = currentUser.user_metadata?.role
-          const isDeactivated = currentUser.user_metadata?.deactivated === true
-          const isAuthCallback = pathname === "/auth/callback"
-
-          // Check if user is deactivated
-          if (isDeactivated) {
-            await supabase.auth.signOut()
-            setUser(null)
-            if (!isPublicPath(pathname)) {
-              router.push('/login')
-            }
-            return
-          }
-
-          // Block superadmin and only allow workspace roles
-          // NOTE: For /auth/callback allow a temporary missing role so the callback page can set it.
-          if (!isAuthCallback && (!userRole || !ALLOWED_ROLES.includes(userRole))) {
-            await supabase.auth.signOut()
-            setUser(null)
-            if (!isPublicPath(pathname)) {
-              router.push('/login')
-            }
-            return
-          }
-
-          if (userRole === 'customer' && !pathname.startsWith('/my-bookings') && !isPublicPath(pathname)) {
-            router.push('/my-bookings')
-            setUser(currentUser)
-            return
-          }
-
-          if (
-            userRole === 'workspace_admin' &&
-            !isPublicPath(pathname) &&
-            !isAllowedPathDuringWorkspaceOnboarding(pathname)
-          ) {
-            const incomplete = await workspaceAdminIncompleteOnboarding(
-              supabase,
-              currentUser as SupabaseUser
-            )
-            if (incomplete) {
-              const meta = currentUser.user_metadata as Record<string, unknown> | undefined
-              router.push(workspaceOnboardingRegisterUrl(meta ?? {}))
-              setUser(currentUser)
-              return
-            }
-          }
-        }
-
-        setUser(currentUser)
-
-        if (!session && !isPublicPath(pathname)) {
-          router.push('/login')
-        }
+        await syncAuthFromSession(data.session ?? null)
       } catch (err) {
         console.error(err)
         setUser(null)
@@ -135,72 +209,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     }
 
-    getSession()
+    void runInitial()
 
-    // Listen to auth state changes
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange(async (_event, session) => {
       try {
-        const currentUser = session?.user ?? null
-
-        // If user is logged in, verify role and deactivated status
-        if (currentUser) {
-          const userRole = currentUser.user_metadata?.role
-          const isDeactivated = currentUser.user_metadata?.deactivated === true
-          const isAuthCallback = pathname === "/auth/callback"
-
-          // Check if user is deactivated
-          if (isDeactivated) {
-            await supabase.auth.signOut()
-            setUser(null)
-            if (!isPublicPath(pathname)) {
-              router.push('/login')
-            }
-            return
-          }
-
-          // Block superadmin and only allow workspace roles
-          // NOTE: For /auth/callback allow a temporary missing role so the callback page can set it.
-          if (!isAuthCallback && (!userRole || !ALLOWED_ROLES.includes(userRole))) {
-            await supabase.auth.signOut()
-            setUser(null)
-            if (!isPublicPath(pathname)) {
-              router.push('/login')
-            }
-            return
-          }
-
-          if (userRole === 'customer' && !pathname.startsWith('/my-bookings') && !isPublicPath(pathname)) {
-            router.push('/my-bookings')
-            setUser(currentUser)
-            return
-          }
-
-          if (
-            userRole === 'workspace_admin' &&
-            !isPublicPath(pathname) &&
-            !isAllowedPathDuringWorkspaceOnboarding(pathname)
-          ) {
-            const incomplete = await workspaceAdminIncompleteOnboarding(
-              supabase,
-              currentUser as SupabaseUser
-            )
-            if (incomplete) {
-              const meta = currentUser.user_metadata as Record<string, unknown> | undefined
-              router.push(workspaceOnboardingRegisterUrl(meta ?? {}))
-              setUser(currentUser)
-              return
-            }
-          }
-        }
-
-        setUser(currentUser)
-
-        if (!session && !isPublicPath(pathname)) {
-          router.push('/login')
-        }
-        // Post-login navigation is handled by LoginForm (onboarding, bootstrap, role targets) to avoid racing redirects.
+        await syncAuthFromSession(session)
       } catch (err) {
         console.error(err)
         setUser(null)
@@ -219,6 +234,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   return (
     <AuthContext.Provider value={{ user, loading }}>
+      <IdleSessionWarningModal
+        open={showWarning}
+        secondsRemaining={secondsRemaining}
+        onStaySignedIn={staySignedIn}
+      />
       {children}
     </AuthContext.Provider>
   )

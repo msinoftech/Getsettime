@@ -181,7 +181,7 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
             <FcHome className="h-5 w-5 mr-3" />
             Dashboard
           </Link>
-          <Link href="/event-type" className={`group flex items-center px-3 py-2 text-sm font-medium rounded-md ${ activeMenu === "event-type" ? "bg-blue-50 text-blue-600" : "text-gray-700 hover:bg-gray-50" }`} onClick={handleNavClick}>
+          <Link href="/event-type" prefetch={false} className={`group flex items-center px-3 py-2 text-sm font-medium rounded-md ${ activeMenu === "event-type" ? "bg-blue-50 text-blue-600" : "text-gray-700 hover:bg-gray-50" }`} onClick={handleNavClick}>
             <FcOvertime className="h-5 w-5 mr-3" />
             Event Type
           </Link> 

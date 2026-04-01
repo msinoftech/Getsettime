@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { user_belongs_to_workspace } from '@/lib/team_members_workspace';
 
 /**
  * Creates an authenticated Supabase client using the anon key (respects RLS)
@@ -95,25 +96,8 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: listError.message }, { status: 500 });
     }
 
-    console.log('Current workspace ID:', workspaceId, 'Type:', typeof workspaceId);
-    console.log('Total users found:', users.length);
-
-    // Filter users by workspace_id in user_metadata
-    // Convert both to numbers for comparison to handle type mismatches
     const teamMembers = users
-      .filter(u => {
-        const userWorkspaceId = u.user_metadata?.workspace_id;
-        const userRole = u.user_metadata?.role;
-        console.log(`User ${u.email}: workspace_id=${userWorkspaceId} (${typeof userWorkspaceId}), role=${userRole}`);
-        
-        // Handle both string and number comparisons
-        const matches = userWorkspaceId && 
-               (userWorkspaceId == workspaceId || 
-                Number(userWorkspaceId) === Number(workspaceId));
-        
-        console.log(`  -> Matches: ${matches}`);
-        return matches;
-      })
+      .filter((u) => user_belongs_to_workspace(u, workspaceId))
       .map(u => ({
         id: u.id,
         email: u.email,
@@ -125,8 +109,6 @@ export async function GET(req: NextRequest) {
         deactivated: u.user_metadata?.deactivated || false,
         is_workspace_owner: u.user_metadata?.is_workspace_owner === true,
       }));
-
-    console.log('Filtered team members:', teamMembers.length);
 
     return NextResponse.json({ teamMembers });
   } catch (err: unknown) {

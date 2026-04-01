@@ -8,7 +8,14 @@ import BookingStatusChart from "@/src/components/Charts/BookingStatusChart";
 
 const Dashboard: React.FC = () => {
   const { user } = useAuth();
-  const { counts, loading } = useDashboardCounts(user);
+  const {
+    counts,
+    loading,
+    weekDayLabels,
+    bookingsByDay,
+    bookingsByStatus,
+    bookingsTotal,
+  } = useDashboardCounts(user);
   const userName = user?.user_metadata?.name || user?.email?.split('@')[0] || 'User';
   return (
     <div className="space-y-6">
@@ -23,7 +30,7 @@ const Dashboard: React.FC = () => {
             <p className="text-white text-sm">Here's what's happening with your account today.</p>
           </div>
           <div className="flex flex-wrap gap-4">
-            <Link href="/event-type" className="px-4 py-2 rounded-lg text-sm font-medium bg-white text-indigo-600 hover:bg-transparent hover:border-white hover:text-white border border-white transition">Create Event</Link>
+            <Link href="/event-type" prefetch={false} className="px-4 py-2 rounded-lg text-sm font-medium bg-white text-indigo-600 hover:bg-transparent hover:border-white hover:text-white border border-white transition">Create Event</Link>
             <Link href="/bookings" className="px-4 py-2 rounded-lg text-sm font-medium bg-white text-indigo-600 hover:bg-transparent hover:border-white hover:text-white border border-white transition">View Bookings</Link>
           </div>
         </div>
@@ -139,10 +146,18 @@ const Dashboard: React.FC = () => {
       <section aria-label="chart-section" className="relative">
         <div className="grid grid-cols-1 sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3 gap-4 sm:gap-6">
           <div className="xl:col-span-2 rounded-xl bg-white border border-[#e6ebff] p-4 sm:p-5 shadow-sm">
-            <BookingChart />
+            <BookingChart
+              loading={loading}
+              weekDayLabels={weekDayLabels}
+              bookingsByDay={bookingsByDay}
+            />
           </div>
           <div className="rounded-xl bg-white border border-[#e6ebff] p-4 sm:p-5 shadow-sm">
-            <BookingStatusChart />
+            <BookingStatusChart
+              loading={loading}
+              bookingsByStatus={bookingsByStatus}
+              bookingsTotal={bookingsTotal}
+            />
           </div>
         </div>
       </section>

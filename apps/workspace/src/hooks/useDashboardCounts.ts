@@ -1,6 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { get_dashboard_week_days } from '@/src/utils/dashboard_week';
+import type { dashboard_summary } from '@/src/types/dashboard_summary';
 
 export interface DashboardServiceRow {
   id: string;
@@ -23,82 +25,140 @@ const INITIAL_COUNTS: DashboardCounts = {
 };
 
 export function useDashboardCounts(user: { id?: string } | null) {
-  const [state, setState] = useState<{ counts: DashboardCounts; loading: boolean }>({
+  const [state, setState] = useState<{
+    counts: DashboardCounts;
+    loading: boolean;
+    weekDayLabels: string[];
+    bookingsByDay: number[];
+    bookingsByStatus: Record<string, number>;
+    bookingsTotal: number;
+  }>({
     counts: INITIAL_COUNTS,
     loading: true,
+    weekDayLabels: [],
+    bookingsByDay: [0, 0, 0, 0, 0, 0, 0],
+    bookingsByStatus: {},
+    bookingsTotal: 0,
   });
 
   const userId = user?.id ?? null;
 
+  const weekSlice = useMemo(() => {
+    const days = get_dashboard_week_days();
+    return {
+      week_days_param: days.map((d) => d.dateString).join(','),
+      week_day_labels: days.map((d) => d.label),
+    };
+  }, []);
+
   useEffect(() => {
+    const { week_days_param, week_day_labels } = weekSlice;
+
     if (!userId) {
-      setState({ counts: INITIAL_COUNTS, loading: false });
+      setState({
+        counts: INITIAL_COUNTS,
+        loading: false,
+        weekDayLabels: week_day_labels,
+        bookingsByDay: [0, 0, 0, 0, 0, 0, 0],
+        bookingsByStatus: {},
+        bookingsTotal: 0,
+      });
       return;
     }
 
     const ac = new AbortController();
 
-    const fetchCounts = async () => {
+    const run = async () => {
       try {
         const { supabase } = await import('@/lib/supabaseClient');
-        const { data: { session } } = await supabase.auth.getSession();
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
 
         if (!session?.access_token || ac.signal.aborted) {
-          if (!ac.signal.aborted) setState({ counts: INITIAL_COUNTS, loading: false });
+          if (!ac.signal.aborted) {
+            setState({
+              counts: INITIAL_COUNTS,
+              loading: false,
+              weekDayLabels: week_day_labels,
+              bookingsByDay: [0, 0, 0, 0, 0, 0, 0],
+              bookingsByStatus: {},
+              bookingsTotal: 0,
+            });
+          }
           return;
         }
 
-        const headers = { Authorization: `Bearer ${session.access_token}` };
-
-        const [bookingsRes, teamMembersRes, servicesRes] = await Promise.all([
-          fetch('/api/bookings', { headers, signal: ac.signal }),
-          fetch('/api/team-members', { headers, signal: ac.signal }),
-          fetch('/api/services', { headers, signal: ac.signal }),
-        ]);
-
-        if (ac.signal.aborted) return;
-
-        const bookingsResult = bookingsRes.ok ? await bookingsRes.json() : null;
-        const teamMembersResult = teamMembersRes.ok ? await teamMembersRes.json() : null;
-        const servicesResult = servicesRes.ok ? await servicesRes.json() : null;
-
-        if (ac.signal.aborted) return;
-
-        const bookings = bookingsResult
-          ? (bookingsResult.pagination?.total ?? bookingsResult.data?.length ?? 0)
-          : 0;
-        const teamMembers = teamMembersResult?.teamMembers?.length ?? 0;
-        const services = servicesResult?.services?.length ?? 0;
-        const rawServices = (servicesResult?.services ?? []) as Array<{
-          id: string;
-          name: string;
-          departments?: { name: string } | { name: string }[] | null;
-        }>;
-        const servicesRows: DashboardServiceRow[] = rawServices.map((s) => {
-          const d = s.departments;
-          const department_name =
-            d == null
-              ? null
-              : Array.isArray(d)
-                ? (d[0]?.name ?? null)
-                : (d.name ?? null);
-          return { id: String(s.id), name: s.name, department_name };
+        const qs = new URLSearchParams({ week_days: week_days_param });
+        const res = await fetch(`/api/dashboard/summary?${qs.toString()}`, {
+          headers: { Authorization: `Bearer ${session.access_token}` },
+          signal: ac.signal,
         });
 
+        if (ac.signal.aborted) return;
+
+        if (!res.ok) {
+          console.error('Dashboard summary error:', res.status);
+          setState({
+            counts: INITIAL_COUNTS,
+            loading: false,
+            weekDayLabels: week_day_labels,
+            bookingsByDay: [0, 0, 0, 0, 0, 0, 0],
+            bookingsByStatus: {},
+            bookingsTotal: 0,
+          });
+          return;
+        }
+
+        const data = (await res.json()) as dashboard_summary;
+
+        if (ac.signal.aborted) return;
+
+        const servicesRows: DashboardServiceRow[] = data.services.map((s) => ({
+          id: s.id,
+          name: s.name,
+          department_name: s.department_name,
+        }));
+
         setState({
-          counts: { bookings, teamMembers, services, servicesRows },
+          counts: {
+            bookings: data.bookings_total,
+            teamMembers: data.team_members_count ?? 0,
+            services: data.services.length,
+            servicesRows,
+          },
           loading: false,
+          weekDayLabels: week_day_labels,
+          bookingsByDay: data.bookings_by_day ?? [0, 0, 0, 0, 0, 0, 0],
+          bookingsByStatus: data.bookings_by_status ?? {},
+          bookingsTotal: data.bookings_total,
         });
       } catch (error) {
         if ((error as Error).name === 'AbortError') return;
-        console.error('Error fetching dashboard counts:', error);
-        if (!ac.signal.aborted) setState({ counts: INITIAL_COUNTS, loading: false });
+        console.error('Error fetching dashboard summary:', error);
+        if (!ac.signal.aborted) {
+          setState({
+            counts: INITIAL_COUNTS,
+            loading: false,
+            weekDayLabels: week_day_labels,
+            bookingsByDay: [0, 0, 0, 0, 0, 0, 0],
+            bookingsByStatus: {},
+            bookingsTotal: 0,
+          });
+        }
       }
     };
 
-    fetchCounts();
+    run();
     return () => ac.abort();
-  }, [userId]);
+  }, [userId, weekSlice]);
 
-  return { counts: state.counts, loading: state.loading };
+  return {
+    counts: state.counts,
+    loading: state.loading,
+    weekDayLabels: state.weekDayLabels,
+    bookingsByDay: state.bookingsByDay,
+    bookingsByStatus: state.bookingsByStatus,
+    bookingsTotal: state.bookingsTotal,
+  };
 }

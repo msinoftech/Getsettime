@@ -3,6 +3,9 @@ import type { SupabaseClient, User } from "@supabase/supabase-js";
 /** Total steps in workspace admin onboarding wizard (register flow). */
 export const WORKSPACE_ONBOARDING_STEP_COUNT = 4;
 
+/** Client-side workspace row fetch during auth callback must not hang indefinitely. */
+const WORKSPACE_ONBOARDING_REMOTE_TIMEOUT_MS = 15_000;
+
 /**
  * Parsed `onboarding_last_completed_step`: 0 = none, 1 = step 1 done, …, 4 = all steps done.
  */
@@ -71,12 +74,28 @@ export async function workspaceAdminIncompleteOnboarding(
   const wid = user.user_metadata?.workspace_id as number | undefined;
   let hasWorkspaceProfile = false;
   if (wid != null) {
-    const { data: ws } = await supabase
+    const { data: ws, error } = await supabase
       .from("workspaces")
       .select("type, profession_id")
       .eq("id", wid)
       .maybeSingle();
-    hasWorkspaceProfile = !!(ws?.type || ws?.profession_id);
+    if (error) {
+      const code = (error as { code?: string }).code;
+      const msg = (error.message ?? "").toLowerCase();
+      const looksLikeAuth =
+        code === "PGRST301" ||
+        code === "42501" ||
+        msg.includes("jwt") ||
+        msg.includes("permission denied") ||
+        msg.includes("not authorized");
+      if (looksLikeAuth) {
+        throw new Error("WORKSPACE_AUTH_LOOKUP_FAILED");
+      }
+      console.error("[workspaceAdminIncompleteOnboarding]", error);
+      hasWorkspaceProfile = false;
+    } else {
+      hasWorkspaceProfile = !!(ws?.type || ws?.profession_id);
+    }
   }
 
   const meta = user.user_metadata as Record<string, unknown> | undefined;
@@ -109,7 +128,20 @@ export async function resolvePostAuthNavigationPath(
     return requestedNext.startsWith("/") ? requestedNext : "/";
   }
 
-  const needs = await workspaceAdminIncompleteOnboarding(supabase, user);
+  let needs: boolean;
+  try {
+    needs = await Promise.race([
+      workspaceAdminIncompleteOnboarding(supabase, user),
+      new Promise<boolean>((_, reject) => {
+        setTimeout(
+          () => reject(new Error("WORKSPACE_ONBOARDING_REMOTE_TIMEOUT")),
+          WORKSPACE_ONBOARDING_REMOTE_TIMEOUT_MS
+        );
+      }),
+    ]);
+  } catch {
+    throw new Error("WORKSPACE_ADMIN_ONBOARDING_CHECK_FAILED");
+  }
 
   if (needs) {
     const meta = user.user_metadata as Record<string, unknown> | undefined;
