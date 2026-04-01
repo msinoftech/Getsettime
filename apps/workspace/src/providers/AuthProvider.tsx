@@ -57,19 +57,34 @@ class AuthSyncTimeoutError extends Error {
   }
 }
 
+/**
+ * Races `promise` against a timer; clears the timer when `promise` settles first
+ * so a late timer reject does not become an unhandled rejection.
+ */
+async function withTimeout<T>(promise: Promise<T>, ms: number, onTimeout: () => Error): Promise<T> {
+  // Browser timers use numeric handles; Node typings may use `Timeout` — normalize for `clearTimeout`.
+  let timeoutId: number | undefined
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutId = window.setTimeout(() => reject(onTimeout()), ms) as unknown as number
+  })
+  try {
+    return await Promise.race([promise, timeoutPromise])
+  } finally {
+    if (timeoutId !== undefined) {
+      window.clearTimeout(timeoutId)
+    }
+  }
+}
+
 async function workspaceAdminIncompleteOnboardingWithTimeout(
   supabaseClient: Parameters<typeof workspaceAdminIncompleteOnboarding>[0],
   user: SupabaseUser
 ): Promise<boolean> {
-  return Promise.race([
+  return withTimeout(
     workspaceAdminIncompleteOnboarding(supabaseClient, user),
-    new Promise<boolean>((_, reject) => {
-      window.setTimeout(
-        () => reject(new Error('ONBOARDING_CHECK_TIMEOUT')),
-        ONBOARDING_AUTH_CHECK_TIMEOUT_MS
-      );
-    }),
-  ]);
+    ONBOARDING_AUTH_CHECK_TIMEOUT_MS,
+    () => new Error('ONBOARDING_CHECK_TIMEOUT')
+  )
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -207,16 +222,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(currentUser)
     }
 
-    const syncAuthFromSessionWithTimeout = (
-      session: Session | null,
-      authEvent?: AuthChangeEvent
-    ) =>
-      Promise.race([
-        syncAuthFromSessionInner(session, authEvent),
-        new Promise<void>((_, reject) => {
-          window.setTimeout(() => reject(new AuthSyncTimeoutError()), AUTH_SYNC_TIMEOUT_MS)
-        }),
-      ])
+    const syncAuthFromSessionWithTimeout = (session: Session | null, authEvent?: AuthChangeEvent) =>
+      withTimeout(syncAuthFromSessionInner(session, authEvent), AUTH_SYNC_TIMEOUT_MS, () => new AuthSyncTimeoutError())
 
     const handleAuthSyncFailure = async (err: unknown) => {
       console.error(err)
