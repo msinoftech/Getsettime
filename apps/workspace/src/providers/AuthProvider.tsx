@@ -47,6 +47,15 @@ function isPublicPath(pathname: string): boolean {
 const ALLOWED_ROLES = ['workspace_admin', 'customer', 'manager', 'service_provider'];
 
 const ONBOARDING_AUTH_CHECK_TIMEOUT_MS = 15_000;
+/** Cap entire syncAuthFromSession so LayoutWrapper never spins forever on stuck getUser / network. */
+const AUTH_SYNC_TIMEOUT_MS = 25_000;
+
+class AuthSyncTimeoutError extends Error {
+  constructor() {
+    super('AUTH_SYNC_TIMEOUT')
+    this.name = 'AuthSyncTimeoutError'
+  }
+}
 
 async function workspaceAdminIncompleteOnboardingWithTimeout(
   supabaseClient: Parameters<typeof workspaceAdminIncompleteOnboarding>[0],
@@ -105,7 +114,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     }
 
-    const syncAuthFromSession = async (session: Session | null) => {
+    const syncAuthFromSessionInner = async (session: Session | null) => {
       if (!session?.user) {
         setUser(null)
         if (!isPublicPath(pathname)) {
@@ -186,6 +195,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(currentUser)
     }
 
+    const syncAuthFromSessionWithTimeout = (session: Session | null) =>
+      Promise.race([
+        syncAuthFromSessionInner(session),
+        new Promise<void>((_, reject) => {
+          window.setTimeout(() => reject(new AuthSyncTimeoutError()), AUTH_SYNC_TIMEOUT_MS)
+        }),
+      ])
+
+    const handleAuthSyncFailure = async (err: unknown) => {
+      console.error(err)
+      if (err instanceof AuthSyncTimeoutError) {
+        try {
+          await supabase.auth.signOut({ scope: 'local' })
+        } catch {
+          /* ignore */
+        }
+        setUser(null)
+        if (!isPublicPath(pathname)) {
+          router.push('/login?reason=auth_timeout')
+        }
+        return
+      }
+      setUser(null)
+      if (!isPublicPath(pathname)) {
+        router.push('/login')
+      }
+    }
+
     const runInitial = async () => {
       try {
         const { data, error } = await supabase.auth.getSession()
@@ -197,13 +234,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           }
           return
         }
-        await syncAuthFromSession(data.session ?? null)
+        await syncAuthFromSessionWithTimeout(data.session ?? null)
       } catch (err) {
-        console.error(err)
-        setUser(null)
-        if (!isPublicPath(pathname)) {
-          router.push('/login')
-        }
+        await handleAuthSyncFailure(err)
       } finally {
         setLoading(false)
       }
@@ -215,13 +248,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       data: { subscription },
     } = supabase.auth.onAuthStateChange(async (_event, session) => {
       try {
-        await syncAuthFromSession(session)
+        await syncAuthFromSessionWithTimeout(session)
       } catch (err) {
-        console.error(err)
-        setUser(null)
-        if (!isPublicPath(pathname)) {
-          router.push('/login')
-        }
+        await handleAuthSyncFailure(err)
       } finally {
         setLoading(false)
       }

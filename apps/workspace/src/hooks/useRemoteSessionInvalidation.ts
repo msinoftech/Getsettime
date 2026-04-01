@@ -6,6 +6,8 @@ import { supabase } from '@/lib/supabaseClient';
 /** How often to ask Supabase Auth if this JWT is still valid (detect login elsewhere / revoked refresh). */
 const POLL_INTERVAL_MS = 20_000;
 const FOCUS_THROTTLE_MS = 6_000;
+/** Require two failed validation cycles in a row before signing out (reduces false positives on flaky networks). */
+const CONSECUTIVE_FAILURES_BEFORE_SIGNOUT = 2;
 
 /**
  * When another client signs in with the same account, Supabase often invalidates older refresh tokens.
@@ -21,6 +23,7 @@ export function useRemoteSessionInvalidation(enabled: boolean, pathname: string)
 
     let stopped = false;
     let lastFocusCheck = 0;
+    let consecutiveFailures = 0;
 
     const redirectSessionEnded = () => {
       const path = pathnameRef.current + window.location.search;
@@ -33,18 +36,34 @@ export function useRemoteSessionInvalidation(enabled: boolean, pathname: string)
       const {
         data: { session },
       } = await supabase.auth.getSession();
-      if (!session?.user) return;
+      if (!session?.user) {
+        consecutiveFailures = 0;
+        return;
+      }
 
       let lastError: unknown = null;
       for (let attempt = 0; attempt < 3; attempt++) {
         if (stopped) return;
         const { error } = await supabase.auth.getUser();
-        if (!error) return;
+        if (!error) {
+          consecutiveFailures = 0;
+          return;
+        }
         lastError = error;
         await new Promise((r) => setTimeout(r, 450 * (attempt + 1)));
       }
       if (stopped) return;
-      console.warn('[useRemoteSessionInvalidation] getUser failed after retries', lastError);
+
+      consecutiveFailures += 1;
+      if (consecutiveFailures < CONSECUTIVE_FAILURES_BEFORE_SIGNOUT) {
+        console.warn(
+          '[useRemoteSessionInvalidation] getUser failed after retries; waiting for another failed cycle before sign-out',
+          lastError
+        );
+        return;
+      }
+
+      console.warn('[useRemoteSessionInvalidation] getUser failed repeatedly; signing out', lastError);
 
       try {
         await supabase.auth.signOut({ scope: 'local' });

@@ -2,6 +2,7 @@
 import { AuthProvider, useAuth } from "../../providers/AuthProvider";
 import { WorkspaceSettingsProvider } from "../../providers/WorkspaceSettingsProvider";
 import { useState, useEffect } from "react";
+import Link from "next/link";
 import { usePathname } from "next/navigation";
 import Sidebar from "../Sidebar/Sidebar";
 import Topbar from "./Topbar";
@@ -66,7 +67,21 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
 
   // Only render sidebar and topbar if user is authenticated
   if (!user) {
-    return null; // AuthProvider will handle redirect to login
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-gray-50">
+        <div className="text-center px-4 max-w-sm">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto" aria-hidden />
+          <p className="mt-4 text-gray-700 font-medium">Redirecting to sign-in…</p>
+          <p className="mt-2 text-sm text-gray-500">
+            If you are not redirected,{" "}
+            <Link href="/login" className="text-blue-600 underline hover:text-blue-800">
+              open login
+            </Link>
+            .
+          </p>
+        </div>
+      </div>
+    );
   }
 
   return (
