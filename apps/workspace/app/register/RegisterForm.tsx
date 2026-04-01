@@ -1,6 +1,6 @@
 "use client";
 import { useState, useEffect, useRef, useCallback } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
 import {
@@ -17,6 +17,25 @@ type Profession = { id: number; name: string };
 
 const ONBOARDING_STEPS = 4;
 const OTHER_VALUE = "__other__";
+const ONBOARDING_BOOTSTRAP_TIMEOUT_MS = 45_000;
+
+async function with_network_timeout<T>(
+  promise: Promise<T>,
+  ms: number,
+  message: string
+): Promise<T> {
+  let t: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        t = setTimeout(() => reject(new Error(message)), ms);
+      }),
+    ]);
+  } finally {
+    if (t !== undefined) clearTimeout(t);
+  }
+}
 
 function read_google_calendar_sync(meta: Record<string, unknown>): boolean {
   const v = meta.google_calendar_sync;
@@ -73,6 +92,7 @@ async function headers_for_workspace_api(): Promise<Record<string, string>> {
 
 export default function RegisterForm() {
   const router = useRouter();
+  const pathname = usePathname();
   const searchParams = useSearchParams();
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
@@ -110,6 +130,8 @@ export default function RegisterForm() {
 
   const registeringRef = useRef(false);
   const bootstrapPromiseRef = useRef<Promise<number | null> | null>(null);
+  /** Serialize resolveMode so auth events + URL updates cannot interleave and clobber step/UI. */
+  const resolveQueueRef = useRef(Promise.resolve());
   const autoGoogleTriggeredRef = useRef(false);
   const emailFromUrlAppliedRef = useRef(false);
   /** Apply metadata resume step only once per user after login / first load; do not override Back/Next. */
@@ -124,9 +146,15 @@ export default function RegisterForm() {
       const params = new URLSearchParams(searchParams.toString());
       params.set("onboarding", "1");
       params.set("step", String(s));
-      router.replace(`/register?${params.toString()}`);
+      const href = `${pathname}?${params.toString()}`;
+      // Sync address bar immediately; App Router searchParams can lag behind router.replace,
+      // and resolveMode must not read stale ?step= and overwrite onboardingStep (see fast path).
+      if (typeof window !== "undefined") {
+        window.history.replaceState(window.history.state, "", href);
+      }
+      router.replace(href);
     },
-    [router, searchParams]
+    [router, pathname, searchParams]
   );
 
   const resolveMode = async (session: {
@@ -151,20 +179,45 @@ export default function RegisterForm() {
       let promise = bootstrapPromiseRef.current;
       if (!promise) {
         promise = (async () => {
-          const res = await fetch("/api/auth/bootstrap-workspace", {
-            method: "POST",
-            headers: { Authorization: `Bearer ${session.access_token}` },
-          });
-          if (!res.ok) return null;
-          const body = (await res.json()) as { workspace_id: number };
-          return body.workspace_id;
+          try {
+            const res = await with_network_timeout(
+              fetch("/api/auth/bootstrap-workspace", {
+                method: "POST",
+                headers: { Authorization: `Bearer ${session.access_token}` },
+              }),
+              ONBOARDING_BOOTSTRAP_TIMEOUT_MS,
+              "Creating your workspace is taking too long. Check your connection and refresh the page."
+            );
+            if (!res.ok) return null;
+            const body = (await res.json()) as { workspace_id: number };
+            return body.workspace_id;
+          } catch {
+            return null;
+          }
         })();
         bootstrapPromiseRef.current = promise;
       }
-      const resolvedWid = await promise;
+      let resolvedWid: number | null;
+      try {
+        resolvedWid = await promise;
+      } catch {
+        bootstrapPromiseRef.current = null;
+        setOnboardingMode(false);
+        return;
+      }
       if (resolvedWid != null) {
         wid = resolvedWid;
-        await enqueueAuthRefresh();
+        try {
+          await with_network_timeout(
+            enqueueAuthRefresh(),
+            25_000,
+            "Session refresh timed out. Please refresh the page or sign in again."
+          );
+        } catch {
+          bootstrapPromiseRef.current = null;
+          setOnboardingMode(false);
+          return;
+        }
       }
       bootstrapPromiseRef.current = null;
     }
@@ -210,6 +263,25 @@ export default function RegisterForm() {
     if (!wizardIncomplete) {
       resumeStepHydratedUserIdRef.current = null;
       router.replace("/");
+      return;
+    }
+
+    const userIdForResume =
+      userResult.user?.id ?? session.user.id;
+
+    // Already hydrated: refresh header user only. Do not setOnboardingStep from searchParams here —
+    // after saveStep1, onAuthStateChange runs resolveMode while useSearchParams() still has the old ?step=,
+    // which would reset the UI to step 1 and make Next appear broken. Step comes from goToOnboardingStep / full hydration.
+    if (resumeStepHydratedUserIdRef.current === userIdForResume) {
+      const { data: { session: latestSession } } = await supabase.auth.getSession();
+      const emailUser = userResult.user ?? latestSession?.user ?? session.user;
+      setWorkspaceType(ws?.type ?? null);
+      setOnboardingUser({
+        email: emailUser.email ?? undefined,
+        google_calendar_sync: read_google_calendar_sync(meta),
+      });
+      setOnboardingMode(true);
+      setCalendarConnecting(false);
       return;
     }
 
@@ -290,11 +362,11 @@ export default function RegisterForm() {
     }
 
     setOnboardingMode(true);
-    const userIdForResume =
+    const userIdForResumeFull =
       userResult.user?.id ?? latestSession?.user?.id ?? session.user.id;
     // Initial login / first load: resume from metadata; optional ?step= is capped so users cannot skip ahead.
     // Later resolveMode runs (auth events, searchParams) must not override Back/Next.
-    if (resumeStepHydratedUserIdRef.current !== userIdForResume) {
+    if (resumeStepHydratedUserIdRef.current !== userIdForResumeFull) {
       const resumeFromMeta = workspaceOnboardingResumeStep(meta);
       const lastDone = workspaceOnboardingLastCompletedStep(meta);
       let initialStep = resumeFromMeta;
@@ -313,7 +385,7 @@ export default function RegisterForm() {
         }
       }
       setOnboardingStep(initialStep);
-      resumeStepHydratedUserIdRef.current = userIdForResume;
+      resumeStepHydratedUserIdRef.current = userIdForResumeFull;
     }
     const emailUser = userResult.user ?? latestSession?.user ?? session.user;
     setOnboardingUser({
@@ -342,14 +414,28 @@ export default function RegisterForm() {
       }
     }
 
-    const run = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      await resolveMode(session);
+    const scheduleResolve = () => {
+      resolveQueueRef.current = resolveQueueRef.current
+        .catch(() => undefined)
+        .then(async () => {
+          try {
+            const { data: { session } } = await supabase.auth.getSession();
+            await resolveMode(session);
+          } catch (e: unknown) {
+            console.error("register onboarding resolve", e);
+            setOnboardingMode(false);
+            setError(
+              e instanceof Error
+                ? e.message
+                : "Could not load workspace setup. Try refreshing the page."
+            );
+          }
+        });
     };
-    run();
+    scheduleResolve();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session) run();
+      if (session) scheduleResolve();
     });
     return () => subscription.unsubscribe();
   }, [searchParams, router]);

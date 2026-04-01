@@ -1,6 +1,11 @@
 import { NextResponse } from 'next/server';
 import { getSupabaseServer } from '@/lib/supabaseServer';
 
+function normalize_workspace_id(value: unknown): string | null {
+  if (value === null || value === undefined || value === '') return null;
+  return String(value);
+}
+
 // GET - Fetch all users
 export async function GET() {
   try {
@@ -24,7 +29,7 @@ export async function GET() {
       last_sign_in_at: user.last_sign_in_at,
       role: user.user_metadata?.role || null,
       name: user.user_metadata?.name || null,
-      workspace_id: user.user_metadata?.workspace_id || null,
+      workspace_id: normalize_workspace_id(user.user_metadata?.workspace_id),
     }));
 
     return NextResponse.json({ users: transformedUsers }, { status: 200 });
@@ -144,7 +149,7 @@ export async function POST(req: Request) {
       last_sign_in_at: userData.user.last_sign_in_at,
       role: userData.user.user_metadata?.role || null,
       name: userData.user.user_metadata?.name || null,
-      workspace_id: userData.user.user_metadata?.workspace_id || null,
+      workspace_id: normalize_workspace_id(userData.user.user_metadata?.workspace_id),
     };
 
     return NextResponse.json({ 

@@ -8,7 +8,7 @@ import { useIdleLogout } from '@/src/hooks/useIdleLogout'
 import { useRemoteSessionInvalidation } from '@/src/hooks/useRemoteSessionInvalidation'
 import { getWorkspaceIdleLogoutDurations } from '@/src/utils/workspace_idle_logout'
 import { useRouter, usePathname } from 'next/navigation'
-import type { Session, User as SupabaseUser } from '@supabase/supabase-js'
+import type { AuthChangeEvent, Session, User as SupabaseUser } from '@supabase/supabase-js'
 import {
   workspaceAdminIncompleteOnboarding,
   isAllowedPathDuringWorkspaceOnboarding,
@@ -114,7 +114,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     }
 
-    const syncAuthFromSessionInner = async (session: Session | null) => {
+    const syncAuthFromSessionInner = async (
+      session: Session | null,
+      authEvent?: AuthChangeEvent
+    ) => {
       if (!session?.user) {
         setUser(null)
         if (!isPublicPath(pathname)) {
@@ -128,8 +131,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // OAuth callback sets the session client-side; Supabase /auth/v1/user can briefly return 403
       // while the access token propagates. Verifying here would sign the user out (clearInvalidSession)
       // without redirect on this public route — leaving /auth/callback stuck on "Finishing sign-in…".
+      //
+      // USER_UPDATED / TOKEN_REFRESHED: do not call getUser() here. updateUser() and refresh hold the
+      // GoTrueClient mutex until _notifyAllSubscribers finishes; getUser() also acquires that lock
+      // → deadlock. The event session already carries the server-updated user (e.g. onboarding metadata).
+      const skipVerifyGetUser =
+        authEvent === 'USER_UPDATED' || authEvent === 'TOKEN_REFRESHED'
+
       let currentUser: SupabaseUser
       if (isAuthCallback) {
+        currentUser = session.user as SupabaseUser
+      } else if (skipVerifyGetUser) {
         currentUser = session.user as SupabaseUser
       } else {
         const { data: verified, error: verifyErr } = await supabase.auth.getUser()
@@ -195,9 +207,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(currentUser)
     }
 
-    const syncAuthFromSessionWithTimeout = (session: Session | null) =>
+    const syncAuthFromSessionWithTimeout = (
+      session: Session | null,
+      authEvent?: AuthChangeEvent
+    ) =>
       Promise.race([
-        syncAuthFromSessionInner(session),
+        syncAuthFromSessionInner(session, authEvent),
         new Promise<void>((_, reject) => {
           window.setTimeout(() => reject(new AuthSyncTimeoutError()), AUTH_SYNC_TIMEOUT_MS)
         }),
@@ -246,9 +261,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (_event, session) => {
+    } = supabase.auth.onAuthStateChange(async (event, session) => {
       try {
-        await syncAuthFromSessionWithTimeout(session)
+        await syncAuthFromSessionWithTimeout(session, event)
       } catch (err) {
         await handleAuthSyncFailure(err)
       } finally {
