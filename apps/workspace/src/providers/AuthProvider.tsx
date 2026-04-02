@@ -52,6 +52,8 @@ const AUTH_SYNC_TIMEOUT_MS = 30_000;
 
 const AUTH_RETRY_MAX_ATTEMPTS = 3
 const AUTH_RETRY_INITIAL_DELAY_MS = 1_000
+/** Avoid hanging forever on signOut (blocks `finally` → Layout stays on "Loading…"). */
+const SIGN_OUT_LOCAL_MAX_MS = 8_000
 
 class AuthSyncTimeoutError extends Error {
   constructor() {
@@ -71,6 +73,19 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     window.setTimeout(resolve, ms)
   })
+}
+
+async function signOutLocalBounded(): Promise<void> {
+  try {
+    await Promise.race([
+      supabase.auth.signOut({ scope: 'local' }),
+      sleep(SIGN_OUT_LOCAL_MAX_MS).then(() => {
+        /* timeout — unblock caller; storage may still clear */
+      }),
+    ])
+  } catch {
+    /* ignore */
+  }
 }
 
 /**
@@ -155,11 +170,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const clearInvalidSession = async () => {
-      try {
-        await supabase.auth.signOut({ scope: 'local' })
-      } catch {
-        /* ignore */
-      }
+      await signOutLocalBounded()
       setUser(null)
       if (!isPublicPath(pathname)) {
         router.push('/login?reason=session_invalid')
@@ -286,11 +297,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const handleAuthSyncFailure = async (err: unknown) => {
       console.error(err)
       if (err instanceof AuthSyncTimeoutError) {
-        try {
-          await supabase.auth.signOut({ scope: 'local' })
-        } catch {
-          /* ignore */
-        }
+        await signOutLocalBounded()
         setUser(null)
         if (!isPublicPath(pathname)) {
           router.push('/login?reason=auth_timeout')
@@ -316,7 +323,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
         await syncAuthFromSessionWithRetry(data.session ?? null)
       } catch (err) {
-        await handleAuthSyncFailure(err)
+        void handleAuthSyncFailure(err)
       } finally {
         setLoading(false)
       }
@@ -326,14 +333,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (event, session) => {
-      try {
-        await syncAuthFromSessionWithRetry(session, event)
-      } catch (err) {
-        await handleAuthSyncFailure(err)
-      } finally {
-        setLoading(false)
-      }
+    } = supabase.auth.onAuthStateChange((event, session) => {
+      // Defer so we never call getUser/getSession while inside the auth notifier (avoids deadlocks).
+      window.setTimeout(() => {
+        void (async () => {
+          try {
+            await syncAuthFromSessionWithRetry(session, event)
+          } catch (err) {
+            void handleAuthSyncFailure(err)
+          } finally {
+            setLoading(false)
+          }
+        })()
+      }, 0)
     })
 
     return () => {
