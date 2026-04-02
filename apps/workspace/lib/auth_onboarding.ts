@@ -4,7 +4,7 @@ import type { SupabaseClient, User } from "@supabase/supabase-js";
 export const WORKSPACE_ONBOARDING_STEP_COUNT = 4;
 
 /** Client-side workspace row fetch during auth callback must not hang indefinitely. */
-const WORKSPACE_ONBOARDING_REMOTE_TIMEOUT_MS = 15_000;
+const WORKSPACE_ONBOARDING_REMOTE_TIMEOUT_MS = 30_000;
 
 /**
  * Parsed `onboarding_last_completed_step`: 0 = none, 1 = step 1 done, …, 4 = all steps done.

@@ -46,15 +46,31 @@ function isPublicPath(pathname: string): boolean {
 // Allowed roles for workspace app
 const ALLOWED_ROLES = ['workspace_admin', 'customer', 'manager', 'service_provider'];
 
-const ONBOARDING_AUTH_CHECK_TIMEOUT_MS = 15_000;
+const ONBOARDING_AUTH_CHECK_TIMEOUT_MS = 30_000;
 /** Cap entire syncAuthFromSession so LayoutWrapper never spins forever on stuck getUser / network. */
-const AUTH_SYNC_TIMEOUT_MS = 25_000;
+const AUTH_SYNC_TIMEOUT_MS = 30_000;
+
+const AUTH_RETRY_MAX_ATTEMPTS = 3
+const AUTH_RETRY_INITIAL_DELAY_MS = 1_000
 
 class AuthSyncTimeoutError extends Error {
   constructor() {
     super('AUTH_SYNC_TIMEOUT')
     this.name = 'AuthSyncTimeoutError'
   }
+}
+
+class OnboardingCheckTimeoutError extends Error {
+  constructor() {
+    super('ONBOARDING_CHECK_TIMEOUT')
+    this.name = 'OnboardingCheckTimeoutError'
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms)
+  })
 }
 
 /**
@@ -83,8 +99,29 @@ async function workspaceAdminIncompleteOnboardingWithTimeout(
   return withTimeout(
     workspaceAdminIncompleteOnboarding(supabaseClient, user),
     ONBOARDING_AUTH_CHECK_TIMEOUT_MS,
-    () => new Error('ONBOARDING_CHECK_TIMEOUT')
+    () => new OnboardingCheckTimeoutError()
   )
+}
+
+async function workspaceAdminIncompleteOnboardingWithRetry(
+  supabaseClient: Parameters<typeof workspaceAdminIncompleteOnboarding>[0],
+  user: SupabaseUser
+): Promise<boolean> {
+  let delay = AUTH_RETRY_INITIAL_DELAY_MS
+  for (let i = 0; i < AUTH_RETRY_MAX_ATTEMPTS; i++) {
+    try {
+      return await workspaceAdminIncompleteOnboardingWithTimeout(supabaseClient, user)
+    } catch (e) {
+      if (e instanceof OnboardingCheckTimeoutError && i < AUTH_RETRY_MAX_ATTEMPTS - 1) {
+        console.warn(`Onboarding check timed out, retrying in ${delay}ms...`)
+        await sleep(delay)
+        delay *= 2
+      } else {
+        throw e
+      }
+    }
+  }
+  throw new Error('workspaceAdminIncompleteOnboardingWithRetry: exhausted retries')
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -202,7 +239,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       ) {
         let incomplete: boolean
         try {
-          incomplete = await workspaceAdminIncompleteOnboardingWithTimeout(
+          incomplete = await workspaceAdminIncompleteOnboardingWithRetry(
             supabase,
             currentUser as SupabaseUser
           )
@@ -224,6 +261,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const syncAuthFromSessionWithTimeout = (session: Session | null, authEvent?: AuthChangeEvent) =>
       withTimeout(syncAuthFromSessionInner(session, authEvent), AUTH_SYNC_TIMEOUT_MS, () => new AuthSyncTimeoutError())
+
+    const syncAuthFromSessionWithRetry = async (
+      session: Session | null,
+      authEvent?: AuthChangeEvent
+    ): Promise<void> => {
+      let delay = AUTH_RETRY_INITIAL_DELAY_MS
+      for (let i = 0; i < AUTH_RETRY_MAX_ATTEMPTS; i++) {
+        try {
+          await syncAuthFromSessionWithTimeout(session, authEvent)
+          return
+        } catch (err) {
+          if (err instanceof AuthSyncTimeoutError && i < AUTH_RETRY_MAX_ATTEMPTS - 1) {
+            console.warn(`Auth sync timed out, retrying in ${delay}ms...`)
+            await sleep(delay)
+            delay *= 2
+          } else {
+            throw err
+          }
+        }
+      }
+    }
 
     const handleAuthSyncFailure = async (err: unknown) => {
       console.error(err)
@@ -256,7 +314,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           }
           return
         }
-        await syncAuthFromSessionWithTimeout(data.session ?? null)
+        await syncAuthFromSessionWithRetry(data.session ?? null)
       } catch (err) {
         await handleAuthSyncFailure(err)
       } finally {
@@ -270,7 +328,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       data: { subscription },
     } = supabase.auth.onAuthStateChange(async (event, session) => {
       try {
-        await syncAuthFromSessionWithTimeout(session, event)
+        await syncAuthFromSessionWithRetry(session, event)
       } catch (err) {
         await handleAuthSyncFailure(err)
       } finally {
