@@ -46,6 +46,7 @@ function isBenignAuth401Path(urlString: string): boolean {
     if (p.startsWith("/api/auth/verify")) return true;
     if (p.startsWith("/api/auth/email-registered")) return true;
     if (p === "/api/auth/google" || p.startsWith("/api/auth/google?")) return true;
+    if (p === "/api/auth/callback-tokens" || p.startsWith("/api/auth/callback-tokens?")) return true;
     return false;
   } catch {
     return false;

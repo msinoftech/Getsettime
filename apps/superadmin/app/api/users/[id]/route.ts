@@ -170,7 +170,14 @@ export async function DELETE(
 
     const supabaseServer = getSupabaseServer();
 
-    // Delete user using admin API
+    const { data: existing, error: getErr } = await supabaseServer.auth.admin.getUserById(id);
+    if (getErr || !existing?.user) {
+      return NextResponse.json({ error: 'User not found' }, { status: 404 });
+    }
+    if (existing.user.user_metadata?.role === 'superadmin') {
+      return NextResponse.json({ error: 'Superadmin users cannot be deleted' }, { status: 403 });
+    }
+
     const { error } = await supabaseServer.auth.admin.deleteUser(id);
 
     if (error) {

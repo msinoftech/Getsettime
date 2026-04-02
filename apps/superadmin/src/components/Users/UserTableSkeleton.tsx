@@ -35,8 +35,9 @@ export function UserTableSkeleton() {
               <td className="px-6 py-4"><SkeletonBar className="h-4 w-28" /></td>
               <td className="px-6 py-4"><SkeletonBar className="h-4 w-24" /></td>
               <td className="px-6 py-4">
-                <div className="flex items-center justify-end">
+                <div className="flex items-center justify-end gap-2">
                   <SkeletonBar className="h-6 w-10 rounded-md" />
+                  <SkeletonBar className="h-6 w-14 rounded-md" />
                 </div>
               </td>
             </tr>

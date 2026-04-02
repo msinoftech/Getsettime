@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { createClient } from '@supabase/supabase-js';
 
+export const dynamic = 'force-dynamic';
+
 const COOKIE_NAME = 'sb_callback_t';
 const MAX_AGE_SEC = 120; // token valid for 2 minutes
 
@@ -18,7 +20,7 @@ export async function GET(req: Request) {
     }
 
     const supabaseUrl = (process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || '').trim();
-    const supabaseServiceKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY || '').trim();
+    const supabaseServiceKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim();
     if (!supabaseUrl || !supabaseServiceKey) {
       return NextResponse.json({ error: 'server_config' }, { status: 500 });
     }

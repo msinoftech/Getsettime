@@ -14,15 +14,37 @@ function assignToAppPath(path: string) {
 }
 
 function fetchWithTimeout(url: string, init?: RequestInit): Promise<Response> {
-  if (typeof AbortSignal !== "undefined" && "timeout" in AbortSignal) {
-    return fetch(url, {
-      ...init,
-      signal: AbortSignal.timeout(CALLBACK_TOKEN_FETCH_TIMEOUT_MS),
-    });
-  }
+  const parentSignal = init?.signal;
   const ctrl = new AbortController();
   const id = window.setTimeout(() => ctrl.abort(), CALLBACK_TOKEN_FETCH_TIMEOUT_MS);
-  return fetch(url, { ...init, signal: ctrl.signal }).finally(() => clearTimeout(id));
+  const onParentAbort = () => {
+    window.clearTimeout(id);
+    ctrl.abort();
+  };
+  if (parentSignal) {
+    if (parentSignal.aborted) {
+      window.clearTimeout(id);
+      ctrl.abort();
+    } else {
+      parentSignal.addEventListener("abort", onParentAbort, { once: true });
+    }
+  }
+  return fetch(url, { ...init, signal: ctrl.signal }).finally(() => {
+    window.clearTimeout(id);
+    parentSignal?.removeEventListener("abort", onParentAbort);
+  });
+}
+
+/** Prefer ?t= when present (cookie may be missing cross-subdomain / ITP); then cookie-only. */
+async function fetchCallbackTokens(tParam: string | null, signal: AbortSignal): Promise<Response> {
+  if (tParam) {
+    const withT = await fetchWithTimeout(
+      `/api/auth/callback-tokens?t=${encodeURIComponent(tParam)}`,
+      { credentials: "include", signal }
+    );
+    if (withT.ok) return withT;
+  }
+  return fetchWithTimeout("/api/auth/callback-tokens", { credentials: "include", signal });
 }
 
 export default function AuthCallbackContent() {
@@ -37,6 +59,7 @@ export default function AuthCallbackContent() {
 
   useEffect(() => {
     let cancelled = false;
+    const abort = new AbortController();
 
     const setSessionAndRedirect = async (access_token: string, refresh_token: string) => {
       const { error: sessionError } = await supabase.auth.setSession({
@@ -71,25 +94,14 @@ export default function AuthCallbackContent() {
     };
 
     const finalize = async () => {
-      // Prefer one-time token: cookie first, then ?t= (works when cookie not sent, e.g. private browsing)
       let tokenRes: Response;
       try {
-        tokenRes = await fetchWithTimeout("/api/auth/callback-tokens", { credentials: "include" });
+        tokenRes = await fetchCallbackTokens(t, abort.signal);
       } catch {
-        if (!cancelled) setError(USER_FRIENDLY_ERROR);
+        if (!cancelled && !abort.signal.aborted) setError(USER_FRIENDLY_ERROR);
         return;
       }
-      if (!tokenRes.ok && t) {
-        try {
-          tokenRes = await fetchWithTimeout(
-            `/api/auth/callback-tokens?t=${encodeURIComponent(t)}`,
-            { credentials: "include" }
-          );
-        } catch {
-          if (!cancelled) setError(USER_FRIENDLY_ERROR);
-          return;
-        }
-      }
+      if (abort.signal.aborted || cancelled) return;
       if (tokenRes.ok) {
         try {
           const body = (await tokenRes.json()) as { access_token?: string; refresh_token?: string };
@@ -134,9 +146,14 @@ export default function AuthCallbackContent() {
 
     void finalize().catch((err) => {
       console.error(err);
-      if (!cancelled) setError(USER_FRIENDLY_ERROR);
+      if (!cancelled && !abort.signal.aborted) setError(USER_FRIENDLY_ERROR);
     });
-  }, [code, t, nextPath, router]);
+
+    return () => {
+      cancelled = true;
+      abort.abort();
+    };
+  }, [code, t, nextPath]);
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-white to-purple-50">

@@ -22,7 +22,9 @@ const UsersPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
+  const [deletingUser, setDeletingUser] = useState<User | null>(null);
   const [formData, setFormData] = useState({
     email: '',
     password: '',
@@ -115,6 +117,13 @@ const UsersPage: React.FC = () => {
     setFormErrors({});
     setModalError(null);
     setIsModalOpen(true);
+  };
+
+  const handleDeleteClick = (user: User) => {
+    if (user.role === 'superadmin') return;
+    setError(null);
+    setDeletingUser(user);
+    setIsDeleteModalOpen(true);
   };
 
   // Validate form
@@ -221,6 +230,35 @@ const UsersPage: React.FC = () => {
       const errorMessage = err.message || 'Failed to save user';
       setModalError(errorMessage);
       setError(errorMessage);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!deletingUser || deletingUser.role === 'superadmin') return;
+
+    setSubmitting(true);
+    setError(null);
+
+    try {
+      const response = await fetch(`/api/users/${deletingUser.id}`, {
+        method: 'DELETE',
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to delete user');
+      }
+
+      setIsDeleteModalOpen(false);
+      setDeletingUser(null);
+
+      await fetchUsers();
+    } catch (err: any) {
+      console.error('Error deleting user:', err);
+      setError(err.message || 'Failed to delete user');
     } finally {
       setSubmitting(false);
     }
@@ -465,13 +503,23 @@ const UsersPage: React.FC = () => {
                         {new Date(user.created_at).toLocaleDateString()}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap align-middle text-sm" data-label="Actions">
-                        <div className="flex items-center justify-end">
+                        <div className="flex items-center justify-end gap-2">
                           <button
+                            type="button"
                             onClick={() => handleEdit(user)}
                             className="inline-flex items-center rounded-md bg-indigo-50 px-2 py-1 text-xs font-medium text-indigo-700 inset-ring inset-ring-indigo-700/10 hover:bg-indigo-100 cursor-pointer"
                           >
                             Edit
                           </button>
+                          {user.role !== 'superadmin' && (
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteClick(user)}
+                              className="inline-flex items-center rounded-md bg-red-50 px-2 py-1 text-xs font-medium text-red-700 inset-ring inset-ring-red-600/10 hover:bg-red-100 cursor-pointer"
+                            >
+                              Delete
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -652,6 +700,48 @@ const UsersPage: React.FC = () => {
               </form>
             </div>
           </section>
+        </div>
+      )}
+
+      {isDeleteModalOpen && deletingUser && deletingUser.role !== 'superadmin' && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full">
+            <div className="p-6 border-b border-slate-200">
+              <h2 className="text-2xl font-bold text-slate-900">Delete User</h2>
+            </div>
+            <div className="p-6">
+              <p className="text-slate-700 mb-4">
+                Are you sure you want to delete <strong>{deletingUser.name || deletingUser.email}</strong>? This action cannot be undone.
+              </p>
+              {error && (
+                <div className="mb-4 bg-red-50 border border-red-200 rounded-lg p-3 text-red-800 text-sm">
+                  {error}
+                </div>
+              )}
+              <div className="flex justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsDeleteModalOpen(false);
+                    setDeletingUser(null);
+                    setError(null);
+                  }}
+                  className="px-4 py-2 text-slate-700 bg-slate-100 rounded-lg hover:bg-slate-200 transition"
+                  disabled={submitting}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDeleteConfirm}
+                  className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={submitting}
+                >
+                  {submitting ? 'Deleting...' : 'Delete'}
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>

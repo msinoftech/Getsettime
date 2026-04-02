@@ -12,7 +12,7 @@ function getSupabaseServer() {
       const errorMessage = error?.message || 'Unknown error';
       throw new Error(
         `Failed to initialize Supabase server client: ${errorMessage}. ` +
-        `Please ensure NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY environment variables are set.`
+        `Please ensure NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY environment variables are set.`
       );
     }
   }

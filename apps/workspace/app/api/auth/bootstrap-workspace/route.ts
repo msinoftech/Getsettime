@@ -13,11 +13,7 @@ export async function POST(req: Request) {
 
     const supabaseUrl = (process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "").trim();
     const supabaseAnonKey = (process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "").trim();
-    const supabaseServiceKey = (
-      process.env.SUPABASE_SERVICE_ROLE_KEY ||
-      process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY ||
-      ""
-    ).trim();
+    const supabaseServiceKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
 
     if (!supabaseUrl || !supabaseAnonKey || !supabaseServiceKey) {
       return NextResponse.json({ error: "Server configuration error" }, { status: 500 });

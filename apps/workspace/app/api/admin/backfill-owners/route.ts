@@ -11,9 +11,7 @@ import { createClient } from '@supabase/supabase-js';
  */
 export async function POST(req: NextRequest) {
   const serviceKey = req.headers.get('x-service-key');
-  const expectedKey =
-    process.env.SUPABASE_SERVICE_ROLE_KEY ||
-    process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY;
+  const expectedKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
   if (!serviceKey || !expectedKey || serviceKey !== expectedKey) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });

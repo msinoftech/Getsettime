@@ -10,6 +10,7 @@ import {
   saveGoogleCalendarIntegration,
 } from '@/lib/auth-service';
 import { workspaceAdminNeedsOnboardingWizard } from '@/lib/auth_onboarding';
+import { getPublicSiteOrigin } from '@/lib/request-site-origin';
 
 interface GoogleSignupData {
   access_token: string;
@@ -60,12 +61,12 @@ export async function GET(req: Request) {
 
     const supabaseUrl = (process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || '').trim();
     const supabaseAnonKey = (process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '').trim();
-    const supabaseServiceKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY || '').trim();
+    const supabaseServiceKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim();
 
     const missing: string[] = [];
     if (!supabaseUrl) missing.push('NEXT_PUBLIC_SUPABASE_URL or SUPABASE_URL');
     if (!supabaseAnonKey) missing.push('NEXT_PUBLIC_SUPABASE_ANON_KEY');
-    if (!supabaseServiceKey) missing.push('SUPABASE_SERVICE_ROLE_KEY or NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY');
+    if (!supabaseServiceKey) missing.push('SUPABASE_SERVICE_ROLE_KEY');
 
     if (missing.length > 0) {
       const origin = process.env.NEXT_PUBLIC_APP_URL?.trim() || (typeof req.url === 'string' && req.url.startsWith('http') ? new URL(req.url).origin : null) || '';
@@ -73,7 +74,7 @@ export async function GET(req: Request) {
       return NextResponse.redirect(`${origin.replace(/\/$/, '')}/login?${params.toString()}`);
     }
 
-    // Use service role client for admin operations (use resolved env vars so either SUPABASE_SERVICE_ROLE_KEY or NEXT_PUBLIC_* works)
+    // Use service role client for admin operations (SUPABASE_SERVICE_ROLE_KEY)
     const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {
       auth: {
         autoRefreshToken: false,
@@ -295,20 +296,23 @@ export async function GET(req: Request) {
       }
 
       // Redirect to onboarding
-      const origin = process.env.NEXT_PUBLIC_APP_URL?.trim() || (typeof req.url === 'string' && req.url.startsWith('http') ? new URL(req.url).origin : '');
+      const siteOrigin = getPublicSiteOrigin(req);
       const onboardingNext = encodeURIComponent('/register?onboarding=1');
-      const res = NextResponse.redirect(`${origin.replace(/\/$/, '')}/auth/callback?next=${onboardingNext}&t=${callbackId}`);
+      const callbackPath = `/auth/callback?next=${onboardingNext}&t=${encodeURIComponent(callbackId)}`;
+      const callbackHref = siteOrigin
+        ? `${siteOrigin}${callbackPath}`
+        : new URL(callbackPath, req.url).toString();
+      const res = NextResponse.redirect(callbackHref);
       res.cookies.set('sb_callback_t', callbackId, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', path: '/', maxAge: 60 });
       return res;
     } else {
       // User doesn't exist and this is a login attempt — send to login with email for no-account modal
-      const origin =
-        process.env.NEXT_PUBLIC_APP_URL?.trim() ||
-        (typeof req.url === 'string' && req.url.startsWith('http') ? new URL(req.url).origin : '') ||
-        '';
-      const base = `${origin.replace(/\/$/, '')}/login`;
+      const siteOrigin = getPublicSiteOrigin(req);
       const params = new URLSearchParams({ no_account: '1', email });
-      return NextResponse.redirect(`${base}?${params.toString()}`);
+      const loginHref = siteOrigin
+        ? `${siteOrigin}/login?${params.toString()}`
+        : new URL(`/login?${params.toString()}`, req.url).toString();
+      return NextResponse.redirect(loginHref);
     }
   } catch (error: any) {
     console.error('Google signup error:', error);

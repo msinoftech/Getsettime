@@ -461,7 +461,7 @@ export async function POST(req: NextRequest) {
 
     try {
       if (service_provider_id) {
-        const supabaseServiceRoleKey = process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY;
+        const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
         if (!supabaseServiceRoleKey) {
           console.warn('Service role key not configured, cannot fetch provider details for notifications');
         } else {

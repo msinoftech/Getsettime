@@ -27,10 +27,13 @@ export const createSupabaseClient = (): SupabaseClient => {
  */
 export const createSupabaseServerClient = (): SupabaseClient => {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || env.supabaseUrl;
-  const supabaseServiceRoleKey = process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY || env.supabaseServiceRoleKey;
+  const supabaseServiceRoleKey =
+    process.env.SUPABASE_SERVICE_ROLE_KEY || env.supabaseServiceRoleKey;
 
   if (!supabaseUrl || !supabaseServiceRoleKey) {
-    throw new Error('Missing Supabase environment variables: NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY');
+    throw new Error(
+      'Missing Supabase environment variables: NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY (server)'
+    );
   }
 
   return createClient(supabaseUrl, supabaseServiceRoleKey, {
