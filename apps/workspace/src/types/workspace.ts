@@ -96,6 +96,8 @@ export type WorkspaceSettingsHook = {
   availability: AvailabilitySettings;
   workspaceName?: string | null;
   workspaceLogo?: string | null;
+  /** Resolved profession label from workspace (joined name or legacy `type`) */
+  workspaceProfessionLabel?: string | null;
   loading: boolean;
   error: Error | null;
   refetch: () => Promise<void>;

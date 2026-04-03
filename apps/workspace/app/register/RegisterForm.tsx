@@ -9,7 +9,9 @@ import {
   workspaceOnboardingResumeStep,
 } from "@/lib/auth_onboarding";
 import { supabase } from "@/lib/supabaseClient";
-import AvailabilityTimesheet from "@/src/components/Settings/AvailabilityTimesheet";
+import AvailabilityTimesheet, {
+  type availability_timesheet_save_feedback,
+} from "@/src/components/Settings/AvailabilityTimesheet";
 import AlertMessage from "@/src/components/Auth/AlertMessage";
 
 /** Row from professions_list (onboarding catalog), not workspace professions.id */
@@ -125,6 +127,8 @@ export default function RegisterForm() {
     whatsapp: false,
   });
   const [step3Saved, setStep3Saved] = useState(false);
+  const [timesheetSaveFeedback, setTimesheetSaveFeedback] =
+    useState<availability_timesheet_save_feedback>(null);
   const [onboardingUser, setOnboardingUser] = useState<{ email?: string; google_calendar_sync?: boolean } | null>(null);
   const [calendarConnecting, setCalendarConnecting] = useState(false);
 
@@ -452,6 +456,12 @@ export default function RegisterForm() {
   }, [searchParams, onboardingMode]);
 
   useEffect(() => {
+    if (onboardingStep !== 3) {
+      setTimesheetSaveFeedback(null);
+    }
+  }, [onboardingStep]);
+
+  useEffect(() => {
     if (onboardingMode !== true) return;
 
     if (!selectedProfessionId || selectedProfessionId === OTHER_VALUE) {
@@ -718,6 +728,11 @@ export default function RegisterForm() {
   if (onboardingMode === true) {
     const googleSync = onboardingUser?.google_calendar_sync === true;
     const googleEmail = onboardingUser?.email ?? "";
+    const onboardingNextDisabled =
+      onboardingSaving ||
+      (onboardingStep === 1 &&
+        ((selectedProfessionId === OTHER_VALUE ? !customProfession.trim() : !selectedProfessionId) ||
+          (selectedDepartment === OTHER_VALUE ? !customDepartment.trim() : !selectedDepartment)));
 
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-white to-purple-50 py-8">
@@ -739,9 +754,40 @@ export default function RegisterForm() {
             </div>
           </div>
 
-          {error && onboardingStep !== 3 && (
+          {error && (
             <div className="mb-4">
               <AlertMessage type="error" message={error} />
+            </div>
+          )}
+
+          {onboardingStep === 3 && timesheetSaveFeedback !== null && (
+            <div className="mb-4">
+              <AlertMessage
+                type={timesheetSaveFeedback.type === "success" ? "success" : "error"}
+                message={timesheetSaveFeedback.text}
+              />
+            </div>
+          )}
+
+          {onboardingStep === 3 && step3Saved && timesheetSaveFeedback === null && (
+            <div className="mb-4">
+              <AlertMessage
+                type="success"
+                message="Working hours saved. You can continue with Next."
+              />
+            </div>
+          )}
+
+          {onboardingStep === 3 && (
+            <div className="mb-4 flex justify-end">
+              <button
+                type="button"
+                onClick={handleOnboardingNext}
+                disabled={onboardingNextDisabled}
+                className="px-6 py-3 rounded-lg bg-blue-600 text-white font-medium hover:bg-blue-700 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {onboardingSaving ? "Saving…" : "Next"}
+              </button>
             </div>
           )}
 
@@ -918,7 +964,11 @@ export default function RegisterForm() {
               <h2 className="text-lg font-semibold text-gray-800 mb-4">Working Hours</h2>
               <p className="text-sm text-gray-600 mb-4">Configure your availability and break times, then click Save Timesheet before continuing.</p>
               <AvailabilityTimesheet
-                onSave={() => setStep3Saved(true)}
+                onSave={() => {
+                  setStep3Saved(true);
+                  setError("");
+                }}
+                onSaveFeedback={setTimesheetSaveFeedback}
               />
             </div>
           )}
@@ -949,9 +999,6 @@ export default function RegisterForm() {
           )}
 
           <div className="mt-6 space-y-3">
-            {error && onboardingStep === 3 && (
-              <AlertMessage type="error" message={error} />
-            )}
             <div className="flex justify-between">
               {onboardingStep > 1 ? (
                 <button
@@ -969,10 +1016,7 @@ export default function RegisterForm() {
               <button
                 type="button"
                 onClick={handleOnboardingNext}
-                disabled={onboardingSaving || (onboardingStep === 1 && (
-                  (selectedProfessionId === OTHER_VALUE ? !customProfession.trim() : !selectedProfessionId) ||
-                  (selectedDepartment === OTHER_VALUE ? !customDepartment.trim() : !selectedDepartment)
-                ))}
+                disabled={onboardingNextDisabled}
                 className="px-6 py-3 rounded-lg bg-blue-600 text-white font-medium hover:bg-blue-700 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {onboardingSaving ? "Saving…" : onboardingStep === 4 ? "Finish" : "Next"}

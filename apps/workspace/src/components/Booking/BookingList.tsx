@@ -46,7 +46,7 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
   const { settings } = useWorkspaceSettings();
   const { data: eventTypes } = useEventTypes();
   const { data: departments } = useDepartments();
-  const { data: serviceProviders } = useServiceProviders();
+  const { data: serviceProviders, workspaceOwner } = useServiceProviders();
   const { data: services } = useServices();
 
   const intakeFormSettings = useMemo(
@@ -69,6 +69,8 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [deleteConfirmModal, setDeleteConfirmModal] = useState<{ id: string } | null>(null);
   const [alertModal, setAlertModal] = useState<{ message: string } | null>(null);
+  const [showBookingUpdatedSuccess, setShowBookingUpdatedSuccess] =
+    useState(false);
   const [pagination, setPagination] = useState<PaginationInfo>({
     page: 1,
     limit: ITEMS_PER_PAGE,
@@ -271,6 +273,7 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
       debouncedEventType,
       debouncedSort
     );
+    setShowBookingUpdatedSuccess(true);
     window.dispatchEvent(new Event('bookings-viewed-update'));
   }, [
     currentPage,
@@ -281,6 +284,14 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
     debouncedSort,
     fetchBookings,
   ]);
+
+  useEffect(() => {
+    if (!showBookingUpdatedSuccess) return;
+    const t = window.setTimeout(() => {
+      setShowBookingUpdatedSuccess(false);
+    }, 6000);
+    return () => window.clearTimeout(t);
+  }, [showBookingUpdatedSuccess]);
 
   const handleFormCancel = useCallback(() => {
     setShowForm(false);
@@ -340,6 +351,7 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
         event_type_duration_minutes:
           booking.event_types?.duration_minutes ?? null,
         status: booking.status || "Pending",
+        service_provider_id: booking.service_provider_id,
         service_provider_name: getServiceProviderName(
           booking.service_provider_id,
           serviceProviders
@@ -377,6 +389,44 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
           {showMultiStepForm ? 'Cancel' : '+ New Booking'}
         </button>
       </header>
+
+      {showBookingUpdatedSuccess && (
+        <div
+          className="flex items-center justify-between gap-3 rounded-lg border border-green-200 bg-green-50 px-4 py-3"
+          role="status"
+          aria-live="polite"
+        >
+          <div className="flex min-w-0 flex-1 items-center gap-3">
+            <span className="inline-flex shrink-0 items-center rounded-full bg-green-100 px-2.5 py-0.5 text-xs font-semibold text-green-800">
+              Success
+            </span>
+            <span className="text-sm font-medium text-green-900">
+              Booking has been updated
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowBookingUpdatedSuccess(false)}
+            className="shrink-0 rounded-md p-1 text-green-700 transition hover:bg-green-100 hover:text-green-900"
+            aria-label="Dismiss success message"
+          >
+            <svg
+              className="h-5 w-5"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              strokeWidth={2}
+              aria-hidden
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M6 18L18 6M6 6l12 12"
+              />
+            </svg>
+          </button>
+        </div>
+      )}
 
       {showMultiStepForm && (
         <div
@@ -533,6 +583,7 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
                     <BookingTableRow
                       key={displayBooking.id}
                       displayBooking={displayBooking}
+                      workspace_owner={workspaceOwner}
                       onView={() =>
                         actualBooking && handleViewBooking(actualBooking)
                       }
@@ -567,6 +618,7 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
           services={services}
           departments={departments}
           serviceProviders={serviceProviders}
+          workspace_owner={workspaceOwner}
         />
       )}
 

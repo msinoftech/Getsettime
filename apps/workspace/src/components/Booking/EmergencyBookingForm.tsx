@@ -315,7 +315,7 @@ export default function EmergencyBookingForm() {
             </h2>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-              <Field label="Service Provider *" htmlFor="service_provider">
+              <Field label="Service Provider" htmlFor="service_provider">
                 <select
                   id="service_provider"
                   value={formData.service_provider_id}
@@ -324,7 +324,6 @@ export default function EmergencyBookingForm() {
                   }
                   className={selectBase}
                   disabled={loadingProviders}
-                  required
                 >
                   <option value="">Select provider</option>
                   {serviceProviders.map((p) => (

@@ -38,6 +38,20 @@ export function getDisplayPhone(b: Booking): string {
   return b.invitee_phone?.trim() || b.contacts?.phone?.trim() || 'N/A';
 }
 
+/** Title-case each word for department/provider labels; leaves emails and `N/A` unchanged. */
+export function capitalize_booking_display_label(value: string): string {
+  const t = value.trim();
+  if (!t || t === 'N/A') return value;
+  if (t.includes('@')) return value;
+  return t
+    .split(/\s+/)
+    .map((segment) => {
+      if (!segment) return segment;
+      return segment.charAt(0).toUpperCase() + segment.slice(1).toLowerCase();
+    })
+    .join(' ');
+}
+
 /** Inner label for parentheses, e.g. "1min" or "5mins"; null when not shown. */
 export function getEventTypeDurationInner(
   minutes: number | null | undefined

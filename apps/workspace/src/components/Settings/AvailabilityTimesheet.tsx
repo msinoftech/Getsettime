@@ -18,8 +18,14 @@ interface DaySchedule {
   breaks: BreakTime[];
 }
 
+export type availability_timesheet_save_feedback =
+  | { type: "success" | "error"; text: string }
+  | null;
+
 interface AvailabilityTimesheetProps {
   onSave?: (data: Record<DayName, DaySchedule>) => void;
+  /** When set, save success/error is reported here instead of the inline banner below the grid */
+  onSaveFeedback?: (payload: availability_timesheet_save_feedback) => void;
   /** When provided, skips the initial settings fetch and uses this data instead */
   initialTimesheet?: Record<string, DaySchedule> | null;
 }
@@ -119,95 +125,11 @@ const calculateHours = (startTime: string, endTime: string): number => {
   return totalMinutes / 60;
 };
 
-// Visual Availability Clock Component
-// const VisualAvailabilityClock: React.FC<{
-//   startTime: string;
-//   endTime: string;
-//   breaks: BreakTime[];
-// }> = ({ startTime, endTime, breaks }) => {
-//   const startAngle = timeToAngle(startTime);
-//   const endAngle = timeToAngle(endTime);
-//   const startDisplay = formatTimeForDisplay(startTime);
-//   const endDisplay = formatTimeForDisplay(endTime);
-
-//   // Calculate the sweep angle
-//   let sweepAngle = endAngle - startAngle;
-//   if (sweepAngle < 0) sweepAngle += 360;
-
-//   // Helper to draw arc segments
-//   const drawArc = (startAngle: number, endAngle: number, radius: number, largeArc: boolean) => {
-//     const startX = 100 + radius * Math.cos((startAngle * Math.PI) / 180);
-//     const startY = 100 + radius * Math.sin((startAngle * Math.PI) / 180);
-//     const endX = 100 + radius * Math.cos((endAngle * Math.PI) / 180);
-//     const endY = 100 + radius * Math.sin((endAngle * Math.PI) / 180);
-//     return `M ${startX} ${startY} A ${radius} ${radius} 0 ${largeArc ? 1 : 0} 1 ${endX} ${endY}`;
-//   };
-
-//   // Calculate available segments (excluding breaks)
-//   const calculateSegments = () => {
-//     const segments: Array<{ start: number; end: number }> = [];
-//     let currentStart = startAngle;
-    
-//     // Sort breaks by start time
-//     const sortedBreaks = [...breaks].sort((a, b) => {
-//       const aStart = timeToAngle(a.start);
-//       const bStart = timeToAngle(b.start);
-//       return aStart - bStart;
-//     });
-
-//     for (const breakTime of sortedBreaks) {
-//       const breakStart = timeToAngle(breakTime.start);
-//       const breakEnd = timeToAngle(breakTime.end);
-      
-//       // If break is within our time range, split the segment
-//       if (breakStart >= currentStart && breakStart <= endAngle) {
-//         if (currentStart < breakStart) {
-//           segments.push({ start: currentStart, end: breakStart });
-//         }
-//         currentStart = Math.max(currentStart, breakEnd);
-//       }
-//     }
-    
-//     // Add final segment
-//     if (currentStart < endAngle) {
-//       segments.push({ start: currentStart, end: endAngle });
-//     }
-    
-//     return segments.length > 0 ? segments : [{ start: startAngle, end: endAngle }];
-//   };
-
-//   const availableSegments = calculateSegments();
-
-//   return (
-//     <div className="flex flex-col items-center">
-        
-//         <div className="flex items-center justify-center">
-//           <div className="relative h-56 w-56 rounded-full bg-slate-900 shadow-inner">
-//             <div className="absolute inset-4 rounded-full border border-indigo-400/30" />
-//             <div className="absolute inset-10 rounded-full border border-indigo-400/20" />
-
-//             {/* Time markers */}
-//             <span className="absolute left-1/2 top-2 -translate-x-1/2 text-[10px] text-indigo-300">9 AM</span>
-//             <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-indigo-300">12 PM</span>
-//             <span className="absolute bottom-2 left-1/2 -translate-x-1/2 text-[10px] text-indigo-300">5 PM</span>
-
-//             {/* Active arc (visual only) */}
-//             <div className="absolute inset-0 rounded-full bg-[conic-gradient(from_210deg,rgba(99,102,241,0.0),rgba(99,102,241,0.9),rgba(168,85,247,0.9),rgba(99,102,241,0.0))] opacity-80" />
-
-//             <div className="absolute inset-0 flex items-center justify-center">
-//               <div className="bg-slate-900 rounded-full w-24 h-24 flex flex-col items-center justify-center">
-//                     <div className="text-white text-sm font-medium">{startDisplay}</div>
-//                     <div className="text-slate-400 text-xs">-</div>
-//                     <div className="text-white text-sm font-medium">{endDisplay}</div>
-//               </div>
-//             </div>
-//           </div>
-//         </div>
-//       </div>
-//   );
-// };
-
-export default function AvailabilityTimesheet({ onSave, initialTimesheet }: AvailabilityTimesheetProps) {
+export default function AvailabilityTimesheet({
+  onSave,
+  onSaveFeedback,
+  initialTimesheet,
+}: AvailabilityTimesheetProps) {
   const [schedules, setSchedules] = useState<Record<DayName, DaySchedule>>(() => {
     const defaultSchedule: DaySchedule = {
       enabled: false,
@@ -274,6 +196,7 @@ export default function AvailabilityTimesheet({ onSave, initialTimesheet }: Avai
   const handleSave = async () => {
     setIsSaving(true);
     setSaveMessage(null);
+    onSaveFeedback?.(null);
 
     try {
       // Validate all schedules before saving
@@ -329,19 +252,34 @@ export default function AvailabilityTimesheet({ onSave, initialTimesheet }: Avai
         throw new Error(result.error || 'Failed to save availability timesheet');
       }
 
-      setSaveMessage({ type: 'success', text: 'Availability timesheet saved successfully!' });
-      setTimeout(() => setSaveMessage(null), 3000);
+      const successText = "Availability timesheet saved successfully!";
+      if (onSaveFeedback) {
+        onSaveFeedback({ type: "success", text: successText });
+        setTimeout(() => onSaveFeedback(null), 3000);
+      } else {
+        setSaveMessage({ type: "success", text: successText });
+        setTimeout(() => setSaveMessage(null), 3000);
+      }
 
       if (onSave) {
         onSave(schedules);
       }
     } catch (error) {
       console.error('Error saving availability timesheet:', error);
-      setSaveMessage({
-        type: 'error',
-        text: error instanceof Error ? error.message : 'Failed to save availability timesheet. Please try again.',
-      });
-      setTimeout(() => setSaveMessage(null), 5000);
+      const errText =
+        error instanceof Error
+          ? error.message
+          : "Failed to save availability timesheet. Please try again.";
+      if (onSaveFeedback) {
+        onSaveFeedback({ type: "error", text: errText });
+        setTimeout(() => onSaveFeedback(null), 5000);
+      } else {
+        setSaveMessage({
+          type: "error",
+          text: errText,
+        });
+        setTimeout(() => setSaveMessage(null), 5000);
+      }
     } finally {
       setIsSaving(false);
     }
@@ -964,7 +902,7 @@ export default function AvailabilityTimesheet({ onSave, initialTimesheet }: Avai
         })}
       </div>
 
-      {saveMessage && (
+      {saveMessage && !onSaveFeedback && (
         <div
           className={`mt-6 p-4 rounded-lg text-sm font-medium ${
             saveMessage.type === 'success'

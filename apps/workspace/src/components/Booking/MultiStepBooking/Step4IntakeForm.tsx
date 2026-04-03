@@ -365,24 +365,6 @@ export function Step4IntakeForm({
             <span className="text-sm text-gray-700">I agree to receive appointment and reminder via WhatsApp.</span>
           </label>
         </div>
-
-        {/* <div className='group'>
-          <label className="inline-flex items-center gap-3 cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={acceptTerms}
-              onChange={(e) => {
-                const checked = e.target.checked;
-                setAcceptTerms(checked);
-                if (checked) {
-                  setShowTermsModal(true);
-                }
-              }}
-              className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
-            />
-            <span className="text-sm text-gray-700">I agree to the terms and conditions.</span>
-          </label>
-        </div> */}
         
       </div>
 
@@ -434,16 +416,6 @@ export function Step4IntakeForm({
               </p>
             </div>
             <div className="flex justify-end gap-3">
-              {/* <button
-                type="button"
-                className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm hover:bg-gray-50"
-                onClick={() => {
-                  setShowTermsModal(false);
-                  setAcceptTerms(false);
-                }}
-              >
-                Cancel
-              </button> */}
               <button
                 type="button"
                 className="px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700"

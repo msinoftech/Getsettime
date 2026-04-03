@@ -42,7 +42,7 @@ export default function Topbar({ toggleSidebar, isSidebarOpen }: TopbarProps) {
   const [notificationsError, setNotificationsError] = useState<string | null>(null);
   const router = useRouter();
   const { user } = useAuth();
-  const { general, loading: loadingSettings } = useWorkspaceSettings();
+  const { general, loading: loadingSettings, workspaceProfessionLabel } = useWorkspaceSettings();
 
   const logoUrl = general.logoUrl || "/getsettime-logo.svg";
   const accountName = general.accountName || "GetSetTime";
@@ -221,6 +221,19 @@ export default function Topbar({ toggleSidebar, isSidebarOpen }: TopbarProps) {
             </div>
           </div>
         </div>
+
+        {!loadingSettings && workspaceProfessionLabel ? (
+          <div className="hidden sm:flex items-center max-w-[11rem] md:max-w-[16rem] shrink-0 px-2">
+            <div
+              className="text-sm truncate rounded-lg border-2 border-indigo-700/80 px-3 py-1.5 shadow-sm"
+              style={{ backgroundColor: "var(--color-indigo-600)" }}
+              title={workspaceProfessionLabel}
+            >
+              <span className="text-white/90 font-normal mr-1.5">Profession</span>
+              <span className="font-bold text-white">{workspaceProfessionLabel}</span>
+            </div>
+          </div>
+        ) : null}
 
         {/* Right section with user profile */}
         <div className="flex items-center space-x-2">

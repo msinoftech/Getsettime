@@ -1,7 +1,14 @@
 'use client';
 
 import React from 'react';
-import { getEventTypeDurationInner } from '@/src/utils/booking';
+import {
+  capitalize_booking_display_label,
+  getEventTypeDurationInner,
+} from '@/src/utils/booking';
+import {
+  get_service_provider_display_name,
+  type service_provider_display_source,
+} from '@/src/utils/service_provider_display';
 import { StatusBadge } from './StatusBadge';
 
 export interface DisplayBooking {
@@ -13,6 +20,7 @@ export interface DisplayBooking {
   /** Event type duration when provided by API */
   event_type_duration_minutes?: number | null;
   status: string;
+  service_provider_id: string | null;
   service_provider_name: string;
   created_at: string;
   is_viewed: boolean;
@@ -21,6 +29,7 @@ export interface DisplayBooking {
 
 interface BookingTableRowProps {
   displayBooking: DisplayBooking;
+  workspace_owner?: service_provider_display_source | null;
   onView: () => void;
   onEdit: () => void;
   onDelete: () => void;
@@ -28,12 +37,19 @@ interface BookingTableRowProps {
 
 export function BookingTableRow({
   displayBooking,
+  workspace_owner,
   onView,
   onEdit,
   onDelete,
 }: BookingTableRowProps) {
   const eventDurationInner = getEventTypeDurationInner(
     displayBooking.event_type_duration_minutes
+  );
+  const service_provider_display = capitalize_booking_display_label(
+    displayBooking.service_provider_id != null &&
+      displayBooking.service_provider_id !== ''
+      ? displayBooking.service_provider_name
+      : get_service_provider_display_name(null, workspace_owner ?? undefined)
   );
 
   return (
@@ -79,7 +95,7 @@ export function BookingTableRow({
         data-label="Service Provider"
       >
         <span className="text-sm text-slate-500">
-          {displayBooking.service_provider_name}
+          {service_provider_display}
         </span>
       </td>
       <td

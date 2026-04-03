@@ -68,7 +68,7 @@ export async function GET(
 
       supabase
         .from('workspaces')
-        .select('slug')
+        .select('slug, user_id')
         .eq('id', workspaceId)
         .single(),
     ]);
@@ -85,12 +85,38 @@ export async function GET(
         }
       : null;
 
+    const ownerUserId = workspaceResult.data?.user_id as string | null | undefined;
+    let workspaceOwner: {
+      id: string;
+      email: string;
+      raw_user_meta_data: { full_name?: string; name?: string };
+    } | null = null;
+    if (ownerUserId) {
+      try {
+        const { data: ownerData } = await supabase.auth.admin.getUserById(ownerUserId);
+        const user = ownerData?.user;
+        if (user) {
+          workspaceOwner = {
+            id: user.id,
+            email: user.email ?? '',
+            raw_user_meta_data: {
+              full_name: user.user_metadata?.full_name,
+              name: user.user_metadata?.name,
+            },
+          };
+        }
+      } catch {
+        workspaceOwner = null;
+      }
+    }
+
     const { id: _id, workspace_id: _wid, host_user_id: _huid, ...safeBooking } = booking;
 
     return NextResponse.json({
       booking: safeBooking,
       department,
       serviceProvider,
+      workspaceOwner,
       services: servicesResult.data ?? [],
       intakeFormSettings: settingsResult.data?.intake_form ?? null,
       workspace_slug: workspaceResult.data?.slug ?? null,

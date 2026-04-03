@@ -3,6 +3,7 @@
 import React from 'react';
 import { formatDate, formatTime } from '@/src/utils/date';
 import {
+  capitalize_booking_display_label,
   getServiceProviderName,
   getDepartmentName,
   getDisplayName,
@@ -10,6 +11,10 @@ import {
   getDisplayPhone,
   getEventTypeDurationInner,
 } from '@/src/utils/booking';
+import {
+  get_service_provider_display_name,
+  type service_provider_display_source,
+} from '@/src/utils/service_provider_display';
 import { StatusBadge } from './StatusBadge';
 import type {
   ServiceProvider,
@@ -26,6 +31,7 @@ interface BookingDetailsModalProps {
   services: Service[];
   departments: Department[];
   serviceProviders: ServiceProvider[];
+  workspace_owner?: service_provider_display_source | null;
 }
 
 export function BookingDetailsModal({
@@ -35,10 +41,29 @@ export function BookingDetailsModal({
   services,
   departments,
   serviceProviders,
+  workspace_owner,
 }: BookingDetailsModalProps) {
   const eventDurationInner = getEventTypeDurationInner(
     booking.event_types?.duration_minutes
   );
+
+  const has_service_provider_id =
+    booking.service_provider_id != null &&
+    booking.service_provider_id !== '';
+  const service_provider_display = capitalize_booking_display_label(
+    has_service_provider_id
+      ? getServiceProviderName(
+          booking.service_provider_id,
+          serviceProviders
+        )
+      : get_service_provider_display_name(null, workspace_owner ?? undefined)
+  );
+
+  const department_name = getDepartmentName(
+    booking.department_id,
+    departments
+  );
+  const show_department_row = department_name !== 'N/A';
 
   const intakeForm = booking.metadata?.intake_form as
     | Record<string, unknown>
@@ -172,23 +197,20 @@ export function BookingDetailsModal({
                   className="inline-flex px-3 py-1 rounded-full"
                 />
               </div>
-              <div className="flex flex-col sm:flex-row sm:items-center">
-                <span className="text-sm font-medium text-slate-600 w-32">
-                  Department:
-                </span>
-                <span className="text-slate-800">
-                  {getDepartmentName(booking.department_id, departments)}
-                </span>
-              </div>
+              {show_department_row && (
+                <div className="flex flex-col sm:flex-row sm:items-center">
+                  <span className="text-sm font-medium text-slate-600 w-32">
+                    Department:
+                  </span>
+                  <span className="text-slate-800">{department_name}</span>
+                </div>
+              )}
               <div className="flex flex-col sm:flex-row sm:items-center">
                 <span className="text-sm font-medium text-slate-600 w-32">
                   Service Provider:
                 </span>
                 <span className="text-slate-800">
-                  {getServiceProviderName(
-                    booking.service_provider_id,
-                    serviceProviders
-                  )}
+                  {service_provider_display}
                 </span>
               </div>
             </div>

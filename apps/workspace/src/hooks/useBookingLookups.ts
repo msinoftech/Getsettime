@@ -8,6 +8,7 @@ import type {
   ServiceProvider,
   Service,
 } from '@/src/types/booking-entities';
+import type { service_provider_display_source } from '@/src/utils/service_provider_display';
 
 interface TeamMember {
   id: string;
@@ -15,6 +16,7 @@ interface TeamMember {
   name?: string;
   role?: string;
   raw_user_meta_data?: { full_name?: string; name?: string };
+  is_workspace_owner?: boolean;
 }
 
 export function useEventTypes() {
@@ -118,8 +120,22 @@ export function useServices() {
   return { data, loading };
 }
 
+function team_member_to_owner_source(
+  m: TeamMember
+): service_provider_display_source {
+  return {
+    email: m.email ?? '',
+    raw_user_meta_data: {
+      full_name: m.raw_user_meta_data?.full_name,
+      name: m.name ?? m.raw_user_meta_data?.name,
+    },
+  };
+}
+
 export function useServiceProviders() {
   const [data, setData] = useState<ServiceProvider[]>([]);
+  const [workspaceOwner, setWorkspaceOwner] =
+    useState<service_provider_display_source | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -139,6 +155,12 @@ export function useServiceProviders() {
         if (cancelled) return;
         const json = res.ok ? await res.json() : null;
         const members = (json?.teamMembers ?? []) as TeamMember[];
+        const ownerMember = members.find((m) => m.is_workspace_owner === true);
+        if (!cancelled) {
+          setWorkspaceOwner(
+            ownerMember ? team_member_to_owner_source(ownerMember) : null
+          );
+        }
         const providers: ServiceProvider[] = members
           .filter((m) => m.role === 'service_provider')
           .map((m) => ({
@@ -151,7 +173,10 @@ export function useServiceProviders() {
           }));
         setData(providers);
       } catch {
-        if (!cancelled) setData([]);
+        if (!cancelled) {
+          setData([]);
+          setWorkspaceOwner(null);
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -161,5 +186,5 @@ export function useServiceProviders() {
     return () => { cancelled = true; };
   }, []);
 
-  return { data, loading };
+  return { data, workspaceOwner, loading };
 }

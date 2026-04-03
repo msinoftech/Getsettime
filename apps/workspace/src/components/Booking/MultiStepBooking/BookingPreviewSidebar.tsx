@@ -49,6 +49,7 @@ export function BookingPreviewSidebar({
   const accent = workspaceAccentColor || workspacePrimaryColor || DEFAULT_ACCENT_COLOR;
   const isExternalLogoUrl = workspaceLogoUrl?.startsWith('http://') || workspaceLogoUrl?.startsWith('https://');
   const hasSelection = selectedDepartment || selectedProvider || selectedType;
+  const showIntakeInPreview = step === 4 || step === 5;
 
   return (
     <div
@@ -81,14 +82,14 @@ export function BookingPreviewSidebar({
                 />
               ) : (
                 <img
-                  src="getsettime-icon.png"
+                  src="/getsettime-icon.png"
                   alt={workspaceName}
                   className="w-12 h-12 rounded-xl object-cover"
                 />
               )}
               <div>
                 <div className="text-sm text-gray-600">Schedule with</div>
-                <div className="text-lg font-semibold">{workspaceName}</div>
+                <div className="text-lg font-semibold capitalize">{workspaceName}</div>
               </div>
             </div>
           </div>
@@ -203,7 +204,7 @@ export function BookingPreviewSidebar({
                 </div>
               )}
 
-              {step === 4 && name && (
+              {showIntakeInPreview && name && (
                 <div className="details-box">
                   <div className="flex items-center gap-2 sm:gap-3">
                     <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-gradient-to-br from-green-100 to-green-200 flex items-center justify-center flex-shrink-0">
