@@ -15,6 +15,7 @@ interface TeamMember {
   name: string;
   role: string | null;
   departments: number[];
+  phone: string | null;
   created_at: string;
   email_confirmed_at: string | null;
   deactivated: boolean;
@@ -30,6 +31,7 @@ export default function TeamMembersPage() {
   const [memberFormData, setMemberFormData] = useState({
     name: "",
     email: "",
+    phone: "",
     password: "",
     role: "service_provider",
     departments: [] as number[],
@@ -105,6 +107,7 @@ export default function TeamMembersPage() {
     setMemberFormData({
       name: "",
       email: "",
+      phone: "",
       password: "",
       role: "service_provider",
       departments: [],
@@ -133,6 +136,7 @@ export default function TeamMembersPage() {
     setMemberFormData({
       name: member.name,
       email: member.email,
+      phone: member.phone ?? "",
       password: "", // Don't show password for editing
       role: member.role || "service_provider",
       departments: member.departments || [],
@@ -148,6 +152,7 @@ export default function TeamMembersPage() {
     setMemberFormData({
       name: "",
       email: "",
+      phone: "",
       password: "",
       role: "service_provider",
       departments: [],
@@ -207,12 +212,14 @@ export default function TeamMembersPage() {
             id: editingMember.id,
             name: memberFormData.name,
             email: memberFormData.email,
+            phone: memberFormData.phone,
             role: memberFormData.role,
             departments: memberFormData.departments,
           }
         : {
             name: memberFormData.name,
             email: memberFormData.email,
+            phone: memberFormData.phone,
             password: memberFormData.password,
             role: memberFormData.role,
             departments: memberFormData.departments,
@@ -452,6 +459,9 @@ export default function TeamMembersPage() {
                           )}
                         </h4>
                         <p className="text-sm text-slate-600">{member.email}</p>
+                        {member.phone ? (
+                          <p className="text-sm text-slate-600">{member.phone}</p>
+                        ) : null}
                       </div>
                     </div>
                     <div className="mt-2 flex flex-wrap gap-2 items-center">
@@ -589,6 +599,22 @@ export default function TeamMembersPage() {
                     <p className="mt-1 text-xs text-slate-500">Password must be at least 6 characters long</p>
                   </div>
                 )}
+
+                <div>
+                  <label className="block text-sm font-medium mb-2 text-slate-700">
+                    Phone number
+                  </label>
+                  <input
+                    type="tel"
+                    value={memberFormData.phone}
+                    onChange={(e) =>
+                      setMemberFormData({ ...memberFormData, phone: e.target.value })
+                    }
+                    placeholder="e.g., +1 (555) 000-0000"
+                    className="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition"
+                    autoComplete="tel"
+                  />
+                </div>
 
                 <div>
                   <label className="block text-sm font-medium mb-2 text-slate-700">

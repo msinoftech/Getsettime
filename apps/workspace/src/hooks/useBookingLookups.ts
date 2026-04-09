@@ -15,7 +15,8 @@ interface TeamMember {
   email: string;
   name?: string;
   role?: string;
-  raw_user_meta_data?: { full_name?: string; name?: string };
+  phone?: string | null;
+  raw_user_meta_data?: { full_name?: string; name?: string; phone?: string };
   is_workspace_owner?: boolean;
 }
 
@@ -123,11 +124,19 @@ export function useServices() {
 function team_member_to_owner_source(
   m: TeamMember
 ): service_provider_display_source {
+  const phoneFromMeta = m.raw_user_meta_data?.phone;
+  const phone =
+    typeof m.phone === 'string' && m.phone.trim() !== ''
+      ? m.phone.trim()
+      : typeof phoneFromMeta === 'string' && phoneFromMeta.trim() !== ''
+        ? phoneFromMeta.trim()
+        : undefined;
   return {
     email: m.email ?? '',
     raw_user_meta_data: {
       full_name: m.raw_user_meta_data?.full_name,
       name: m.name ?? m.raw_user_meta_data?.name,
+      phone,
     },
   };
 }
@@ -163,14 +172,25 @@ export function useServiceProviders() {
         }
         const providers: ServiceProvider[] = members
           .filter((m) => m.role === 'service_provider')
-          .map((m) => ({
-            id: m.id,
-            email: m.email ?? '',
-            raw_user_meta_data: {
-              full_name: m.raw_user_meta_data?.full_name,
-              name: m.name,
-            },
-          }));
+          .map((m) => {
+            const phoneFromMeta = m.raw_user_meta_data?.phone;
+            const phone =
+              typeof m.phone === 'string' && m.phone.trim() !== ''
+                ? m.phone.trim()
+                : typeof phoneFromMeta === 'string' &&
+                    phoneFromMeta.trim() !== ''
+                  ? phoneFromMeta.trim()
+                  : undefined;
+            return {
+              id: m.id,
+              email: m.email ?? '',
+              raw_user_meta_data: {
+                full_name: m.raw_user_meta_data?.full_name,
+                name: m.name,
+                phone,
+              },
+            };
+          });
         setData(providers);
       } catch {
         if (!cancelled) {

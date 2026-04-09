@@ -89,17 +89,26 @@ export async function GET(req: NextRequest) {
                 String(userWorkspaceId) === String(workspaceIdResolved));
         return matches;
       })
-      .map(u => ({
-        id: u.id,
-        email: u.email,
-        name: u.user_metadata?.name || u.email?.split('@')[0] || 'Unknown',
-        role: u.user_metadata?.role || null,
-        departments: u.user_metadata?.departments || [],
-        created_at: u.created_at,
-        email_confirmed_at: u.email_confirmed_at,
-        deactivated: u.user_metadata?.deactivated || false,
-        is_workspace_owner: u.user_metadata?.is_workspace_owner === true,
-      }));
+      .map((u) => {
+        const meta = u.user_metadata as Record<string, unknown> | undefined;
+        const phoneRaw = meta?.phone;
+        const phone =
+          typeof phoneRaw === 'string' && phoneRaw.trim() !== ''
+            ? phoneRaw
+            : null;
+        return {
+          id: u.id,
+          email: u.email,
+          name: u.user_metadata?.name || u.email?.split('@')[0] || 'Unknown',
+          role: u.user_metadata?.role || null,
+          departments: u.user_metadata?.departments || [],
+          phone,
+          created_at: u.created_at,
+          email_confirmed_at: u.email_confirmed_at,
+          deactivated: u.user_metadata?.deactivated || false,
+          is_workspace_owner: u.user_metadata?.is_workspace_owner === true,
+        };
+      });
 
     return NextResponse.json({ teamMembers });
   } catch (err: unknown) {

@@ -4,6 +4,10 @@ import { createClient } from '@supabase/supabase-js';
 import { findOrCreateContact } from '@/lib/contact-linking';
 import { getLocalTimePartsInTimezone } from '@/lib/date-timezone';
 import { appendActivityLog } from '@/lib/activity-log';
+import {
+  admin_whatsapp_phones_for_booking,
+  resolve_provider_notification_contact,
+} from '@/lib/booking_service_provider_phone';
 
 type DayName = "Sun" | "Mon" | "Tue" | "Wed" | "Thu" | "Fri" | "Sat";
 
@@ -227,6 +231,22 @@ export async function POST(req: NextRequest) {
       },
     });
 
+    let cachedServiceRoleClient: ReturnType<typeof createClient> | null | undefined;
+    const getServiceRoleClient = (): ReturnType<typeof createClient> | null => {
+      if (cachedServiceRoleClient !== undefined) {
+        return cachedServiceRoleClient;
+      }
+      const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+      if (!serviceKey) {
+        cachedServiceRoleClient = null;
+        return null;
+      }
+      cachedServiceRoleClient = createClient(supabaseUrl, serviceKey, {
+        auth: { autoRefreshToken: false, persistSession: false },
+      });
+      return cachedServiceRoleClient;
+    };
+
     const { data: { user }, error: authError } = await supabase.auth.getUser();
     if (authError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -445,18 +465,23 @@ export async function POST(req: NextRequest) {
     let departmentName: string | undefined;
     let eventTypeName = 'Appointment';
     let durationMinutes = 30;
+    let arriveEarlyMin = 10;
+    let arriveEarlyMax = 15;
 
     try {
       if (event_type_id) {
         const { data: eventTypeData } = await supabase
           .from('event_types')
-          .select('title, duration_minutes')
+          .select('title, duration_minutes, buffer_before, buffer_after')
           .eq('id', event_type_id)
           .single();
 
         if (eventTypeData) {
           eventTypeName = eventTypeData.title || eventTypeName;
           durationMinutes = eventTypeData.duration_minutes || durationMinutes;
+          arriveEarlyMin = Number(eventTypeData.buffer_before ?? arriveEarlyMin);
+          arriveEarlyMax = Number(eventTypeData.buffer_after ?? arriveEarlyMax);
+
         }
       }
     } catch (eventTypeErr) {
@@ -477,25 +502,18 @@ export async function POST(req: NextRequest) {
     }
 
     try {
-      if (service_provider_id) {
-        const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-        if (!supabaseServiceRoleKey) {
-          console.warn('Service role key not configured, cannot fetch provider details for notifications');
-        } else {
-          const adminClient = createClient(supabaseUrl, supabaseServiceRoleKey, {
-            auth: { autoRefreshToken: false, persistSession: false },
-          });
-
-          const { data: { user: providerUser }, error: providerError } =
-            await adminClient.auth.admin.getUserById(service_provider_id);
-
-          if (providerError) {
-            console.error('Error fetching service provider:', providerError);
-          } else if (providerUser) {
-            providerEmail = providerUser.email || undefined;
-            providerName = providerUser.user_metadata?.name || providerUser.email?.split('@')[0] || 'Service Provider';
-          }
-        }
+      const adminClient = getServiceRoleClient();
+      if (!adminClient) {
+        console.warn('Service role key not configured, cannot fetch provider details for notifications');
+      } else {
+        const resolved = await resolve_provider_notification_contact(
+          supabase,
+          adminClient,
+          String(workspaceId),
+          service_provider_id || null
+        );
+        providerEmail = resolved.email;
+        providerName = resolved.provider_name;
       }
     } catch (providerErr) {
       console.error('Error resolving provider details:', providerErr);
@@ -535,6 +553,29 @@ export async function POST(req: NextRequest) {
     // metadata.whatsapp_opt_in controls messages to the user (invitee),
     // notifications.whatsapp (whatsappEnabled) controls messages to admins.
     const whatsappEnabled = configData?.settings?.notifications?.whatsapp === true;
+
+    let admin_whatsapp_phones: string[] = [];
+    if (whatsappEnabled && data?.id && workspaceId) {
+      const adminClient = getServiceRoleClient();
+      if (adminClient) {
+        try {
+          admin_whatsapp_phones = await admin_whatsapp_phones_for_booking(
+            supabase,
+            data.id,
+            {
+              workspace_id: String(workspaceId),
+              admin_supabase: adminClient,
+            }
+          );
+        } catch (resolveAdminPhoneErr) {
+          console.warn(
+            'Could not resolve host phone for WhatsApp admin notification:',
+            resolveAdminPhoneErr
+          );
+        }
+      }
+    }
+
     try {
       if (invitee_phone && invitee_phone.trim() && (metadata?.whatsapp_opt_in || whatsappEnabled)) {
         const origin = new URL(req.url).origin;
@@ -568,8 +609,18 @@ export async function POST(req: NextRequest) {
             email: invitee_email?.trim() || null,
             phone: invitee_phone?.trim(),
             message,
+            service: eventTypeName,
+            ...(departmentName?.trim() ? { department: departmentName.trim() } : {}),
+            ...(providerName?.trim() ? { provider: providerName.trim() } : {}),
+            start: start_at,
+            end: end_at || start_at,
+            note: metadata?.notes ? String(metadata.notes) : '',
+            arrive_early_min: arriveEarlyMin,
+            arrive_early_max: arriveEarlyMax,
+            booking_reference: data?.public_code || data?.id || '',
             send_to_user: Boolean(metadata?.whatsapp_opt_in),
             send_to_admin: whatsappEnabled,
+            admin_phone: admin_whatsapp_phones,
           }),
         });
       }
@@ -770,20 +821,18 @@ export async function PATCH(req: NextRequest) {
         }
 
         const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-        if (data.service_provider_id && serviceRoleKey) {
+        if (serviceRoleKey) {
           const adminClient = createClient(supabaseUrl, serviceRoleKey, {
             auth: { autoRefreshToken: false, persistSession: false },
           });
-          const { data: providerUserData, error: providerErr } =
-            await adminClient.auth.admin.getUserById(data.service_provider_id);
-          if (!providerErr && providerUserData?.user) {
-            const u = providerUserData.user;
-            providerEmail = u.email || undefined;
-            providerName =
-              u.user_metadata?.name ||
-              u.email?.split('@')[0] ||
-              'Service Provider';
-          }
+          const resolved = await resolve_provider_notification_contact(
+            supabase,
+            adminClient,
+            String(workspaceId),
+            data.service_provider_id || null
+          );
+          providerEmail = resolved.email;
+          providerName = resolved.provider_name;
         }
 
         const prevStart = existingRow.start_at ?? undefined;

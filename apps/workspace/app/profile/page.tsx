@@ -56,6 +56,14 @@ export default function ProfileCreative({ }) {
     setShowPublic(metadata.show_public_profile !== false);
   }, [user]);
 
+  const FEEDBACK_AUTO_DISMISS_MS = 5000;
+
+  useEffect(() => {
+    if (!feedback) return;
+    const id = window.setTimeout(() => setFeedback(null), FEEDBACK_AUTO_DISMISS_MS);
+    return () => window.clearTimeout(id);
+  }, [feedback]);
+
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
@@ -354,7 +362,21 @@ export default function ProfileCreative({ }) {
                 </div>
 
                 {/* Action Buttons */}
-                <div className="flex justify-end gap-4">
+                <div className="flex flex-wrap items-center justify-between gap-4">
+                  <div className="min-w-0 flex-1 basis-full sm:basis-0 sm:max-w-md" role="status" aria-live="polite">
+                    {feedback ? (
+                      <p
+                        className={`rounded-xl border px-4 py-3 text-sm font-medium shadow-sm ${
+                          feedback.type === "success"
+                            ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                            : "border-red-200 bg-red-50 text-red-800"
+                        }`}
+                      >
+                        {feedback.message}
+                      </p>
+                    ) : null}
+                  </div>
+                  <div className="flex shrink-0 justify-end gap-4">
                     <button
                       onClick={handleSaveChanges}
                       disabled={isSaving}
@@ -369,16 +391,8 @@ export default function ProfileCreative({ }) {
                     >
                       Cancel
                     </button>
+                  </div>
                 </div>
-                {feedback && (
-                  <p
-                    className={`text-sm ${
-                      feedback.type === "success" ? "text-emerald-600" : "text-red-600"
-                    }`}
-                  >
-                    {feedback.message}
-                  </p>
-                )}
             </div>
         </div>
     </section>

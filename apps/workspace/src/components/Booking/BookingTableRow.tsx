@@ -45,12 +45,11 @@ export function BookingTableRow({
   const eventDurationInner = getEventTypeDurationInner(
     displayBooking.event_type_duration_minutes
   );
-  const service_provider_display = capitalize_booking_display_label(
+  const service_provider_display =
     displayBooking.service_provider_id != null &&
-      displayBooking.service_provider_id !== ''
-      ? displayBooking.service_provider_name
-      : get_service_provider_display_name(null, workspace_owner ?? undefined)
-  );
+    displayBooking.service_provider_id !== ''
+      ? capitalize_booking_display_label(displayBooking.service_provider_name)
+      : get_service_provider_display_name(null, workspace_owner ?? undefined);
 
   return (
     <tr className="bg-white border border-slate-200 hover:bg-slate-50 transition-colors">

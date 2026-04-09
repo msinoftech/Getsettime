@@ -13,6 +13,7 @@ import {
 } from '@/src/utils/booking';
 import {
   get_service_provider_display_name,
+  get_service_provider_display_phone,
   type service_provider_display_source,
 } from '@/src/utils/service_provider_display';
 import { StatusBadge } from './StatusBadge';
@@ -50,14 +51,30 @@ export function BookingDetailsModal({
   const has_service_provider_id =
     booking.service_provider_id != null &&
     booking.service_provider_id !== '';
-  const service_provider_display = capitalize_booking_display_label(
-    has_service_provider_id
-      ? getServiceProviderName(
+  const service_provider_display = has_service_provider_id
+    ? capitalize_booking_display_label(
+        getServiceProviderName(
           booking.service_provider_id,
           serviceProviders
         )
-      : get_service_provider_display_name(null, workspace_owner ?? undefined)
-  );
+      )
+    : get_service_provider_display_name(null, workspace_owner ?? undefined);
+
+  const assigned_service_provider = has_service_provider_id
+    ? serviceProviders.find((sp) => sp.id === booking.service_provider_id) ??
+      null
+    : null;
+  const host_contact_phone = has_service_provider_id
+    ? get_service_provider_display_phone(
+        assigned_service_provider,
+        undefined,
+        'N/A'
+      )
+    : get_service_provider_display_phone(
+        null,
+        workspace_owner ?? undefined,
+        'N/A'
+      );
 
   const department_name = getDepartmentName(
     booking.department_id,
@@ -212,6 +229,12 @@ export function BookingDetailsModal({
                 <span className="text-slate-800">
                   {service_provider_display}
                 </span>
+              </div>
+              <div className="flex flex-col sm:flex-row sm:items-center">
+                <span className="text-sm font-medium text-slate-600 w-32">
+                  Host contact phone:
+                </span>
+                <span className="text-slate-800">{host_contact_phone}</span>
               </div>
             </div>
           </div>

@@ -2,6 +2,10 @@
 
 import React, { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import {
+  get_service_provider_display_name,
+  type service_provider_display_source,
+} from "@/src/utils/service_provider_display";
 
 interface Department {
   id: string;
@@ -34,6 +38,8 @@ export default function EmergencyBookingForm() {
   const [eventTypeIdMaxDuration, setEventTypeIdMaxDuration] = useState<string | null>(null);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [serviceProviders, setServiceProviders] = useState<ServiceProvider[]>([]);
+  const [workspaceOwnerSource, setWorkspaceOwnerSource] =
+    useState<service_provider_display_source | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadingDepts, setLoadingDepts] = useState(true);
   const [loadingProviders, setLoadingProviders] = useState(true);
@@ -97,17 +103,42 @@ export default function EmergencyBookingForm() {
         });
         if (res.ok) {
           const json = await res.json();
-          const providers = (json.teamMembers || [])
-            .filter((m: { role: string }) => m.role === "service_provider")
-            .map((m: { id: string; email: string; name?: string }) => ({
+          const members = (json.teamMembers || []) as Array<{
+            id: string;
+            email: string;
+            name?: string;
+            role: string;
+            is_workspace_owner?: boolean;
+            raw_user_meta_data?: { full_name?: string; name?: string };
+          }>;
+          const ownerMember = members.find((m) => m.is_workspace_owner === true);
+          setWorkspaceOwnerSource(
+            ownerMember
+              ? {
+                  email: ownerMember.email ?? "",
+                  raw_user_meta_data: {
+                    full_name: ownerMember.raw_user_meta_data?.full_name,
+                    name:
+                      ownerMember.name ??
+                      ownerMember.raw_user_meta_data?.name,
+                  },
+                }
+              : null
+          );
+          const providers = members
+            .filter((m) => m.role === "service_provider")
+            .map((m) => ({
               id: m.id,
               email: m.email,
               raw_user_meta_data: { name: m.name },
             }));
           setServiceProviders(providers);
+        } else {
+          setWorkspaceOwnerSource(null);
         }
       } catch (err) {
         console.error("Error fetching service providers:", err);
+        setWorkspaceOwnerSource(null);
       } finally {
         setLoadingProviders(false);
       }
@@ -325,7 +356,15 @@ export default function EmergencyBookingForm() {
                   className={selectBase}
                   disabled={loadingProviders}
                 >
-                  <option value="">Select provider</option>
+                  <option value="">
+                    {serviceProviders.length === 0
+                      ? get_service_provider_display_name(
+                          null,
+                          workspaceOwnerSource ?? undefined,
+                          "Workspace admin"
+                        )
+                      : "Select provider"}
+                  </option>
                   {serviceProviders.map((p) => (
                     <option key={p.id} value={p.id}>
                       {providerLabel(p)}

@@ -18,6 +18,9 @@ type BookingPreviewData = Omit<Booking, 'id' | 'workspace_id' | 'host_user_id'>;
 
 const HIDDEN_ACTION_STATUSES = ['cancelled', 'completed'];
 
+/** URL-encoded `{{1}}` sometimes pasted into booking links by mistake. */
+const BOOKING_CODE_PLACEHOLDER = '%7B%7B1%7D%7D';
+
 const PAGE_SHELL_CLASS =
   'min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(124,58,237,0.12),_transparent_28%),radial-gradient(circle_at_top_right,_rgba(14,165,233,0.12),_transparent_24%),linear-gradient(180deg,_#f8fafc_0%,_#eef2ff_100%)]';
 
@@ -127,6 +130,16 @@ export default function BookingPreviewPage() {
 
   const fetchBooking = useCallback(async () => {
     if (!code) return;
+    if (code.includes(BOOKING_CODE_PLACEHOLDER)) {
+      const cleanCode = code.replaceAll(BOOKING_CODE_PLACEHOLDER, '');
+      if (cleanCode) {
+        router.replace(`/booking-preview/${cleanCode}`);
+        return;
+      }
+      setNotFound(true);
+      setLoading(false);
+      return;
+    }
     try {
       const res = await fetch(`/api/booking-preview/${code}`);
       if (res.status === 404) {
@@ -144,7 +157,7 @@ export default function BookingPreviewPage() {
     } finally {
       setLoading(false);
     }
-  }, [code]);
+  }, [code, router]);
 
   useEffect(() => {
     fetchBooking();
@@ -328,8 +341,9 @@ function BookingPreviewContent({
   const departmentName = has_department
     ? capitalize_booking_display_label(department?.name?.trim() ?? '')
     : '';
-  const providerDisplayName = capitalize_booking_display_label(
-    get_service_provider_display_name(serviceProvider, workspaceOwner)
+  const providerDisplayName = get_service_provider_display_name(
+    serviceProvider,
+    workspaceOwner
   );
 
   const eventTypeDisplay =

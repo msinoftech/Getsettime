@@ -4,6 +4,11 @@ import { createSupabaseServerClient } from '@app/db';
 import { verifyOTP, isOTPVerified } from '@/lib/otp-service';
 import { findOrCreateContact } from '@/lib/contact-linking';
 import { getLocalTimePartsInTimezone } from '@/lib/date-timezone';
+import {
+  admin_whatsapp_phones_for_booking,
+  resolve_provider_notification_contact,
+  sole_workspace_department_display_name,
+} from '@/lib/booking_service_provider_phone';
 
 type DayName = "Sun" | "Mon" | "Tue" | "Wed" | "Thu" | "Fri" | "Sat";
 
@@ -459,28 +464,36 @@ export async function POST(req: NextRequest) {
       console.error('Error fetching department details:', deptErr);
     }
 
+    if (!departmentName?.trim()) {
+      try {
+        const sole = await sole_workspace_department_display_name(
+          supabase,
+          workspace_id
+        );
+        if (sole) departmentName = sole;
+      } catch (soleDeptErr) {
+        console.error('Error resolving sole department name:', soleDeptErr);
+      }
+    }
+
     try {
-      if (service_provider_id) {
-        const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-        if (!supabaseServiceRoleKey) {
-          console.warn('Service role key not configured, cannot fetch provider details for notifications');
-        } else {
-          const { createClient } = await import('@supabase/supabase-js');
-          const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
-          const adminClient = createClient(supabaseUrl, supabaseServiceRoleKey, {
-            auth: { autoRefreshToken: false, persistSession: false },
-          });
-
-          const { data: { user: providerUser }, error: providerError } =
-            await adminClient.auth.admin.getUserById(service_provider_id);
-
-          if (providerError) {
-            console.error('Error fetching service provider:', providerError);
-          } else if (providerUser) {
-            providerEmail = providerUser.email || undefined;
-            providerName = providerUser.user_metadata?.name || providerUser.email?.split('@')[0] || 'Service Provider';
-          }
-        }
+      const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+      if (!supabaseServiceRoleKey) {
+        console.warn('Service role key not configured, cannot fetch provider details for notifications');
+      } else {
+        const { createClient } = await import('@supabase/supabase-js');
+        const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+        const adminClient = createClient(supabaseUrl, supabaseServiceRoleKey, {
+          auth: { autoRefreshToken: false, persistSession: false },
+        });
+        const resolved = await resolve_provider_notification_contact(
+          supabase,
+          adminClient,
+          String(workspace_id),
+          service_provider_id || null
+        );
+        providerEmail = resolved.email;
+        providerName = resolved.provider_name;
       }
     } catch (providerErr) {
       console.error('Error resolving provider details:', providerErr);
@@ -521,6 +534,23 @@ export async function POST(req: NextRequest) {
     // whatsappEnabled (notifications.whatsapp) controls messages to admins.
     const whatsappOptIn = Boolean(intake_form && (intake_form as any).whatsapp_opt_in);
     const whatsappEnabled = configData?.settings?.notifications?.whatsapp === true;
+
+    let admin_whatsapp_phones: string[] = [];
+    if (whatsappEnabled && data?.id) {
+      try {
+        admin_whatsapp_phones = await admin_whatsapp_phones_for_booking(
+          supabase,
+          data.id,
+          { workspace_id: String(workspace_id) }
+        );
+      } catch (resolveAdminPhoneErr) {
+        console.warn(
+          'Could not resolve host phone for WhatsApp admin notification (embed booking):',
+          resolveAdminPhoneErr
+        );
+      }
+    }
+
     try {
       if (invitee_phone && invitee_phone.trim() && (whatsappOptIn || whatsappEnabled)) {
         const origin = new URL(req.url).origin;
@@ -556,8 +586,18 @@ export async function POST(req: NextRequest) {
             email: invitee_email?.trim() || null,
             phone: invitee_phone?.trim(),
             message,
+            service: eventTypeName,
+            ...(departmentName?.trim() ? { department: departmentName.trim() } : {}),
+            ...(providerName?.trim() ? { provider: providerName.trim() } : {}),
+            start: start_at,
+            end: end_at || start_at,
+            note: metadataPayload.notes ? String(metadataPayload.notes) : '',
+            arrive_early_min: 10,
+            arrive_early_max: 15,
+            booking_reference: data?.public_code || data?.id || '',
             send_to_user: whatsappOptIn,
             send_to_admin: whatsappEnabled,
+            admin_phone: admin_whatsapp_phones,
           }),
         }).catch((whatsappError) => {
           console.error('Error sending WhatsApp notification:', whatsappError);

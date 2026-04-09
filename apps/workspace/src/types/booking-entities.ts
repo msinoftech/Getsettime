@@ -15,6 +15,7 @@ export type ServiceProvider = {
   raw_user_meta_data?: {
     full_name?: string;
     name?: string;
+    phone?: string;
   };
 };
 

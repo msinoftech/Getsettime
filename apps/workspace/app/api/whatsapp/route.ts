@@ -3,6 +3,20 @@ import { sendWhatsAppTemplate } from "@workspace/lib/whatsapp";
 import nodemailer from "nodemailer";
 import type { WhatsAppTemplateComponent } from "@workspace/lib/types";
 
+function normalize_admin_phones(admin_phone: unknown): string[] {
+  if (admin_phone == null) return [];
+  if (Array.isArray(admin_phone)) {
+    const flat = admin_phone.flat(Infinity) as unknown[];
+    return flat
+      .filter((x): x is string => typeof x === "string" && x.trim() !== "")
+      .map((s) => s.trim());
+  }
+  if (typeof admin_phone === "string" && admin_phone.trim() !== "") {
+    return [admin_phone.trim()];
+  }
+  return [];
+}
+
 export async function POST(req: Request) {
   try {
     const {
@@ -10,10 +24,20 @@ export async function POST(req: Request) {
       email,
       phone,
       message,
+      service,
+      department,
+      provider,
+      start,
+      end,
+      note,
+      arrive_early_min,
+      arrive_early_max,
+      booking_reference,
       // Optional flags to control which WhatsApp messages are sent.
       // Default to true for backward compatibility with existing callers.
       send_to_user = true,
       send_to_admin = true,
+      admin_phone,
     } = await req.json();
 
     if (!phone) {
@@ -93,7 +117,7 @@ export async function POST(req: Request) {
     let adminWhatsappResults: any[] = [];
 
     // Template configuration
-    const userTemplateName = "booking_information";
+    const userTemplateName = "booking_confirmation";
     const adminTemplateName = "booking_received";
     // WhatsApp language codes: Use "en" (not "en_US") as per your example
     const languageCode = "en";
@@ -102,20 +126,49 @@ export async function POST(req: Request) {
     const firstName = name.split(" ")[0] || name;
     const fullName = name;
 
+    const formatDateTimeForTemplate = (value: unknown) => {
+      if (!value) return "Not provided";
+      const date = new Date(String(value));
+      if (Number.isNaN(date.getTime())) return String(value);
+      return date.toLocaleString("en-US", {
+        weekday: "long",
+        month: "long",
+        day: "numeric",
+        year: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+        hour12: true,
+      });
+    };
+    const formattedStart = formatDateTimeForTemplate(start);
+    const formattedEnd = formatDateTimeForTemplate(end);
+
     // User and admin templates do not share the same placeholder count.
     const userTemplateParams = [
       firstName || "N/A",
       fullName || "N/A",
       email || "Not provided",
       phone || "N/A",
-      message || "No message"
+      service,
+      department,
+      provider,
+      formattedStart,
+      formattedEnd,
+      note,
+      String(arrive_early_min ?? 10),
+      String(arrive_early_max ?? 15)
     ];
 
     const adminTemplateParams = [
       fullName || "N/A",
       email || "Not provided",
       phone || "N/A",
-      message || "No message"
+      service,
+      department,
+      provider,
+      formattedStart,
+      formattedEnd,
+      note
     ];
 
     // ================= SEND TO USER =================
@@ -128,6 +181,17 @@ export async function POST(req: Request) {
             type: "text" as const,
             text: String(param).substring(0, 32768) // WhatsApp limit per parameter
           }))
+        },
+        {
+          type: "button",
+          sub_type: "url",
+          index: "0",
+          parameters: [
+            {
+              type: "text",
+              text: String(booking_reference || "booking")
+            }
+          ]
         }
       ];
 
@@ -136,7 +200,8 @@ export async function POST(req: Request) {
         template: userTemplateName,
         language: languageCode,
         parameters: userTemplateParams,
-        parametersCount: userTemplateParams.length
+        parametersCount: userTemplateParams.length,
+        bookingReference: booking_reference
       });
 
       try {
@@ -164,9 +229,14 @@ export async function POST(req: Request) {
     }
 
     // ================= SEND TO ADMINS =================
-    const adminNumbers = ["919463303891"];
+    const adminNumbers = normalize_admin_phones(admin_phone);
+    console.log("Sending WhatsApp template to admins:", {
+      adminCount: adminNumbers.length,
+      send_to_admin: send_to_admin,
+      adminNumbers: normalize_admin_phones(admin_phone)
+    });
 
-    if (adminNumbers.length > 0 && send_to_admin) {
+    if (send_to_admin && adminNumbers.length > 0) {
       // `booking_received` expects 4 body parameters, not the user's 5.
       const adminTemplateComponents: WhatsAppTemplateComponent[] = [
         {
@@ -218,9 +288,11 @@ export async function POST(req: Request) {
         adminWhatsappError = adminWhatsappErr.message || "Unknown admin WhatsApp error";
         console.error("Admin WhatsApp sending error:", adminWhatsappErr);
       }
-    } else {
-      console.warn("ADMIN_WHATSAPP_NUMBERS not configured, skipping admin notifications");
-      adminWhatsappError = "Admin numbers not configured";
+    } else if (send_to_admin && adminNumbers.length === 0) {
+      console.warn(
+        "Admin WhatsApp notifications enabled but no admin_phone numbers were provided; skipping admin send"
+      );
+      adminWhatsappError = "No admin recipient numbers";
     }
 
     // Combined WhatsApp status

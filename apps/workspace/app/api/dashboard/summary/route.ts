@@ -106,6 +106,13 @@ export async function GET(req: NextRequest) {
       .select('*', { count: 'exact', head: true })
       .eq('workspace_id', workspaceId);
 
+    const nowIso = new Date().toISOString();
+    const upcomingPromise = supabase
+      .from('bookings')
+      .select('*', { count: 'exact', head: true })
+      .eq('workspace_id', workspaceId)
+      .gt('start_at', nowIso);
+
     const servicesPromise = supabase
       .from('services')
       .select('id, name, departments(name)')
@@ -137,6 +144,7 @@ export async function GET(req: NextRequest) {
       nullStatusResult,
       otherStatusResult,
       totalResult,
+      upcomingResult,
       servicesResult,
       teamMembersResult,
     ] = await Promise.all([
@@ -145,6 +153,7 @@ export async function GET(req: NextRequest) {
       nullStatusPromise,
       otherStatusPromise,
       totalPromise,
+      upcomingPromise,
       servicesPromise,
       teamCountPromise,
     ]);
@@ -178,6 +187,10 @@ export async function GET(req: NextRequest) {
     if (totalResult.error) {
       console.error('Dashboard summary total:', totalResult.error);
       return NextResponse.json({ error: totalResult.error.message }, { status: 500 });
+    }
+    if (upcomingResult.error) {
+      console.error('Dashboard summary upcoming:', upcomingResult.error);
+      return NextResponse.json({ error: upcomingResult.error.message }, { status: 500 });
     }
     if (servicesResult.error) {
       console.error('Dashboard summary services:', servicesResult.error);
@@ -216,6 +229,7 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({
       bookings_total: totalResult.count ?? 0,
+      upcoming_bookings_count: upcomingResult.count ?? 0,
       bookings_by_day,
       bookings_by_status,
       team_members_count,

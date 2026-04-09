@@ -198,7 +198,7 @@ export async function sendWhatsAppTemplate(
       video?: { link: string };
     }>;
     sub_type?: "url" | "quick_reply";
-    index?: number;
+    index?: number | string;
   }>
 ) {
   // Validate and format phone number

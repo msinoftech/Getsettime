@@ -64,7 +64,9 @@ const Dashboard: React.FC = () => {
           <div className="flex items-center justify-between">
             <div>
               <h2 className="m-0 text-base font-semibold text-slate-700">Upcoming Events</h2>
-              <p className="mt-1 text-4xl font-extrabold text-orange-500">5</p>
+              <p className="mt-1 text-4xl font-extrabold text-orange-500">
+                {loading ? '...' : counts.upcomingBookings}
+              </p>
             </div>
             <div className="w-12 h-12 rounded-full bg-orange-100 flex items-center justify-center shadow-inner">
               <svg className="w-6 h-6 text-orange-500" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">

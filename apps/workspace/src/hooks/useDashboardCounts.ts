@@ -12,6 +12,7 @@ export interface DashboardServiceRow {
 
 export interface DashboardCounts {
   bookings: number;
+  upcomingBookings: number;
   teamMembers: number;
   services: number;
   servicesRows: DashboardServiceRow[];
@@ -19,6 +20,7 @@ export interface DashboardCounts {
 
 const INITIAL_COUNTS: DashboardCounts = {
   bookings: 0,
+  upcomingBookings: 0,
   teamMembers: 0,
   services: 0,
   servicesRows: [],
@@ -123,6 +125,7 @@ export function useDashboardCounts(user: { id?: string } | null) {
         setState({
           counts: {
             bookings: data.bookings_total,
+            upcomingBookings: data.upcoming_bookings_count ?? 0,
             teamMembers: data.team_members_count ?? 0,
             services: data.services.length,
             servicesRows,

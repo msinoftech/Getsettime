@@ -98,17 +98,26 @@ export async function GET(req: NextRequest) {
 
     const teamMembers = users
       .filter((u) => user_belongs_to_workspace(u, workspaceId))
-      .map(u => ({
-        id: u.id,
-        email: u.email,
-        name: u.user_metadata?.name || u.email?.split('@')[0] || 'Unknown',
-        role: u.user_metadata?.role || null,
-        departments: u.user_metadata?.departments || [],
-        created_at: u.created_at,
-        email_confirmed_at: u.email_confirmed_at,
-        deactivated: u.user_metadata?.deactivated || false,
-        is_workspace_owner: u.user_metadata?.is_workspace_owner === true,
-      }));
+      .map((u) => {
+        const meta = u.user_metadata as Record<string, unknown> | undefined;
+        const phoneRaw = meta?.phone;
+        const phone =
+          typeof phoneRaw === 'string' && phoneRaw.trim() !== ''
+            ? phoneRaw
+            : null;
+        return {
+          id: u.id,
+          email: u.email,
+          name: u.user_metadata?.name || u.email?.split('@')[0] || 'Unknown',
+          role: u.user_metadata?.role || null,
+          departments: u.user_metadata?.departments || [],
+          phone,
+          created_at: u.created_at,
+          email_confirmed_at: u.email_confirmed_at,
+          deactivated: u.user_metadata?.deactivated || false,
+          is_workspace_owner: u.user_metadata?.is_workspace_owner === true,
+        };
+      });
 
     return NextResponse.json({ teamMembers });
   } catch (err: unknown) {
@@ -145,7 +154,7 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json();
-    const { email, password, name, role, departments } = body;
+    const { email, password, name, role, departments, phone } = body;
 
     // Validation
     if (!email || !password || !name) {
@@ -178,6 +187,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'User with this email already exists' }, { status: 409 });
     }
 
+    const phoneStr =
+      typeof phone === 'string' ? phone.trim() : '';
+
     // Create user with metadata
     const { data: newUser, error: createError } = await adminClient.auth.admin.createUser({
       email,
@@ -188,6 +200,7 @@ export async function POST(req: NextRequest) {
         role: role || 'service_provider',
         workspace_id: workspaceId,
         departments: departments || [],
+        ...(phoneStr !== '' ? { phone: phoneStr } : {}),
       },
     });
 
@@ -200,6 +213,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Failed to create user' }, { status: 500 });
     }
 
+    const newMeta = newUser.user.user_metadata as Record<string, unknown> | undefined;
+    const newPhone =
+      typeof newMeta?.phone === 'string' && newMeta.phone.trim() !== ''
+        ? newMeta.phone
+        : null;
+
     return NextResponse.json({
       teamMember: {
         id: newUser.user.id,
@@ -207,6 +226,7 @@ export async function POST(req: NextRequest) {
         name: newUser.user.user_metadata?.name,
         role: newUser.user.user_metadata?.role,
         departments: newUser.user.user_metadata?.departments || [],
+        phone: newPhone,
       },
     }, { status: 201 });
   } catch (err: unknown) {
@@ -243,7 +263,7 @@ export async function PUT(req: NextRequest) {
     }
 
     const body = await req.json();
-    const { id, name, email, role, departments } = body;
+    const { id, name, email, role, departments, phone } = body;
 
     if (!id) {
       return NextResponse.json({ error: 'User ID is required' }, { status: 400 });
@@ -283,6 +303,9 @@ export async function PUT(req: NextRequest) {
       ...(name && { name }),
       ...(role && { role }),
       ...(departments !== undefined && { departments }),
+      ...(phone !== undefined && {
+        phone: typeof phone === 'string' ? phone : '',
+      }),
     };
 
     // Prevent stripping the owner flag via payload manipulation
@@ -310,6 +333,12 @@ export async function PUT(req: NextRequest) {
       return NextResponse.json({ error: 'Failed to update user' }, { status: 500 });
     }
 
+    const upMeta = updatedUser.user.user_metadata as Record<string, unknown> | undefined;
+    const upPhone =
+      typeof upMeta?.phone === 'string' && upMeta.phone.trim() !== ''
+        ? upMeta.phone
+        : null;
+
     return NextResponse.json({
       teamMember: {
         id: updatedUser.user.id,
@@ -317,6 +346,7 @@ export async function PUT(req: NextRequest) {
         name: updatedUser.user.user_metadata?.name,
         role: updatedUser.user.user_metadata?.role,
         departments: updatedUser.user.user_metadata?.departments || [],
+        phone: upPhone,
         is_workspace_owner: updatedUser.user.user_metadata?.is_workspace_owner === true,
       },
     });

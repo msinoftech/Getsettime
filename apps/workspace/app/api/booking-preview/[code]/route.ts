@@ -47,6 +47,11 @@ export async function GET(
                       raw_user_meta_data: {
                         full_name: user.user_metadata?.full_name,
                         name: user.user_metadata?.name,
+                        phone:
+                          typeof user.user_metadata?.phone === 'string' &&
+                          user.user_metadata.phone.trim() !== ''
+                            ? user.user_metadata.phone.trim()
+                            : undefined,
                       },
                     },
                   }
@@ -89,7 +94,7 @@ export async function GET(
     let workspaceOwner: {
       id: string;
       email: string;
-      raw_user_meta_data: { full_name?: string; name?: string };
+      raw_user_meta_data: { full_name?: string; name?: string; phone?: string };
     } | null = null;
     if (ownerUserId) {
       try {
@@ -102,6 +107,11 @@ export async function GET(
             raw_user_meta_data: {
               full_name: user.user_metadata?.full_name,
               name: user.user_metadata?.name,
+              phone:
+                typeof user.user_metadata?.phone === 'string' &&
+                user.user_metadata.phone.trim() !== ''
+                  ? user.user_metadata.phone.trim()
+                  : undefined,
             },
           };
         }

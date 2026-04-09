@@ -7,6 +7,8 @@ export type dashboard_summary_service_row = {
 /** Response shape from GET /api/dashboard/summary */
 export type dashboard_summary = {
   bookings_total: number;
+  /** Bookings with start_at strictly after current server time */
+  upcoming_bookings_count: number;
   /** Length 7, aligned with `week_days` query order */
   bookings_by_day: number[];
   /** Counts per status; `pending` includes rows with null status (legacy chart behavior) */

@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createSupabaseServerClient } from '@app/db';
 import { appendActivityLog } from '@/lib/activity-log';
+import {
+  admin_whatsapp_phones_for_booking,
+  resolve_provider_notification_contact,
+} from '@/lib/booking_service_provider_phone';
 
 const NON_CANCELLABLE_STATUSES = ['cancelled', 'completed'];
 
@@ -84,13 +88,14 @@ export async function POST(
     } catch { /* non-blocking */ }
 
     try {
-      if (booking.service_provider_id) {
-        const { data: { user } } = await supabase.auth.admin.getUserById(booking.service_provider_id);
-        if (user) {
-          providerEmail = user.email || undefined;
-          providerName = user.user_metadata?.name || user.email?.split('@')[0] || 'Service Provider';
-        }
-      }
+      const resolved = await resolve_provider_notification_contact(
+        supabase,
+        supabase,
+        String(booking.workspace_id),
+        booking.service_provider_id || null
+      );
+      providerEmail = resolved.email;
+      providerName = resolved.provider_name;
     } catch { /* non-blocking */ }
 
     // Send cancellation emails
@@ -124,6 +129,20 @@ export async function POST(
       const whatsappEnabled = configData?.settings?.notifications?.whatsapp === true;
 
       if (booking.invitee_phone && whatsappEnabled) {
+        let admin_whatsapp_phones: string[] = [];
+        try {
+          admin_whatsapp_phones = await admin_whatsapp_phones_for_booking(
+            supabase,
+            booking.id,
+            { workspace_id: String(booking.workspace_id) }
+          );
+        } catch (resolveAdminPhoneErr) {
+          console.warn(
+            'Could not resolve host phone for WhatsApp admin notification (cancel):',
+            resolveAdminPhoneErr
+          );
+        }
+
         const origin = new URL(_req.url).origin;
         const message = `Booking cancelled - Event: ${eventTypeName}, Client: ${booking.invitee_name || 'Invitee'}`;
 
@@ -137,6 +156,7 @@ export async function POST(
             message,
             send_to_user: false,
             send_to_admin: true,
+            admin_phone: admin_whatsapp_phones,
           }),
         }).catch((err) => console.error('WhatsApp notification error:', err));
       }
