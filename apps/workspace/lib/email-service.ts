@@ -771,6 +771,170 @@ export const sendBookingCancellationEmails = async (data: BookingEmailData): Pro
   return { userEmailSent, providerEmailSent, errors };
 };
 
+interface BookingStatusChangeEmailData extends BookingEmailData {
+  previousStatus: string;
+  newStatus: string;
+}
+
+const getUserStatusChangeEmailTemplate = (data: BookingStatusChangeEmailData): string => {
+  return `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+    .header { background-color: #7C3AED; color: white; padding: 20px; text-align: center; border-radius: 5px 5px 0 0; }
+    .content { background-color: #f9f9f9; padding: 30px; border: 1px solid #ddd; border-radius: 0 0 5px 5px; }
+    .booking-details { background-color: white; padding: 20px; margin: 20px 0; border-radius: 5px; border-left: 4px solid #7C3AED; }
+    .detail-row { margin: 10px 0; }
+    .label { font-weight: bold; color: #7C3AED; }
+    .footer { text-align: center; margin-top: 20px; padding-top: 20px; border-top: 1px solid #ddd; color: #666; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>Booking status updated</h1>
+    </div>
+    <div class="content">
+      <p>Dear ${data.inviteeName},</p>
+      <p>Your booking status has been updated from <strong>${data.previousStatus}</strong> to <strong>${data.newStatus}</strong>.</p>
+      <div class="booking-details">
+        <h2 style="margin-top: 0; color: #7C3AED;">Booking details</h2>
+        <div class="detail-row">
+          <span class="label">Event:</span> ${data.eventTypeName}
+        </div>${booking_email_department_row(data)}${booking_email_provider_row(data)}
+        <div class="detail-row">
+          <span class="label">Start Time:</span> ${formatDateTime(data.startTime, data.timezone)}
+        </div>
+        <div class="detail-row">
+          <span class="label">End Time:</span> ${formatDateTime(data.endTime, data.timezone)}
+        </div>
+        <div class="detail-row">
+          <span class="label">Duration:</span> ${data.duration} minutes
+        </div>
+        ${data.notes ? `
+        <div class="detail-row">
+          <span class="label">Notes:</span> ${data.notes}
+        </div>
+        ` : ''}
+      </div>
+      <div class="footer">
+        <p>This is an automated message. Please do not reply to this email.</p>
+        <p>&copy; ${new Date().getFullYear()} GetSetTime. All rights reserved.</p>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
+  `;
+};
+
+const getProviderStatusChangeEmailTemplate = (data: BookingStatusChangeEmailData): string => {
+  return `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+    .header { background-color: #7C3AED; color: white; padding: 20px; text-align: center; border-radius: 5px 5px 0 0; }
+    .content { background-color: #f9f9f9; padding: 30px; border: 1px solid #ddd; border-radius: 0 0 5px 5px; }
+    .booking-details { background-color: white; padding: 20px; margin: 20px 0; border-radius: 5px; border-left: 4px solid #7C3AED; }
+    .detail-row { margin: 10px 0; }
+    .label { font-weight: bold; color: #7C3AED; }
+    .footer { text-align: center; margin-top: 20px; padding-top: 20px; border-top: 1px solid #ddd; color: #666; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>Booking status updated</h1>
+    </div>
+    <div class="content">
+      <p>Dear ${data.providerName || 'Service Provider'},</p>
+      <p>A booking status was updated from <strong>${data.previousStatus}</strong> to <strong>${data.newStatus}</strong>.</p>
+      <div class="booking-details">
+        <h2 style="margin-top: 0; color: #7C3AED;">Booking details</h2>
+        <div class="detail-row">
+          <span class="label">Client:</span> ${data.inviteeName}
+        </div>
+        <div class="detail-row">
+          <span class="label">Client Email:</span> ${data.inviteeEmail?.trim() ? data.inviteeEmail : 'Not provided'}
+        </div>
+        <div class="detail-row">
+          <span class="label">Event:</span> ${data.eventTypeName}
+        </div>${booking_email_department_row(data)}
+        <div class="detail-row">
+          <span class="label">Start Time:</span> ${formatDateTime(data.startTime, data.timezone)}
+        </div>
+        <div class="detail-row">
+          <span class="label">End Time:</span> ${formatDateTime(data.endTime, data.timezone)}
+        </div>
+        <div class="detail-row">
+          <span class="label">Duration:</span> ${data.duration} minutes
+        </div>
+      </div>
+      <div class="footer">
+        <p>This is an automated notification from your booking system.</p>
+        <p>&copy; ${new Date().getFullYear()} GetSetTime. All rights reserved.</p>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
+  `;
+};
+
+export const sendBookingStatusChangeEmails = async (
+  data: BookingStatusChangeEmailData
+): Promise<{
+  userEmailSent: boolean;
+  providerEmailSent: boolean;
+  errors: string[];
+}> => {
+  const errors: string[] = [];
+  let userEmailSent = false;
+  let providerEmailSent = false;
+
+  if (data.inviteeEmail?.trim()) {
+    try {
+      const transporter = createTransporter();
+      await transporter.sendMail({
+        from: `"GetSetTime" <${process.env.SMTP_USER}>`,
+        to: data.inviteeEmail.trim(),
+        subject: `Booking status updated - ${data.eventTypeName}`,
+        html: getUserStatusChangeEmailTemplate(data),
+      });
+      userEmailSent = true;
+    } catch (error) {
+      const err = error as Error;
+      errors.push(`Failed to send status-change email to user: ${err.message}`);
+    }
+  }
+
+  if (data.providerEmail?.trim()) {
+    try {
+      const transporter = createTransporter();
+      await transporter.sendMail({
+        from: `"GetSetTime Bookings" <${process.env.SMTP_USER}>`,
+        to: data.providerEmail.trim(),
+        subject: `Booking status updated - ${data.eventTypeName} (${data.inviteeName})`,
+        html: getProviderStatusChangeEmailTemplate(data),
+      });
+      providerEmailSent = true;
+    } catch (error) {
+      const err = error as Error;
+      errors.push(`Failed to send status-change email to provider: ${err.message}`);
+    }
+  }
+
+  return { userEmailSent, providerEmailSent, errors };
+};
+
 // Send email confirmation link for registration (nodemailer)
 export const sendConfirmationEmail = async (
   to: string,

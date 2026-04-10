@@ -6,6 +6,7 @@ import {
   admin_whatsapp_phones_for_booking,
   resolve_provider_notification_contact,
 } from '@/lib/booking_service_provider_phone';
+import { post_booking_whatsapp_notification } from '@/lib/post_booking_whatsapp_notification';
 
 type DayName = 'Sun' | 'Mon' | 'Tue' | 'Wed' | 'Thu' | 'Fri' | 'Sat';
 
@@ -197,17 +198,21 @@ export async function POST(req: NextRequest) {
     let departmentName: string | undefined;
     let eventTypeName = 'Appointment';
     let durationMinutes = 30;
+    let arriveEarlyMin = 10;
+    let arriveEarlyMax = 15;
 
     try {
       if (booking.event_type_id) {
         const { data: et } = await supabase
           .from('event_types')
-          .select('title, duration_minutes')
+          .select('title, duration_minutes, buffer_before, buffer_after')
           .eq('id', booking.event_type_id)
           .single();
         if (et) {
           eventTypeName = et.title || eventTypeName;
           durationMinutes = et.duration_minutes || durationMinutes;
+          arriveEarlyMin = Number(et.buffer_before ?? arriveEarlyMin);
+          arriveEarlyMax = Number(et.buffer_after ?? arriveEarlyMax);
         }
       }
     } catch { /* non-blocking */ }
@@ -277,19 +282,28 @@ export async function POST(req: NextRequest) {
 
         const origin = new URL(req.url).origin;
         const message = `Booking rescheduled - Event: ${eventTypeName}, Client: ${booking.invitee_name || 'Invitee'}`;
-        await fetch(`${origin}/api/whatsapp`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            name: booking.invitee_name || 'Invitee',
-            email: booking.invitee_email || null,
-            phone: booking.invitee_phone,
-            message,
-            send_to_user: false,
-            send_to_admin: true,
-            admin_phone: admin_whatsapp_phones,
-          }),
-        }).catch((err) => console.error('WhatsApp notification error:', err));
+        const metaNotes = (booking.metadata as Record<string, unknown> | null)?.notes;
+        const noteStr =
+          metaNotes !== undefined && metaNotes !== null ? String(metaNotes) : '';
+        await post_booking_whatsapp_notification(origin, {
+          name: booking.invitee_name || 'Invitee',
+          email: booking.invitee_email || null,
+          phone: String(booking.invitee_phone).trim(),
+          message,
+          service: eventTypeName,
+          ...(departmentName?.trim() ? { department: departmentName.trim() } : {}),
+          ...(providerName?.trim() ? { provider: providerName.trim() } : {}),
+          start: start_at,
+          end: end_at || start_at,
+          note: noteStr,
+          arrive_early_min: arriveEarlyMin,
+          arrive_early_max: arriveEarlyMax,
+          booking_reference: String(booking.public_code || booking.id || ''),
+          send_to_user: false,
+          send_to_admin: true,
+          admin_phone: admin_whatsapp_phones,
+          skip_contact_form_email: true,
+        });
       }
     } catch { /* non-blocking */ }
 

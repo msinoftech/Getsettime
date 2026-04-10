@@ -91,7 +91,8 @@ export async function get_service_provider_phone_by_booking_id(
   const workspace_id = booking.workspace_id as string;
   const service_provider_id = booking.service_provider_id as string | null;
 
-  const { data: workspaceRow } = await supabase
+  // Use admin client for workspaces when provided so JWT/RLS cannot hide owner_id (dashboard bookings).
+  const { data: workspaceRow } = await adminClient
     .from('workspaces')
     .select('user_id')
     .eq('id', workspace_id)

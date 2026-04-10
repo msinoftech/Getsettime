@@ -9,6 +9,7 @@ import {
   resolve_provider_notification_contact,
   sole_workspace_department_display_name,
 } from '@/lib/booking_service_provider_phone';
+import { post_booking_whatsapp_notification } from '@/lib/post_booking_whatsapp_notification';
 
 type DayName = "Sun" | "Mon" | "Tue" | "Wed" | "Thu" | "Fri" | "Sat";
 
@@ -433,18 +434,22 @@ export async function POST(req: NextRequest) {
     let departmentName: string | undefined;
     let eventTypeName = 'Appointment';
     let durationMinutes = 30;
+    let arriveEarlyMin = 10;
+    let arriveEarlyMax = 15;
 
     try {
       if (event_type_id) {
         const { data: eventTypeData } = await supabase
           .from('event_types')
-          .select('title, duration_minutes')
+          .select('title, duration_minutes, buffer_before, buffer_after')
           .eq('id', event_type_id)
           .single();
 
         if (eventTypeData) {
           eventTypeName = eventTypeData.title || eventTypeName;
           durationMinutes = eventTypeData.duration_minutes || durationMinutes;
+          arriveEarlyMin = Number(eventTypeData.buffer_before ?? arriveEarlyMin);
+          arriveEarlyMax = Number(eventTypeData.buffer_after ?? arriveEarlyMax);
         }
       }
     } catch (eventTypeErr) {
@@ -578,29 +583,24 @@ export async function POST(req: NextRequest) {
         ];
         const message = whatsappParts.join(' ');
 
-        await fetch(`${origin}/api/whatsapp`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            name: invitee_name?.trim() || 'Invitee',
-            email: invitee_email?.trim() || null,
-            phone: invitee_phone?.trim(),
-            message,
-            service: eventTypeName,
-            ...(departmentName?.trim() ? { department: departmentName.trim() } : {}),
-            ...(providerName?.trim() ? { provider: providerName.trim() } : {}),
-            start: start_at,
-            end: end_at || start_at,
-            note: metadataPayload.notes ? String(metadataPayload.notes) : '',
-            arrive_early_min: 10,
-            arrive_early_max: 15,
-            booking_reference: data?.public_code || data?.id || '',
-            send_to_user: whatsappOptIn,
-            send_to_admin: whatsappEnabled,
-            admin_phone: admin_whatsapp_phones,
-          }),
-        }).catch((whatsappError) => {
-          console.error('Error sending WhatsApp notification:', whatsappError);
+        await post_booking_whatsapp_notification(origin, {
+          name: invitee_name?.trim() || 'Invitee',
+          email: invitee_email?.trim() || null,
+          phone: invitee_phone?.trim() || '',
+          message,
+          service: eventTypeName,
+          ...(departmentName?.trim() ? { department: departmentName.trim() } : {}),
+          ...(providerName?.trim() ? { provider: providerName.trim() } : {}),
+          start: start_at,
+          end: end_at || start_at,
+          note: metadataPayload.notes ? String(metadataPayload.notes) : '',
+          arrive_early_min: arriveEarlyMin,
+          arrive_early_max: arriveEarlyMax,
+          booking_reference: data?.public_code || data?.id || '',
+          send_to_user: whatsappOptIn,
+          send_to_admin: whatsappEnabled,
+          admin_phone: admin_whatsapp_phones,
+          skip_contact_form_email: true,
         });
       }
     } catch (whatsappError) {

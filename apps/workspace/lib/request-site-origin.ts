@@ -25,3 +25,20 @@ export function getPublicSiteOrigin(req: Request): string {
   }
   return "";
 }
+
+/**
+ * Absolute app origin for server-only callers (cron, no Request).
+ * Set NEXT_PUBLIC_APP_URL locally (e.g. http://localhost:3000) so internal fetch works.
+ */
+export function getServerAppOrigin(): string {
+  const fromEnv = process.env.NEXT_PUBLIC_APP_URL?.trim();
+  if (fromEnv) {
+    return fromEnv.replace(/\/$/, "");
+  }
+  const vercel = process.env.VERCEL_URL?.trim();
+  if (vercel) {
+    const host = vercel.replace(/^https?:\/\//, "").replace(/\/$/, "");
+    return `https://${host}`;
+  }
+  return "";
+}

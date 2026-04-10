@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { isValidPhone, toE164, sendSMS } from '@/lib/twilio-sms';
 import { sendReminderEmail, sendFollowUpEmail } from '@/lib/email-service';
-import { sendWhatsAppTemplate } from '@/lib/whatsapp';
+import { getServerAppOrigin } from '@/lib/request-site-origin';
+import { post_booking_whatsapp_notification } from '@/lib/post_booking_whatsapp_notification';
 
 const BATCH_WINDOW_MINUTES = 15;
 const SMS_REMINDER_MINUTES = 60;
@@ -13,6 +14,8 @@ interface NotificationSettings {
   'sms-reminder'?: boolean;
   'post-meeting-follow-up'?: boolean;
   'auto-confirm-booking'?: boolean;
+  /** Workspace Settings → Notifications → WhatsApp */
+  'whatsapp-notifications'?: boolean;
 }
 
 interface CounterStats {
@@ -102,13 +105,14 @@ async function getWorkspaceNotificationSettings(
     .single();
 
   const notifications = (data?.settings as Record<string, unknown>)?.notifications as
-    | NotificationSettings
+    | (NotificationSettings & { whatsapp?: boolean })
     | undefined;
 
   return {
     'email-reminder': notifications?.['email-reminder'] ?? true,
     'sms-reminder': notifications?.['sms-reminder'] ?? true,
     'post-meeting-follow-up': notifications?.['post-meeting-follow-up'] ?? true,
+    'whatsapp-notifications': notifications?.whatsapp === true,
   };
 }
 
@@ -283,7 +287,9 @@ async function process1hWhatsAppReminders(
 
   const { data: bookings, error } = await supabase
     .from('bookings')
-    .select('id, workspace_id, invitee_name, invitee_phone, invitee_email, start_at, end_at, event_type_id, contact_id, contacts(phone, email, name), event_types(title)')
+    .select(
+      'id, public_code, workspace_id, invitee_name, invitee_phone, invitee_email, start_at, end_at, event_type_id, department_id, metadata, contact_id, contacts(phone, email, name), event_types(title, buffer_before, buffer_after)',
+    )
     .gte('start_at', windowStart.toISOString())
     .lte('start_at', windowEnd.toISOString())
     .neq('status', 'cancelled')
@@ -298,8 +304,15 @@ async function process1hWhatsAppReminders(
 
   console.log(`[cron] 1h WhatsApp: found ${bookings?.length ?? 0} bookings`);
 
-  const templateName = process.env.WHATSAPP_REMINDER_TEMPLATE || 'contact_information';
-  const languageCode = process.env.WHATSAPP_TEMPLATE_LANGUAGE || 'en';
+  const origin = getServerAppOrigin();
+  if (!origin && (bookings?.length ?? 0) > 0) {
+    errors.push(
+      '1h WhatsApp: set NEXT_PUBLIC_APP_URL (or rely on VERCEL_URL) so cron can POST /api/whatsapp',
+    );
+    console.error(
+      '[cron] 1h WhatsApp: missing app origin (NEXT_PUBLIC_APP_URL / VERCEL_URL); skipping sends',
+    );
+  }
 
   for (const booking of bookings ?? []) {
     const wsId = booking.workspace_id as string;
@@ -308,7 +321,7 @@ async function process1hWhatsAppReminders(
     }
     const settings = settingsCache.get(wsId)!;
 
-    if (!settings['sms-reminder']) {
+    if (!settings['whatsapp-notifications']) {
       await supabase.from('bookings').update({ whatsapp_reminder_skipped_at: new Date().toISOString() }).eq('id', booking.id);
       stats.skipped++;
       continue;
@@ -323,20 +336,67 @@ async function process1hWhatsAppReminders(
 
     const eventTitle = resolveEventTitle(booking as Record<string, unknown>);
     const when = formatBookingTime(booking.start_at!);
+    const message = `Reminder: your ${eventTitle} is on ${when}. See you soon!`;
+
+    const etRow = Array.isArray(booking.event_types)
+      ? booking.event_types[0]
+      : booking.event_types;
+    const arriveEarlyMin = Number(
+      (etRow as { buffer_before?: number | null } | null)?.buffer_before ?? 10,
+    );
+    const arriveEarlyMax = Number(
+      (etRow as { buffer_after?: number | null } | null)?.buffer_after ?? 15,
+    );
+    const meta = booking.metadata as Record<string, unknown> | null | undefined;
+    const noteStr =
+      meta && typeof meta.notes !== 'undefined' && meta.notes !== null
+        ? String(meta.notes)
+        : '';
+
+    if (!origin) {
+      stats.skipped++;
+      continue;
+    }
 
     try {
-      await sendWhatsAppTemplate(phone, templateName, languageCode, [
-        {
-          type: 'body',
-          parameters: [
-            { type: 'text', text: name },
-            { type: 'text', text: name },
-            { type: 'text', text: email || 'N/A' },
-            { type: 'text', text: phone },
-            { type: 'text', text: `Reminder: your ${eventTitle} is on ${when}. See you soon!` },
-          ],
-        },
-      ]);
+      let departmentName: string | undefined;
+      if (booking.department_id) {
+        const { data: dept } = await supabase
+          .from('departments')
+          .select('name')
+          .eq('id', booking.department_id)
+          .single();
+        departmentName = dept?.name || undefined;
+      }
+
+      const startAt = booking.start_at ?? '';
+      const endAt = booking.end_at || booking.start_at || '';
+      const ref =
+        typeof booking.public_code === 'string' && booking.public_code.trim()
+          ? booking.public_code.trim()
+          : String(booking.id);
+
+      const result = await post_booking_whatsapp_notification(origin, {
+        name,
+        email: email || null,
+        phone,
+        message,
+        service: eventTitle,
+        ...(departmentName?.trim() ? { department: departmentName.trim() } : {}),
+        start: startAt,
+        end: endAt,
+        note: noteStr,
+        arrive_early_min: arriveEarlyMin,
+        arrive_early_max: arriveEarlyMax,
+        booking_reference: ref,
+        send_to_user: true,
+        send_to_admin: false,
+        skip_contact_form_email: true,
+        notification_kind: 'reminder',
+      });
+      if (!result.ok) {
+        throw new Error(result.error || 'WhatsApp reminder failed');
+      }
       await supabase.from('bookings').update({ whatsapp_reminder_sent_at: new Date().toISOString() }).eq('id', booking.id);
       stats.sent++;
     } catch (err) {

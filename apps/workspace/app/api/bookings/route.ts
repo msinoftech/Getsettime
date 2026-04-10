@@ -7,7 +7,9 @@ import { appendActivityLog } from '@/lib/activity-log';
 import {
   admin_whatsapp_phones_for_booking,
   resolve_provider_notification_contact,
+  sole_workspace_department_display_name,
 } from '@/lib/booking_service_provider_phone';
+import { post_booking_whatsapp_notification } from '@/lib/post_booking_whatsapp_notification';
 
 type DayName = "Sun" | "Mon" | "Tue" | "Wed" | "Thu" | "Fri" | "Sat";
 
@@ -459,7 +461,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    // Build notification context (omit department/provider in emails when not set)
+    // Build notification context (omit department/provider in emails when not set).
+    // Match embed: service-role reads avoid RLS gaps on workspaces/departments/event_types for JWT clients.
     let providerEmail: string | undefined;
     let providerName: string | undefined;
     let departmentName: string | undefined;
@@ -468,12 +471,16 @@ export async function POST(req: NextRequest) {
     let arriveEarlyMin = 10;
     let arriveEarlyMax = 15;
 
+    const notifyAdminClient = getServiceRoleClient();
+    const notifyDb = notifyAdminClient ?? supabase;
+
     try {
       if (event_type_id) {
-        const { data: eventTypeData } = await supabase
+        const { data: eventTypeData } = await notifyDb
           .from('event_types')
           .select('title, duration_minutes, buffer_before, buffer_after')
           .eq('id', event_type_id)
+          .eq('workspace_id', workspaceId)
           .single();
 
         if (eventTypeData) {
@@ -490,10 +497,11 @@ export async function POST(req: NextRequest) {
 
     try {
       if (department_id) {
-        const { data: departmentData } = await supabase
+        const { data: departmentData } = await notifyDb
           .from('departments')
           .select('name')
           .eq('id', department_id)
+          .eq('workspace_id', workspaceId)
           .single();
         departmentName = departmentData?.name || undefined;
       }
@@ -501,14 +509,25 @@ export async function POST(req: NextRequest) {
       console.error('Error fetching department details:', deptErr);
     }
 
+    if (!departmentName?.trim()) {
+      try {
+        const sole = await sole_workspace_department_display_name(
+          notifyDb,
+          workspaceId
+        );
+        if (sole) departmentName = sole;
+      } catch (soleDeptErr) {
+        console.error('Error resolving sole department name:', soleDeptErr);
+      }
+    }
+
     try {
-      const adminClient = getServiceRoleClient();
-      if (!adminClient) {
+      if (!notifyAdminClient) {
         console.warn('Service role key not configured, cannot fetch provider details for notifications');
       } else {
         const resolved = await resolve_provider_notification_contact(
-          supabase,
-          adminClient,
+          notifyAdminClient,
+          notifyAdminClient,
           String(workspaceId),
           service_provider_id || null
         );
@@ -555,24 +574,21 @@ export async function POST(req: NextRequest) {
     const whatsappEnabled = configData?.settings?.notifications?.whatsapp === true;
 
     let admin_whatsapp_phones: string[] = [];
-    if (whatsappEnabled && data?.id && workspaceId) {
-      const adminClient = getServiceRoleClient();
-      if (adminClient) {
-        try {
-          admin_whatsapp_phones = await admin_whatsapp_phones_for_booking(
-            supabase,
-            data.id,
-            {
-              workspace_id: String(workspaceId),
-              admin_supabase: adminClient,
-            }
-          );
-        } catch (resolveAdminPhoneErr) {
-          console.warn(
-            'Could not resolve host phone for WhatsApp admin notification:',
-            resolveAdminPhoneErr
-          );
-        }
+    if (whatsappEnabled && data?.id && workspaceId && notifyAdminClient) {
+      try {
+        admin_whatsapp_phones = await admin_whatsapp_phones_for_booking(
+          supabase,
+          data.id,
+          {
+            workspace_id: String(workspaceId),
+            admin_supabase: notifyAdminClient,
+          }
+        );
+      } catch (resolveAdminPhoneErr) {
+        console.warn(
+          'Could not resolve host phone for WhatsApp admin notification:',
+          resolveAdminPhoneErr
+        );
       }
     }
 
@@ -601,27 +617,24 @@ export async function POST(req: NextRequest) {
         ];
         const message = whatsappParts.join(' ');
 
-        await fetch(`${origin}/api/whatsapp`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            name: invitee_name?.trim() || 'Invitee',
-            email: invitee_email?.trim() || null,
-            phone: invitee_phone?.trim(),
-            message,
-            service: eventTypeName,
-            ...(departmentName?.trim() ? { department: departmentName.trim() } : {}),
-            ...(providerName?.trim() ? { provider: providerName.trim() } : {}),
-            start: start_at,
-            end: end_at || start_at,
-            note: metadata?.notes ? String(metadata.notes) : '',
-            arrive_early_min: arriveEarlyMin,
-            arrive_early_max: arriveEarlyMax,
-            booking_reference: data?.public_code || data?.id || '',
-            send_to_user: Boolean(metadata?.whatsapp_opt_in),
-            send_to_admin: whatsappEnabled,
-            admin_phone: admin_whatsapp_phones,
-          }),
+        await post_booking_whatsapp_notification(origin, {
+          name: invitee_name?.trim() || 'Invitee',
+          email: invitee_email?.trim() || null,
+          phone: invitee_phone?.trim() || '',
+          message,
+          service: eventTypeName,
+          ...(departmentName?.trim() ? { department: departmentName.trim() } : {}),
+          ...(providerName?.trim() ? { provider: providerName.trim() } : {}),
+          start: start_at,
+          end: end_at || start_at,
+          note: metadata?.notes ? String(metadata.notes) : '',
+          arrive_early_min: arriveEarlyMin,
+          arrive_early_max: arriveEarlyMax,
+          booking_reference: data?.public_code || data?.id || '',
+          send_to_user: Boolean(metadata?.whatsapp_opt_in),
+          send_to_admin: whatsappEnabled,
+          admin_phone: admin_whatsapp_phones,
+          skip_contact_form_email: true,
         });
       }
     } catch (whatsappError) {
@@ -695,6 +708,22 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
+    let cachedPatchServiceRole: ReturnType<typeof createClient> | null | undefined;
+    const getPatchServiceRoleClient = (): ReturnType<typeof createClient> | null => {
+      if (cachedPatchServiceRole !== undefined) {
+        return cachedPatchServiceRole;
+      }
+      const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+      if (!serviceKey) {
+        cachedPatchServiceRole = null;
+        return null;
+      }
+      cachedPatchServiceRole = createClient(supabaseUrl, serviceKey, {
+        auth: { autoRefreshToken: false, persistSession: false },
+      });
+      return cachedPatchServiceRole;
+    };
+
     const body = await req.json();
     const {
       id,
@@ -727,7 +756,7 @@ export async function PATCH(req: NextRequest) {
     const { data: existingRow, error: existingError } = await supabase
       .from('bookings')
       .select(
-        'start_at, end_at, status, invitee_name, invitee_email, event_type_id, service_provider_id, department_id'
+        'start_at, end_at, status, invitee_name, invitee_email, invitee_phone, event_type_id, service_provider_id, department_id, metadata, public_code'
       )
       .eq('id', id)
       .eq('workspace_id', workspaceId)
@@ -798,41 +827,65 @@ export async function PATCH(req: NextRequest) {
         let departmentName: string | undefined;
         let eventTypeName = 'Appointment';
         let durationMinutes = 30;
+        let arriveEarlyMin = 10;
+        let arriveEarlyMax = 15;
+
+        const patchNotifyAdmin = getPatchServiceRoleClient();
+        const patchNotifyDb = patchNotifyAdmin ?? supabase;
 
         if (data.event_type_id) {
-          const { data: et } = await supabase
+          const { data: et } = await patchNotifyDb
             .from('event_types')
-            .select('title, duration_minutes')
+            .select('title, duration_minutes, buffer_before, buffer_after')
             .eq('id', data.event_type_id)
+            .eq('workspace_id', workspaceId)
             .single();
           if (et) {
             eventTypeName = et.title || eventTypeName;
             durationMinutes = et.duration_minutes || durationMinutes;
+            arriveEarlyMin = Number(et.buffer_before ?? arriveEarlyMin);
+            arriveEarlyMax = Number(et.buffer_after ?? arriveEarlyMax);
           }
         }
 
         if (data.department_id) {
-          const { data: dept } = await supabase
+          const { data: dept } = await patchNotifyDb
             .from('departments')
             .select('name')
             .eq('id', data.department_id)
+            .eq('workspace_id', workspaceId)
             .single();
           departmentName = dept?.name || undefined;
         }
 
-        const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-        if (serviceRoleKey) {
-          const adminClient = createClient(supabaseUrl, serviceRoleKey, {
-            auth: { autoRefreshToken: false, persistSession: false },
-          });
+        if (!departmentName?.trim()) {
+          try {
+            const sole = await sole_workspace_department_display_name(
+              patchNotifyDb,
+              workspaceId
+            );
+            if (sole) departmentName = sole;
+          } catch (soleDeptErr) {
+            console.error(
+              'Error resolving sole department name (dashboard reschedule):',
+              soleDeptErr
+            );
+          }
+        }
+
+        if (patchNotifyAdmin) {
           const resolved = await resolve_provider_notification_contact(
-            supabase,
-            adminClient,
+            patchNotifyAdmin,
+            patchNotifyAdmin,
             String(workspaceId),
             data.service_provider_id || null
           );
           providerEmail = resolved.email;
           providerName = resolved.provider_name;
+        } else {
+          console.warn(
+            'Service role key not configured, cannot fetch provider details for reschedule notifications'
+          );
         }
 
         const prevStart = existingRow.start_at ?? undefined;
@@ -856,8 +909,307 @@ export async function PATCH(req: NextRequest) {
           ...(prevStart ? { previousStartTime: prevStart } : {}),
           ...(prevEnd ? { previousEndTime: prevEnd } : {}),
         });
+
+        const { data: rescheduleConfig } = await supabase
+          .from('configurations')
+          .select('settings')
+          .eq('workspace_id', workspaceId)
+          .single();
+        const rescheduleWhatsappEnabled =
+          (rescheduleConfig?.settings as { notifications?: { whatsapp?: boolean } } | undefined)
+            ?.notifications?.whatsapp === true;
+
+        if (rescheduleWhatsappEnabled && data?.id) {
+          let admin_whatsapp_phones: string[] = [];
+          if (patchNotifyAdmin) {
+            try {
+              admin_whatsapp_phones = await admin_whatsapp_phones_for_booking(
+                supabase,
+                data.id,
+                {
+                  workspace_id: String(workspaceId),
+                  admin_supabase: patchNotifyAdmin,
+                }
+              );
+            } catch (resolveAdminPhoneErr) {
+              console.warn(
+                'Could not resolve host phone for WhatsApp (dashboard reschedule):',
+                resolveAdminPhoneErr
+              );
+            }
+          }
+
+          const inviteePhoneTrimmed = data.invitee_phone?.trim();
+          const phoneForApi =
+            inviteePhoneTrimmed ||
+            (admin_whatsapp_phones[0] ? admin_whatsapp_phones[0].trim() : '');
+
+          if (phoneForApi) {
+            const metaRes = data.metadata as Record<string, unknown> | null | undefined;
+            const notesFromMetaRes =
+              metaRes && typeof metaRes.notes !== 'undefined'
+                ? String(metaRes.notes ?? '')
+                : '';
+            const origin = new URL(req.url).origin;
+            const message = `Booking rescheduled - Event: ${eventTypeName}, Client: ${data.invitee_name || 'Invitee'}`;
+
+            await post_booking_whatsapp_notification(origin, {
+              name: data.invitee_name?.trim() || 'Invitee',
+              email: data.invitee_email?.trim() || null,
+              phone: phoneForApi,
+              message,
+              service: eventTypeName,
+              ...(departmentName?.trim() ? { department: departmentName.trim() } : {}),
+              ...(providerName?.trim() ? { provider: providerName.trim() } : {}),
+              start: newStart!,
+              end: newEnd!,
+              note: notesFromMetaRes,
+              arrive_early_min: arriveEarlyMin,
+              arrive_early_max: arriveEarlyMax,
+              booking_reference: String(data.public_code || data.id || ''),
+              send_to_user: Boolean(inviteePhoneTrimmed),
+              send_to_admin: admin_whatsapp_phones.length > 0,
+              ...(admin_whatsapp_phones.length > 0
+                ? { admin_phone: admin_whatsapp_phones }
+                : {}),
+              skip_contact_form_email: true,
+            });
+          }
+        }
       } catch (emailErr) {
         console.error('Error sending reschedule emails (dashboard):', emailErr);
+      }
+    }
+
+    const prevStatusNorm = String(existingRow.status ?? '').toLowerCase();
+    const newStatusNorm = String(data.status ?? '').toLowerCase();
+    const statusChanged =
+      status !== undefined && prevStatusNorm !== newStatusNorm;
+    const skipStatusNotifyBecauseReschedule = shouldSendRescheduleEmails;
+
+    if (statusChanged && !skipStatusNotifyBecauseReschedule) {
+      try {
+        let providerEmail: string | undefined;
+        let providerName: string | undefined;
+        let departmentName: string | undefined;
+        let eventTypeName = 'Appointment';
+        let durationMinutes = 30;
+        let arriveEarlyMin = 10;
+        let arriveEarlyMax = 15;
+
+        const patchAdminClient = getPatchServiceRoleClient();
+        const statusNotifyDb = patchAdminClient ?? supabase;
+
+        if (data.event_type_id) {
+          const { data: et } = await statusNotifyDb
+            .from('event_types')
+            .select('title, duration_minutes, buffer_before, buffer_after')
+            .eq('id', data.event_type_id)
+            .eq('workspace_id', workspaceId)
+            .single();
+          if (et) {
+            eventTypeName = et.title || eventTypeName;
+            durationMinutes = et.duration_minutes || durationMinutes;
+            arriveEarlyMin = Number(et.buffer_before ?? arriveEarlyMin);
+            arriveEarlyMax = Number(et.buffer_after ?? arriveEarlyMax);
+          }
+        }
+
+        if (data.department_id) {
+          const { data: dept } = await statusNotifyDb
+            .from('departments')
+            .select('name')
+            .eq('id', data.department_id)
+            .eq('workspace_id', workspaceId)
+            .single();
+          departmentName = dept?.name || undefined;
+        }
+
+        if (!departmentName?.trim()) {
+          try {
+            const sole = await sole_workspace_department_display_name(
+              statusNotifyDb,
+              workspaceId
+            );
+            if (sole) departmentName = sole;
+          } catch (soleDeptErr) {
+            console.error(
+              'Error resolving sole department name (dashboard status):',
+              soleDeptErr
+            );
+          }
+        }
+
+        if (patchAdminClient) {
+          const resolved = await resolve_provider_notification_contact(
+            patchAdminClient,
+            patchAdminClient,
+            String(workspaceId),
+            data.service_provider_id || null
+          );
+          providerEmail = resolved.email;
+          providerName = resolved.provider_name;
+        } else {
+          console.warn(
+            'Service role key not configured, cannot fetch provider details for status notifications'
+          );
+        }
+
+        const meta = data.metadata as Record<string, unknown> | null | undefined;
+        const notesFromMeta =
+          meta && typeof meta.notes !== 'undefined'
+            ? String(meta.notes ?? '')
+            : '';
+
+        const displayPrev =
+          existingRow.status != null ? String(existingRow.status) : 'unknown';
+        const displayNew =
+          data.status != null ? String(data.status) : 'unknown';
+
+        const startT = data.start_at ?? existingRow.start_at ?? '';
+        const endT = data.end_at ?? existingRow.end_at ?? startT;
+
+        if (newStatusNorm === 'cancelled') {
+          const { sendBookingCancellationEmails } = await import('@/lib/email-service');
+          await sendBookingCancellationEmails({
+            inviteeName: data.invitee_name || 'Invitee',
+            ...(data.invitee_email?.trim()
+              ? { inviteeEmail: data.invitee_email.trim() }
+              : {}),
+            ...(providerName?.trim() ? { providerName: providerName.trim() } : {}),
+            ...(providerEmail?.trim() ? { providerEmail: providerEmail.trim() } : {}),
+            eventTypeName,
+            ...(departmentName?.trim() ? { departmentName: departmentName.trim() } : {}),
+            startTime: startT,
+            endTime: endT,
+            duration: durationMinutes,
+          });
+
+          try {
+            const gcalEventId = meta?.google_calendar_event_id as string | undefined;
+            if (gcalEventId) {
+              const { deleteCalendarEvent } = await import('@/lib/google-calendar-service');
+              const calResult = await deleteCalendarEvent(
+                Number(workspaceId),
+                gcalEventId
+              );
+              if (!calResult.success) {
+                console.warn('Google Calendar delete failed (PATCH cancel):', calResult.error);
+              }
+            }
+          } catch (calErr) {
+            console.warn('Google Calendar delete failed (PATCH cancel):', calErr);
+          }
+        } else {
+          const { sendBookingStatusChangeEmails } = await import('@/lib/email-service');
+          await sendBookingStatusChangeEmails({
+            inviteeName: data.invitee_name || 'Invitee',
+            ...(data.invitee_email?.trim()
+              ? { inviteeEmail: data.invitee_email.trim() }
+              : {}),
+            ...(providerName?.trim() ? { providerName: providerName.trim() } : {}),
+            ...(providerEmail?.trim() ? { providerEmail: providerEmail.trim() } : {}),
+            eventTypeName,
+            ...(departmentName?.trim() ? { departmentName: departmentName.trim() } : {}),
+            startTime: startT,
+            endTime: endT,
+            duration: durationMinutes,
+            ...(notesFromMeta ? { notes: notesFromMeta } : {}),
+            previousStatus: displayPrev,
+            newStatus: displayNew,
+          });
+        }
+
+        const { data: configRow } = await supabase
+          .from('configurations')
+          .select('settings')
+          .eq('workspace_id', workspaceId)
+          .single();
+
+        const whatsappEnabled =
+          (configRow?.settings as { notifications?: { whatsapp?: boolean } } | undefined)
+            ?.notifications?.whatsapp === true;
+
+        if (whatsappEnabled && data?.id) {
+          let statusChangeAdminPhones: string[] = [];
+          if (patchAdminClient) {
+            try {
+              statusChangeAdminPhones = await admin_whatsapp_phones_for_booking(
+                supabase,
+                data.id,
+                {
+                  workspace_id: String(workspaceId),
+                  admin_supabase: patchAdminClient,
+                }
+              );
+            } catch (resolveAdminPhoneErr) {
+              console.warn(
+                'Could not resolve host phone for WhatsApp (dashboard status):',
+                resolveAdminPhoneErr
+              );
+            }
+          }
+
+          const inviteePhoneStatus = data.invitee_phone?.trim();
+          const isCancelled = newStatusNorm === 'cancelled';
+          const phoneForCancelled =
+            inviteePhoneStatus ||
+            (statusChangeAdminPhones[0] ? statusChangeAdminPhones[0].trim() : '');
+
+          const origin = new URL(req.url).origin;
+          const message =
+            isCancelled
+              ? `Booking cancelled - Event: ${eventTypeName}, Client: ${data.invitee_name || 'Invitee'}`
+              : `Booking status updated - Event: ${eventTypeName}, Client: ${data.invitee_name || 'Invitee'}, Status: ${displayPrev} → ${displayNew}`;
+
+          if (isCancelled && phoneForCancelled) {
+            await post_booking_whatsapp_notification(origin, {
+              name: data.invitee_name?.trim() || 'Invitee',
+              email: data.invitee_email?.trim() || null,
+              phone: phoneForCancelled,
+              message,
+              service: eventTypeName,
+              ...(departmentName?.trim() ? { department: departmentName.trim() } : {}),
+              ...(providerName?.trim() ? { provider: providerName.trim() } : {}),
+              start: startT,
+              end: endT,
+              note: notesFromMeta,
+              arrive_early_min: arriveEarlyMin,
+              arrive_early_max: arriveEarlyMax,
+              booking_reference: String(data.public_code || data.id || ''),
+              send_to_user: Boolean(inviteePhoneStatus),
+              send_to_admin: statusChangeAdminPhones.length > 0,
+              ...(statusChangeAdminPhones.length > 0
+                ? { admin_phone: statusChangeAdminPhones }
+                : {}),
+              skip_contact_form_email: true,
+            });
+          } else if (!isCancelled && inviteePhoneStatus) {
+            await post_booking_whatsapp_notification(origin, {
+              name: data.invitee_name?.trim() || 'Invitee',
+              email: data.invitee_email?.trim() || null,
+              phone: inviteePhoneStatus,
+              message,
+              service: eventTypeName,
+              ...(departmentName?.trim() ? { department: departmentName.trim() } : {}),
+              ...(providerName?.trim() ? { provider: providerName.trim() } : {}),
+              start: startT,
+              end: endT,
+              note: notesFromMeta,
+              arrive_early_min: arriveEarlyMin,
+              arrive_early_max: arriveEarlyMax,
+              booking_reference: String(data.public_code || data.id || ''),
+              send_to_user: true,
+              send_to_admin: false,
+              skip_contact_form_email: true,
+            });
+          }
+        }
+      } catch (statusNotifyErr) {
+        console.error(
+          'Error sending status-change notifications (dashboard):',
+          statusNotifyErr
+        );
       }
     }
 

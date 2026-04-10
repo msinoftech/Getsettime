@@ -5,6 +5,7 @@ import {
   admin_whatsapp_phones_for_booking,
   resolve_provider_notification_contact,
 } from '@/lib/booking_service_provider_phone';
+import { post_booking_whatsapp_notification } from '@/lib/post_booking_whatsapp_notification';
 
 const NON_CANCELLABLE_STATUSES = ['cancelled', 'completed'];
 
@@ -61,17 +62,21 @@ export async function POST(
     let departmentName: string | undefined;
     let eventTypeName = 'Appointment';
     let durationMinutes = 30;
+    let arriveEarlyMin = 10;
+    let arriveEarlyMax = 15;
 
     try {
       if (booking.event_type_id) {
         const { data: et } = await supabase
           .from('event_types')
-          .select('title, duration_minutes')
+          .select('title, duration_minutes, buffer_before, buffer_after')
           .eq('id', booking.event_type_id)
           .single();
         if (et) {
           eventTypeName = et.title || eventTypeName;
           durationMinutes = et.duration_minutes || durationMinutes;
+          arriveEarlyMin = Number(et.buffer_before ?? arriveEarlyMin);
+          arriveEarlyMax = Number(et.buffer_after ?? arriveEarlyMax);
         }
       }
     } catch { /* non-blocking */ }
@@ -100,11 +105,12 @@ export async function POST(
 
     // Send cancellation emails
     try {
-      if (booking.invitee_email) {
+      const inviteeEmailTrimmed = booking.invitee_email?.trim();
+      if (inviteeEmailTrimmed || providerEmail?.trim()) {
         const { sendBookingCancellationEmails } = await import('@/lib/email-service');
         await sendBookingCancellationEmails({
           inviteeName: booking.invitee_name || 'Invitee',
-          inviteeEmail: booking.invitee_email,
+          ...(inviteeEmailTrimmed ? { inviteeEmail: inviteeEmailTrimmed } : {}),
           ...(providerName?.trim() ? { providerName: providerName.trim() } : {}),
           providerEmail,
           eventTypeName,
@@ -145,20 +151,29 @@ export async function POST(
 
         const origin = new URL(_req.url).origin;
         const message = `Booking cancelled - Event: ${eventTypeName}, Client: ${booking.invitee_name || 'Invitee'}`;
+        const metaNotes = (booking.metadata as Record<string, unknown> | null)?.notes;
+        const noteStr =
+          metaNotes !== undefined && metaNotes !== null ? String(metaNotes) : '';
 
-        await fetch(`${origin}/api/whatsapp`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            name: booking.invitee_name || 'Invitee',
-            email: booking.invitee_email || null,
-            phone: booking.invitee_phone,
-            message,
-            send_to_user: false,
-            send_to_admin: true,
-            admin_phone: admin_whatsapp_phones,
-          }),
-        }).catch((err) => console.error('WhatsApp notification error:', err));
+        await post_booking_whatsapp_notification(origin, {
+          name: booking.invitee_name || 'Invitee',
+          email: booking.invitee_email || null,
+          phone: String(booking.invitee_phone).trim(),
+          message,
+          service: eventTypeName,
+          ...(departmentName?.trim() ? { department: departmentName.trim() } : {}),
+          ...(providerName?.trim() ? { provider: providerName.trim() } : {}),
+          start: booking.start_at || '',
+          end: booking.end_at || booking.start_at || '',
+          note: noteStr,
+          arrive_early_min: arriveEarlyMin,
+          arrive_early_max: arriveEarlyMax,
+          booking_reference: code,
+          send_to_user: false,
+          send_to_admin: true,
+          admin_phone: admin_whatsapp_phones,
+          skip_contact_form_email: true,
+        });
       }
     } catch { /* non-blocking */ }
 
