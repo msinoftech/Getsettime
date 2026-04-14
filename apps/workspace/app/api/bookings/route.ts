@@ -973,6 +973,7 @@ export async function PATCH(req: NextRequest) {
                 ? { admin_phone: admin_whatsapp_phones }
                 : {}),
               skip_contact_form_email: true,
+              notification_kind: 'reschedule',
             });
           }
         }
@@ -1130,6 +1131,16 @@ export async function PATCH(req: NextRequest) {
           (configRow?.settings as { notifications?: { whatsapp?: boolean } } | undefined)
             ?.notifications?.whatsapp === true;
 
+        let workspaceSlug = '';
+        try {
+          const { data: ws } = await statusNotifyDb
+            .from('workspaces')
+            .select('slug')
+            .eq('id', workspaceId)
+            .single();
+          workspaceSlug = ws?.slug || '';
+        } catch { /* non-blocking */ }
+
         if (whatsappEnabled && data?.id) {
           let statusChangeAdminPhones: string[] = [];
           if (patchAdminClient) {
@@ -1176,13 +1187,15 @@ export async function PATCH(req: NextRequest) {
               note: notesFromMeta,
               arrive_early_min: arriveEarlyMin,
               arrive_early_max: arriveEarlyMax,
-              booking_reference: String(data.public_code || data.id || ''),
+              booking_reference: workspaceSlug,
+              cancelled_by: providerName?.trim() || 'Admin',
               send_to_user: Boolean(inviteePhoneStatus),
-              send_to_admin: statusChangeAdminPhones.length > 0,
+              send_to_admin: false, // old:statusChangeAdminPhones.length > 0
               ...(statusChangeAdminPhones.length > 0
                 ? { admin_phone: statusChangeAdminPhones }
                 : {}),
               skip_contact_form_email: true,
+              notification_kind: 'cancel',
             });
           } else if (!isCancelled && inviteePhoneStatus) {
             await post_booking_whatsapp_notification(origin, {
@@ -1198,7 +1211,7 @@ export async function PATCH(req: NextRequest) {
               note: notesFromMeta,
               arrive_early_min: arriveEarlyMin,
               arrive_early_max: arriveEarlyMax,
-              booking_reference: String(data.public_code || data.id || ''),
+              booking_reference: workspaceSlug,
               send_to_user: true,
               send_to_admin: false,
               skip_contact_form_email: true,

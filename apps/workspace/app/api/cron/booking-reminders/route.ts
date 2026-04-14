@@ -288,7 +288,7 @@ async function process1hWhatsAppReminders(
   const { data: bookings, error } = await supabase
     .from('bookings')
     .select(
-      'id, public_code, workspace_id, invitee_name, invitee_phone, invitee_email, start_at, end_at, event_type_id, department_id, metadata, contact_id, contacts(phone, email, name), event_types(title, buffer_before, buffer_after)',
+      'id, public_code, workspace_id, invitee_name, invitee_phone, invitee_email, start_at, end_at, event_type_id, department_id, service_provider_id, metadata, contact_id, contacts(phone, email, name), event_types(title, buffer_before, buffer_after)',
     )
     .gte('start_at', windowStart.toISOString())
     .lte('start_at', windowEnd.toISOString())
@@ -369,6 +369,16 @@ async function process1hWhatsAppReminders(
         departmentName = dept?.name || undefined;
       }
 
+      let providerName: string | undefined;
+      if ((booking as Record<string, unknown>).service_provider_id) {
+        const { data: sp } = await supabase
+          .from('service_providers')
+          .select('name')
+          .eq('id', (booking as Record<string, unknown>).service_provider_id as string)
+          .single();
+        providerName = sp?.name || undefined;
+      }
+
       const startAt = booking.start_at ?? '';
       const endAt = booking.end_at || booking.start_at || '';
       const ref =
@@ -383,6 +393,7 @@ async function process1hWhatsAppReminders(
         message,
         service: eventTitle,
         ...(departmentName?.trim() ? { department: departmentName.trim() } : {}),
+        ...(providerName?.trim() ? { provider: providerName.trim() } : {}),
         start: startAt,
         end: endAt,
         note: noteStr,

@@ -134,6 +134,16 @@ export async function POST(
 
       const whatsappEnabled = configData?.settings?.notifications?.whatsapp === true;
 
+      let workspaceSlug = '';
+      try {
+        const { data: ws } = await supabase
+          .from('workspaces')
+          .select('slug')
+          .eq('id', booking.workspace_id)
+          .single();
+        workspaceSlug = ws?.slug || '';
+      } catch { /* non-blocking */ }
+
       if (booking.invitee_phone && whatsappEnabled) {
         let admin_whatsapp_phones: string[] = [];
         try {
@@ -168,11 +178,13 @@ export async function POST(
           note: noteStr,
           arrive_early_min: arriveEarlyMin,
           arrive_early_max: arriveEarlyMax,
-          booking_reference: code,
+          booking_reference: workspaceSlug,
+          cancelled_by: booking.invitee_name,
           send_to_user: false,
           send_to_admin: true,
           admin_phone: admin_whatsapp_phones,
           skip_contact_form_email: true,
+          notification_kind: 'cancel',
         });
       }
     } catch { /* non-blocking */ }

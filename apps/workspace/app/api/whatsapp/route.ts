@@ -22,17 +22,31 @@ function text_or_empty(v: unknown): string {
   return String(v);
 }
 
-/** Reminder → invitee template in Meta (same body + URL button variables as booking). Edit when you use a separate approved template. */
-const WHATSAPP_REMINDER_USER_TEMPLATE_NAME = "booking_confirmation"; // whatsapp_reminder
+type notification_kind = "booking" | "reminder" | "cancel" | "reschedule";
 
-/** Reminder → admin template in Meta (same body variables as booking_received). */
-const WHATSAPP_REMINDER_ADMIN_TEMPLATE_NAME = "booking_received";
+/** Per-kind Meta template names — user (invitee) side. */
+const USER_TEMPLATE_NAMES: Record<notification_kind, string> = {
+  booking: "booking_confirmation",
+  reminder: "whatsapp_reminder",
+  cancel: "appointment_cancelled", // old: appointment_cancelled, New: appointment_cancelled_to_user
+  reschedule: "appointment_rescheduled",
+};
 
-/** WhatsApp Cloud API template language for booking sends. */
-const WHATSAPP_TEMPLATE_LANGUAGE_CODE = "en";
+/** Per-kind Meta template names — admin side. */
+const ADMIN_TEMPLATE_NAMES: Record<notification_kind, string> = {
+  booking: "booking_received",
+  reminder: "whatsapp_reminder",
+  cancel: "appointment_cancelled", // old: appointment_cancelled, New: appointment_cancelled_to_admin
+  reschedule: "appointment_rescheduled", // old: appointment_rescheduled, New: appointment_rescheduled_to_admin
+};
 
-/** Template language for reminder sends (can differ from booking in Meta). */
-const WHATSAPP_REMINDER_TEMPLATE_LANGUAGE_CODE = "en";
+/** Per-kind template language codes (all default to "en"; override per-kind if needed). */
+const TEMPLATE_LANGUAGE_CODES: Record<notification_kind, string> = {
+  booking: "en",
+  reminder: "en",
+  cancel: "en",
+  reschedule: "en",
+};
 
 export async function POST(req: Request) {
   try {
@@ -58,10 +72,15 @@ export async function POST(req: Request) {
       admin_phone,
       skip_contact_form_email = false,
       notification_kind = "booking",
+      cancelled_by,
     } = body;
 
-    const whatsapp_flow_kind: "booking" | "reminder" =
-      notification_kind === "reminder" ? "reminder" : "booking";
+    const validKinds: notification_kind[] = ["booking", "reminder", "cancel", "reschedule"];
+    const whatsapp_flow_kind: notification_kind = validKinds.includes(
+      notification_kind as notification_kind
+    )
+      ? (notification_kind as notification_kind)
+      : "booking";
 
     if (!phone) {
       return NextResponse.json(
@@ -139,19 +158,9 @@ export async function POST(req: Request) {
     let adminWhatsappError: string | null = null;
     let adminWhatsappResults: unknown[] = [];
 
-    // ─── Booking vs reminder: same body + URL-button parameter lists; reminder template names + languages are module constants ───
-    const userTemplateName =
-      whatsapp_flow_kind === "reminder"
-        ? WHATSAPP_REMINDER_USER_TEMPLATE_NAME
-        : "booking_confirmation";
-    const adminTemplateName =
-      whatsapp_flow_kind === "reminder"
-        ? WHATSAPP_REMINDER_ADMIN_TEMPLATE_NAME
-        : "booking_received";
-    const languageCode =
-      whatsapp_flow_kind === "reminder"
-        ? WHATSAPP_REMINDER_TEMPLATE_LANGUAGE_CODE
-        : WHATSAPP_TEMPLATE_LANGUAGE_CODE;
+    const userTemplateName = USER_TEMPLATE_NAMES[whatsapp_flow_kind];
+    const adminTemplateName = ADMIN_TEMPLATE_NAMES[whatsapp_flow_kind];
+    const languageCode = TEMPLATE_LANGUAGE_CODES[whatsapp_flow_kind];
 
     const firstName = String(name).split(" ")[0] || String(name);
     const fullName = String(name);
@@ -178,32 +187,70 @@ export async function POST(req: Request) {
     const safeProvider = text_or_empty(provider);
     const safeNote = text_or_empty(note);
 
-    const userTemplateParams = [
-      firstName || "N/A",
-      fullName || "N/A",
-      email ? String(email) : "Not provided",
-      String(phone) || "N/A",
-      safeService || "N/A",
-      safeDepartment || "N/A",
-      safeProvider || "N/A",
-      formattedStart,
-      formattedEnd,
-      safeNote || "N/A",
-      String(arrive_early_min ?? 10),
-      String(arrive_early_max ?? 15),
-    ];
+    const safeCancelledBy = text_or_empty(cancelled_by) || "N/A";
 
-    const adminTemplateParams = [
-      fullName || "N/A",
-      email ? String(email) : "Not provided",
-      String(phone) || "N/A",
-      safeService || "N/A",
-      safeDepartment || "N/A",
-      safeProvider || "N/A",
-      formattedStart,
-      formattedEnd,
-      safeNote || "N/A",
-    ];
+    const userTemplateParamsByKind: Record<notification_kind, string[]> = {
+      booking: [
+        firstName || "N/A",
+        fullName || "N/A",
+        email ? String(email) : "Not provided",
+        String(phone) || "N/A",
+        safeService || "N/A",
+        safeDepartment || "N/A",
+        safeProvider || "N/A",
+        formattedStart,
+        formattedEnd,
+        safeNote || "N/A",
+        String(arrive_early_min ?? 10),
+        String(arrive_early_max ?? 15),
+      ],
+      reminder: [
+        firstName || "N/A",
+        safeService || "N/A",
+        safeProvider || "N/A",
+        safeDepartment || "N/A",
+        formattedStart,
+        formattedEnd,
+        String(arrive_early_min ?? 10),
+      ],
+      cancel: [
+        firstName || "N/A",
+        safeService || "N/A",
+        safeProvider || "N/A",
+        formattedStart,
+        formattedEnd,
+        safeCancelledBy,
+      ],
+      reschedule: [
+        firstName || "N/A",
+        safeService || "N/A",
+        safeProvider || "N/A",
+        safeDepartment || "N/A",
+        formattedStart,
+        formattedEnd,
+        String(arrive_early_min ?? 10),
+      ],
+    };
+
+    const adminTemplateParamsByKind: Record<notification_kind, string[]> = {
+      booking: [
+        fullName || "N/A",
+        email ? String(email) : "Not provided",
+        String(phone) || "N/A",
+        safeService || "N/A",
+        safeDepartment || "N/A",
+        safeProvider || "N/A",
+        formattedStart,
+        formattedEnd,
+        safeNote || "N/A",
+      ],
+      reminder: userTemplateParamsByKind.reminder,
+      cancel: userTemplateParamsByKind.cancel,
+      reschedule: userTemplateParamsByKind.reschedule,
+    };
+
+    const userTemplateParams = userTemplateParamsByKind[whatsapp_flow_kind];
+    const adminTemplateParams = adminTemplateParamsByKind[whatsapp_flow_kind];
 
     if (send_to_user) {
       const userTemplateComponents: WhatsAppTemplateComponent[] = [
@@ -214,18 +261,21 @@ export async function POST(req: Request) {
             text: String(param).substring(0, 32768),
           })),
         },
-        {
+      ];
+
+      if (booking_reference) {
+        userTemplateComponents.push({
           type: "button",
           sub_type: "url",
           index: "0",
           parameters: [
             {
               type: "text",
-              text: String(booking_reference || "booking"),
+              text: String(booking_reference),
             },
           ],
-        },
-      ];
+        });
+      }
 
       console.log("Sending WhatsApp template to user:", {
         flow: whatsapp_flow_kind,
@@ -278,6 +328,20 @@ export async function POST(req: Request) {
           })),
         },
       ];
+
+      if (booking_reference) {
+        adminTemplateComponents.push({
+          type: "button",
+          sub_type: "url",
+          index: "0",
+          parameters: [
+            {
+              type: "text",
+              text: String(booking_reference),
+            },
+          ],
+        });
+      }
 
       try {
         const adminPromises = adminNumbers.map((adminPhone) =>

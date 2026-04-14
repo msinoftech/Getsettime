@@ -15,11 +15,12 @@ export type post_booking_whatsapp_notification_payload = {
   arrive_early_min?: number;
   arrive_early_max?: number;
   booking_reference?: string;
+  cancelled_by?: string;
   send_to_user: boolean;
   send_to_admin: boolean;
   admin_phone?: string[];
   skip_contact_form_email: true;
-  notification_kind?: "booking" | "reminder";
+  notification_kind?: "booking" | "reminder" | "cancel" | "reschedule";
 };
 
 export type post_booking_whatsapp_notification_result = {
@@ -55,6 +56,9 @@ export async function post_booking_whatsapp_notification(
   }
   if (payload.booking_reference !== undefined) {
     body.booking_reference = payload.booking_reference;
+  }
+  if (payload.cancelled_by !== undefined) {
+    body.cancelled_by = payload.cancelled_by;
   }
   if (payload.admin_phone !== undefined && payload.admin_phone.length > 0) {
     body.admin_phone = payload.admin_phone;

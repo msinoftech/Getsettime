@@ -1,5 +1,5 @@
 import { createSupabaseClient, createSupabaseServerClient } from '@app/db';
-import { notFound } from 'next/navigation';
+import { notFound, redirect } from 'next/navigation';
 import type { Metadata } from 'next';
 import EmbedBookingForm from '@/src/components/Booking/EmbedBookingForm';
 
@@ -8,13 +8,20 @@ interface PageProps {
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 }
 
+/** URL-encoded `{{1}}` sometimes pasted into booking links by mistake. */
+const BOOKING_CODE_PLACEHOLDER = '%7B%7B1%7D%7D';
+
+function cleanSlug(raw: string): string {
+  return raw.replaceAll(BOOKING_CODE_PLACEHOLDER, '').trim();
+}
+
 async function getWorkspaceBySlug(slug: string) {
   try {
     // Try with anon key first (respects RLS)
     let supabase = createSupabaseClient();
     
     // Decode URL-encoded slug if needed
-    const decodedSlug = decodeURIComponent(slug);
+    const decodedSlug = decodeURIComponent(cleanSlug(slug));
     
     // First, try exact match
     const { data, error } = await supabase
@@ -126,7 +133,13 @@ async function getWorkspaceBySlug(slug: string) {
 export async function generateMetadata({
   params,
 }: PageProps): Promise<Metadata> {
-  const { workspaceSlug } = await params;
+  const { workspaceSlug: rawSlug } = await params;
+  const workspaceSlug = cleanSlug(rawSlug);
+
+  if (!workspaceSlug) {
+    return { title: 'Workspace Not Found' };
+  }
+
   const workspace = await getWorkspaceBySlug(workspaceSlug);
 
   if (!workspace) {
@@ -142,7 +155,17 @@ export async function generateMetadata({
 }
 
 export default async function EmbedBookingPage({ params, searchParams }: PageProps) {
-  const { workspaceSlug } = await params;
+  const { workspaceSlug: rawSlug } = await params;
+  const workspaceSlug = cleanSlug(rawSlug);
+
+  if (!workspaceSlug) {
+    notFound();
+  }
+
+  if (rawSlug !== workspaceSlug) {
+    redirect(`/${workspaceSlug}`);
+  }
+
   const workspace = await getWorkspaceBySlug(workspaceSlug);
   const query = await searchParams;
 

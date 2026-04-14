@@ -303,6 +303,7 @@ export async function POST(req: NextRequest) {
           send_to_admin: true,
           admin_phone: admin_whatsapp_phones,
           skip_contact_form_email: true,
+          notification_kind: 'reschedule',
         });
       }
     } catch { /* non-blocking */ }
