@@ -444,16 +444,16 @@ export default function RegisterForm() {
     return () => subscription.unsubscribe();
   }, [searchParams, router]);
 
-  useEffect(() => {
-    if (
-      searchParams.get("g_signup") === "1" &&
-      onboardingMode === false &&
-      !autoGoogleTriggeredRef.current
-    ) {
-      autoGoogleTriggeredRef.current = true;
-      handleGoogleSignup();
-    }
-  }, [searchParams, onboardingMode]);
+  // useEffect(() => {
+  //   if (
+  //     searchParams.get("g_signup") === "1" &&
+  //     onboardingMode === false &&
+  //     !autoGoogleTriggeredRef.current
+  //   ) {
+  //     autoGoogleTriggeredRef.current = true;
+  //     handleGoogleSignup();
+  //   }
+  // }, [searchParams, onboardingMode]);
 
   useEffect(() => {
     if (onboardingStep !== 3) {
