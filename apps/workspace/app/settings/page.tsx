@@ -1,6 +1,8 @@
 "use client";
 
 import React, { useState, useEffect } from 'react';
+import Link from 'next/link';
+import { TIMEZONE_OPTIONS } from '@/src/constants/timezone';
 
 export default function SettingsPage() {
   const [accountName, setAccountName] = useState('');
@@ -227,6 +229,12 @@ export default function SettingsPage() {
           <h3 className="text-xl font-semibold text-slate-800">Settings</h3>
           <p className="text-xs text-slate-500">Manage your account and branding preferences.</p>
         </div>
+        <Link
+          href="/change-password"
+          className="inline-flex items-center rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-indigo-700"
+        >
+          Change Password
+        </Link>
       </header>
 
       <div className="bg-white rounded-2xl border border-slate-100 shadow-md overflow-hidden">
@@ -331,26 +339,18 @@ export default function SettingsPage() {
                   <label className="block text-sm font-medium text-slate-700 mb-2">
                     Timezone
                   </label>
-                  <input
-                    type="text"
-                    list="timezone-options"
+                  <select
                     value={timezone}
                     onChange={(e) => setTimezone(e.target.value)}
                     className="w-full px-4 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    placeholder="e.g. Asia/Kolkata (leave empty to use visitor's timezone)"
-                  />
-                  <datalist id="timezone-options">
-                    <option value="Asia/Kolkata" />
-                    <option value="America/New_York" />
-                    <option value="America/Los_Angeles" />
-                    <option value="America/Chicago" />
-                    <option value="Europe/London" />
-                    <option value="Europe/Paris" />
-                    <option value="Asia/Dubai" />
-                    <option value="Asia/Singapore" />
-                    <option value="Australia/Sydney" />
-                    <option value="UTC" />
-                  </datalist>
+                  >
+                    <option value="">Use visitor&apos;s timezone</option>
+                    {TIMEZONE_OPTIONS.map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
+                  </select>
                   <p className="mt-1 text-xs text-slate-500">
                     Used for booking times in sidebar, emails, and API. IANA format (e.g. Asia/Kolkata).
                   </p>

@@ -1,12 +1,16 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useAuth } from "../../src/providers/AuthProvider";
 import { supabase } from "@/lib/supabaseClient";
+import { useDepartments, useServices } from "@/src/hooks/useBookingLookups";
 
 export default function ProfileCreative({ }) {
   const PROFILE_IMAGE_STORAGE_KEY = "workspace_profile_image";
   const PROFILE_IMAGE_EVENT = "workspace-profile-image-updated";
   const { user, loading } = useAuth(); 
+  const { data: departments, loading: departmentsLoading } = useDepartments();
+  const { data: services, loading: servicesLoading } = useServices();
   const [showPublic, setShowPublic] = useState(true);
   const [profileImage, setProfileImage] = useState<string | null>(null);
   const [selectedImageFile, setSelectedImageFile] = useState<File | null>(null);
@@ -22,6 +26,21 @@ export default function ProfileCreative({ }) {
     bio: "",
     phone: "",
   });
+  const [selectedDepartmentIds, setSelectedDepartmentIds] = useState<string[]>([]);
+  const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>([]);
+  const [needsDepartmentFallback, setNeedsDepartmentFallback] = useState(false);
+  const [needsServiceFallback, setNeedsServiceFallback] = useState(false);
+
+  const normalize_ids = (value: unknown): string[] => {
+    if (!Array.isArray(value)) return [];
+    return Array.from(
+      new Set(
+        value
+          .map((item) => (typeof item === "string" || typeof item === "number" ? String(item).trim() : ""))
+          .filter((item) => item.length > 0)
+      )
+    );
+  };
 
   useEffect(() => {
     if (!user) return;
@@ -54,7 +73,27 @@ export default function ProfileCreative({ }) {
     setSelectedImageFile(null);
     setSelectedImagePreview(null);
     setShowPublic(metadata.show_public_profile !== false);
+    const metadataDepartmentIds = normalize_ids(metadata.department_ids);
+    const metadataServiceIds = normalize_ids(metadata.service_ids);
+    setSelectedDepartmentIds(metadataDepartmentIds);
+    setSelectedServiceIds(metadataServiceIds);
+    setNeedsDepartmentFallback(metadataDepartmentIds.length === 0);
+    setNeedsServiceFallback(metadataServiceIds.length === 0);
   }, [user]);
+
+  useEffect(() => {
+    if (needsDepartmentFallback && !departmentsLoading && selectedDepartmentIds.length === 0 && departments.length > 0) {
+      setSelectedDepartmentIds([departments[0].id]);
+      setNeedsDepartmentFallback(false);
+    }
+  }, [departments, departmentsLoading, needsDepartmentFallback, selectedDepartmentIds.length]);
+
+  useEffect(() => {
+    if (needsServiceFallback && !servicesLoading && selectedServiceIds.length === 0 && services.length > 0) {
+      setSelectedServiceIds([services[0].id]);
+      setNeedsServiceFallback(false);
+    }
+  }, [needsServiceFallback, selectedServiceIds.length, services, servicesLoading]);
 
   const FEEDBACK_AUTO_DISMISS_MS = 5000;
 
@@ -89,6 +128,24 @@ export default function ProfileCreative({ }) {
     }
   };
 
+  const add_department = (departmentId: string) => {
+    if (selectedDepartmentIds.includes(departmentId)) return;
+    setSelectedDepartmentIds((prev) => [...prev, departmentId]);
+  };
+
+  const remove_department = (departmentId: string) => {
+    setSelectedDepartmentIds((prev) => prev.filter((id) => id !== departmentId));
+  };
+
+  const add_service = (serviceId: string) => {
+    if (selectedServiceIds.includes(serviceId)) return;
+    setSelectedServiceIds((prev) => [...prev, serviceId]);
+  };
+
+  const remove_service = (serviceId: string) => {
+    setSelectedServiceIds((prev) => prev.filter((id) => id !== serviceId));
+  };
+
   const handleSaveChanges = async () => {
     if (!user) return;
     setIsSaving(true);
@@ -117,6 +174,8 @@ export default function ProfileCreative({ }) {
       }
 
       const currentMetadata = (user.user_metadata ?? {}) as Record<string, unknown>;
+      const department_ids = Array.from(new Set(selectedDepartmentIds));
+      const service_ids = Array.from(new Set(selectedServiceIds));
       const { error: updateError } = await supabase.auth.updateUser({
         data: {
           ...currentMetadata,
@@ -126,6 +185,8 @@ export default function ProfileCreative({ }) {
           profile_link: form.link,
           show_public_profile: showPublic,
           avatar_url: avatarUrl,
+          department_ids,
+          service_ids,
         },
       });
 
@@ -180,6 +241,24 @@ export default function ProfileCreative({ }) {
       phone: (metadata.phone as string) || "",
     });
     setShowPublic(metadata.show_public_profile !== false);
+    const metadataDepartmentIds = normalize_ids(metadata.department_ids);
+    const metadataServiceIds = normalize_ids(metadata.service_ids);
+    setSelectedDepartmentIds(
+      metadataDepartmentIds.length > 0
+        ? metadataDepartmentIds
+        : departments.length > 0
+          ? [departments[0].id]
+          : []
+    );
+    setSelectedServiceIds(
+      metadataServiceIds.length > 0
+        ? metadataServiceIds
+        : services.length > 0
+          ? [services[0].id]
+          : []
+    );
+    setNeedsDepartmentFallback(false);
+    setNeedsServiceFallback(false);
     setSelectedImageFile(null);
     setSelectedImagePreview(null);
     setFeedback(null);
@@ -198,6 +277,17 @@ export default function ProfileCreative({ }) {
       .slice(0, 2) || "U";
   };
 
+  const selectedDepartments = selectedDepartmentIds
+    .map((id) => departments.find((department) => department.id === id))
+    .filter((department): department is { id: string; name: string } => Boolean(department));
+  const selectedServices = selectedServiceIds
+    .map((id) => services.find((service) => service.id === id))
+    .filter((service): service is { id: string; name: string } => Boolean(service));
+  const availableDepartments = departments.filter(
+    (department) => !selectedDepartmentIds.includes(department.id)
+  );
+  const availableServices = services.filter((service) => !selectedServiceIds.includes(service.id));
+
   if (loading) {
     return (
       <section className="relative space-y-6 mr-auto">
@@ -211,9 +301,17 @@ export default function ProfileCreative({ }) {
 
   return (
     <section className="relative space-y-6 mr-auto">
-        <header className="mb-8">
-            <h3 className="text-2xl font-semibold text-slate-800">Profile</h3>
-            <p className="text-xs text-slate-500">Manage your profile information and preferences</p>
+        <header className="mb-8 flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h3 className="text-2xl font-semibold text-slate-800">Profile</h3>
+              <p className="text-xs text-slate-500">Manage your profile information and preferences</p>
+            </div>
+            <Link
+              href="/change-password"
+              className="inline-flex items-center rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-indigo-700"
+            >
+              Change Password
+            </Link>
         </header>
 
         <div className="grid lg:grid-cols-3 gap-6">
@@ -277,6 +375,22 @@ export default function ProfileCreative({ }) {
                         <div>   
                             <p className="text-xs opacity-80 mb-1">Bio</p>
                             <p className="font-medium">{form.bio || "Your Bio"}</p>
+                        </div>
+                        <div>
+                            <p className="text-xs opacity-80 mb-1">Departments</p>
+                            <p className="font-medium">
+                              {selectedDepartments.length > 0
+                                ? selectedDepartments.map((department) => department.name).join(", ")
+                                : "No departments selected"}
+                            </p>
+                        </div>
+                        <div>
+                            <p className="text-xs opacity-80 mb-1">Services</p>
+                            <p className="font-medium">
+                              {selectedServices.length > 0
+                                ? selectedServices.map((service) => service.name).join(", ")
+                                : "No services selected"}
+                            </p>
                         </div>
                     </div>
 
@@ -357,6 +471,118 @@ export default function ProfileCreative({ }) {
                             className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition resize-none"
                             placeholder="Tell us about yourself..."
                             />
+                        </div>
+
+                        <div>
+                            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                              <label className="text-sm font-medium text-gray-700">Departments</label>
+                              <Link
+                                href="/departments"
+                                className="text-sm font-semibold text-indigo-700 hover:text-indigo-900 underline-offset-2 hover:underline"
+                              >
+                                Add Department
+                              </Link>
+                            </div>
+                            {selectedDepartments.length > 0 && (
+                              <div className="mb-3 flex flex-wrap gap-2">
+                                {selectedDepartments.map((department) => (
+                                  <span
+                                    key={department.id}
+                                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium bg-indigo-100 text-indigo-800"
+                                  >
+                                    {department.name}
+                                    <button
+                                      type="button"
+                                      onClick={() => remove_department(department.id)}
+                                      className="ml-1 inline-flex items-center justify-center w-4 h-4 rounded-full hover:bg-indigo-200 transition"
+                                      aria-label={`Remove ${department.name}`}
+                                    >
+                                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                      </svg>
+                                    </button>
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                            {departmentsLoading ? (
+                              <div className="text-sm text-slate-500">Loading departments...</div>
+                            ) : availableDepartments.length > 0 ? (
+                              <div className="border border-slate-300 rounded-lg p-3 max-h-40 overflow-y-auto">
+                                <div className="space-y-2">
+                                  {availableDepartments.map((department) => (
+                                    <button
+                                      key={department.id}
+                                      type="button"
+                                      onClick={() => add_department(department.id)}
+                                      className="w-full text-left px-3 py-2 rounded-md text-sm text-slate-700 hover:bg-indigo-50 hover:text-indigo-700 transition"
+                                    >
+                                      {department.name}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="text-sm text-slate-500 border border-slate-300 rounded-lg p-3">
+                                No more departments available to add.
+                              </div>
+                            )}
+                        </div>
+
+                        <div>
+                            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                              <label className="text-sm font-medium text-gray-700">Services</label>
+                              <Link
+                                href="/services"
+                                className="text-sm font-semibold text-indigo-700 hover:text-indigo-900 underline-offset-2 hover:underline"
+                              >
+                                Add Service
+                              </Link>
+                            </div>
+                            {selectedServices.length > 0 && (
+                              <div className="mb-3 flex flex-wrap gap-2">
+                                {selectedServices.map((service) => (
+                                  <span
+                                    key={service.id}
+                                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium bg-emerald-100 text-emerald-800"
+                                  >
+                                    {service.name}
+                                    <button
+                                      type="button"
+                                      onClick={() => remove_service(service.id)}
+                                      className="ml-1 inline-flex items-center justify-center w-4 h-4 rounded-full hover:bg-emerald-200 transition"
+                                      aria-label={`Remove ${service.name}`}
+                                    >
+                                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                      </svg>
+                                    </button>
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                            {servicesLoading ? (
+                              <div className="text-sm text-slate-500">Loading services...</div>
+                            ) : availableServices.length > 0 ? (
+                              <div className="border border-slate-300 rounded-lg p-3 max-h-40 overflow-y-auto">
+                                <div className="space-y-2">
+                                  {availableServices.map((service) => (
+                                    <button
+                                      key={service.id}
+                                      type="button"
+                                      onClick={() => add_service(service.id)}
+                                      className="w-full text-left px-3 py-2 rounded-md text-sm text-slate-700 hover:bg-emerald-50 hover:text-emerald-800 transition"
+                                    >
+                                      {service.name}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="text-sm text-slate-500 border border-slate-300 rounded-lg p-3">
+                                No more services available to add.
+                              </div>
+                            )}
                         </div>
                     </div>
                 </div>
