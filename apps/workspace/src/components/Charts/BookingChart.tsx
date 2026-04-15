@@ -1,5 +1,4 @@
 "use client";
-
 import dynamic from "next/dynamic";
 import { useMemo } from "react";
 import { ApexOptions } from "apexcharts";
@@ -33,14 +32,6 @@ export default function BookingChart({ loading, weekDayLabels, bookingsByDay }: 
       },
       xaxis: {
         categories: labels,
-      },
-      title: {
-        text: "Bookings by Day",
-        align: "left",
-        style: {
-          fontSize: "18px",
-          fontWeight: "bold",
-        },
       },
       fill: {
         type: "gradient",
@@ -79,7 +70,7 @@ export default function BookingChart({ loading, weekDayLabels, bookingsByDay }: 
         options={chartData.options}
         series={chartData.series}
         type="area"
-        height={350}
+        height={330}
       />
     </div>
   );

@@ -1,5 +1,4 @@
 "use client";
-
 import dynamic from "next/dynamic";
 import { useMemo } from "react";
 import { ApexOptions } from "apexcharts";
@@ -64,7 +63,7 @@ export default function BookingStatusChart({
 
     const options: ApexOptions = {
       chart: {
-        type: "donut",
+        type: "pie",
         toolbar: { show: false },
       },
       labels,
@@ -89,13 +88,6 @@ export default function BookingStatusChart({
           donut: {
             size: "70%",
             labels: {
-              show: true,
-              name: {
-                show: true,
-                fontSize: "16px",
-                fontWeight: "bold",
-                color: "#374151",
-              },
               value: {
                 show: true,
                 fontSize: "24px",
@@ -117,14 +109,6 @@ export default function BookingStatusChart({
               },
             },
           },
-        },
-      },
-      title: {
-        text: "Booking Status Overview",
-        align: "left",
-        style: {
-          fontSize: "18px",
-          fontWeight: "bold",
         },
       },
       tooltip: {
@@ -160,13 +144,11 @@ export default function BookingStatusChart({
   }
 
   return (
-    <div className="w-full mx-auto">
-      <ApexCharts
-        options={chartData.options}
-        series={chartData.series}
-        type="donut"
-        height={400}
-      />
-    </div>
+    <ApexCharts
+      options={chartData.options}
+      series={chartData.series}
+      type="pie"
+      height={340}
+    />
   );
 }
