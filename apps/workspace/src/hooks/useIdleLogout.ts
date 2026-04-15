@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 const ACTIVITY_THROTTLE_MS = 1000;
+const STORAGE_KEY = 'workspace_idle_logout_sync_v1';
 
 const ACTIVITY_EVENTS = [
   'pointerdown',
@@ -16,6 +17,11 @@ export type IdleLogoutState = {
   showWarning: boolean;
   secondsRemaining: number;
   staySignedIn: () => void;
+};
+
+type workspace_idle_logout_sync_state = {
+  lastActivityAt: number;
+  logoutAt: number;
 };
 
 export function useIdleLogout(
@@ -37,74 +43,99 @@ export function useIdleLogout(
   onLogoutRef.current = onLogout;
   enabledRef.current = enabled;
 
-  const phase1Ref = useRef<number | null>(null);
-  const countdownRef = useRef<number | null>(null);
-  const remainingRef = useRef(0);
+  const tickerRef = useRef<number | null>(null);
   const lastThrottleRef = useRef(0);
+  const logoutTriggeredRef = useRef(false);
 
   const clearAllTimers = useCallback(() => {
-    if (phase1Ref.current !== null) {
-      clearTimeout(phase1Ref.current);
-      phase1Ref.current = null;
-    }
-    if (countdownRef.current !== null) {
-      clearInterval(countdownRef.current);
-      countdownRef.current = null;
+    if (tickerRef.current !== null) {
+      clearInterval(tickerRef.current);
+      tickerRef.current = null;
     }
   }, []);
 
-  const openWarningPhase = useCallback(() => {
-    clearAllTimers();
-    const warningMsLocal = warningMsRef.current;
-    const secs = Math.max(1, Math.ceil(warningMsLocal / 1000));
-    remainingRef.current = secs;
-    setShowWarning(true);
-    setSecondsRemaining(secs);
-    countdownRef.current = window.setInterval(() => {
-      remainingRef.current -= 1;
-      setSecondsRemaining(remainingRef.current);
-      if (remainingRef.current <= 0) {
-        if (countdownRef.current !== null) {
-          clearInterval(countdownRef.current);
-          countdownRef.current = null;
-        }
-        setShowWarning(false);
-        void Promise.resolve(onLogoutRef.current());
+  const readSyncState = useCallback((): workspace_idle_logout_sync_state | null => {
+    try {
+      const raw = window.localStorage.getItem(STORAGE_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw) as Partial<workspace_idle_logout_sync_state>;
+      if (
+        typeof parsed.lastActivityAt !== 'number' ||
+        !Number.isFinite(parsed.lastActivityAt) ||
+        typeof parsed.logoutAt !== 'number' ||
+        !Number.isFinite(parsed.logoutAt)
+      ) {
+        return null;
       }
-    }, 1000);
+      return {
+        lastActivityAt: parsed.lastActivityAt,
+        logoutAt: parsed.logoutAt,
+      };
+    } catch {
+      return null;
+    }
   }, [clearAllTimers]);
 
-  const startPhase1 = useCallback(() => {
-    clearAllTimers();
-    setShowWarning(false);
-    setSecondsRemaining(0);
+  const writeActivityState = useCallback((): workspace_idle_logout_sync_state => {
+    const now = Date.now();
+    const next: workspace_idle_logout_sync_state = {
+      lastActivityAt: now,
+      logoutAt: now + idleMsRef.current,
+    };
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+    return next;
+  }, []);
+
+  const syncFromState = useCallback(
+    (state: workspace_idle_logout_sync_state | null) => {
+      if (!enabledRef.current) {
+        setShowWarning(false);
+        setSecondsRemaining(0);
+        return;
+      }
+
+      if (!state) {
+        setShowWarning(false);
+        setSecondsRemaining(0);
+        return;
+      }
+
+      const remainingMs = state.logoutAt - Date.now();
+      if (remainingMs <= 0) {
+        setShowWarning(false);
+        setSecondsRemaining(0);
+        if (!logoutTriggeredRef.current) {
+          logoutTriggeredRef.current = true;
+          void Promise.resolve(onLogoutRef.current());
+        }
+        return;
+      }
+
+      logoutTriggeredRef.current = false;
+      const secs = Math.ceil(remainingMs / 1000);
+      const warningMsLocal = warningMsRef.current;
+      setShowWarning(remainingMs <= warningMsLocal);
+      setSecondsRemaining(secs);
+    },
+    []
+  );
+
+  const resetIdleDeadline = useCallback(() => {
     if (!enabledRef.current) return;
-
-    const idle = idleMsRef.current;
-    const warning = warningMsRef.current;
-    const phase1Ms = Math.max(0, idle - warning);
-
-    if (phase1Ms <= 0) {
-      openWarningPhase();
-      return;
-    }
-
-    phase1Ref.current = window.setTimeout(() => {
-      phase1Ref.current = null;
-      openWarningPhase();
-    }, phase1Ms);
-  }, [clearAllTimers, openWarningPhase]);
+    const next = writeActivityState();
+    syncFromState(next);
+  }, [syncFromState, writeActivityState]);
 
   const staySignedIn = useCallback(() => {
-    startPhase1();
-  }, [startPhase1]);
+    resetIdleDeadline();
+  }, [resetIdleDeadline]);
 
   const handleActivity = useCallback(() => {
     const now = Date.now();
     if (now - lastThrottleRef.current < ACTIVITY_THROTTLE_MS) return;
     lastThrottleRef.current = now;
-    startPhase1();
-  }, [startPhase1]);
+    resetIdleDeadline();
+  }, [resetIdleDeadline]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -113,15 +144,42 @@ export function useIdleLogout(
       clearAllTimers();
       setShowWarning(false);
       setSecondsRemaining(0);
+      logoutTriggeredRef.current = false;
       return;
     }
 
-    startPhase1();
+    const existing = readSyncState();
+    if (!existing || existing.logoutAt <= Date.now()) {
+      const next = writeActivityState();
+      syncFromState(next);
+    } else {
+      syncFromState(existing);
+    }
+
+    tickerRef.current = window.setInterval(() => {
+      syncFromState(readSyncState());
+    }, 1000);
+
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key !== STORAGE_KEY) return;
+      syncFromState(readSyncState());
+    };
+
+    const handleVisibilityOrFocus = () => {
+      syncFromState(readSyncState());
+    };
+
+    window.addEventListener('storage', handleStorage);
+    document.addEventListener('visibilitychange', handleVisibilityOrFocus);
+    window.addEventListener('focus', handleVisibilityOrFocus);
 
     return () => {
+      window.removeEventListener('storage', handleStorage);
+      document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
+      window.removeEventListener('focus', handleVisibilityOrFocus);
       clearAllTimers();
     };
-  }, [enabled, idleMs, warningMs, clearAllTimers, startPhase1]);
+  }, [enabled, idleMs, warningMs, clearAllTimers, readSyncState, syncFromState, writeActivityState]);
 
   useEffect(() => {
     if (typeof window === 'undefined' || !enabled) return;
