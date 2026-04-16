@@ -11,6 +11,8 @@ interface Rule {
   target: string;
 }
 
+/*
+TEMP DISABLED: Services intake support
 interface Service {
   id: string;
   workspace_id: string;
@@ -20,6 +22,7 @@ interface Service {
   created_at: string;
   updated_at: string;
 }
+*/
 
 interface CustomField {
   id: string;
@@ -50,10 +53,13 @@ export default function RoutingForm({ dark = false }) {
     name: true,
     email: true,
     phone: false,
+    /*
+    TEMP DISABLED: Services intake support
     services: {
       enabled: false,
       allowed_service_ids: [] as string[],
     },
+    */
     file_upload: false,
     additional_description: false,
     custom_fields: [] as CustomField[],
@@ -69,17 +75,19 @@ export default function RoutingForm({ dark = false }) {
     placeholder: '',
   });
 
-  const [services, setServices] = useState<Service[]>([]);
   const [loading, setLoading] = useState(false);
-  const [serviceSearch, setServiceSearch] = useState("");
   const [alertMessage, setAlertMessage] = useState<string | null>(null);
   const [deleteRuleId, setDeleteRuleId] = useState<number | null>(null);
 
-  // Fetch services and settings on mount
+  // Fetch settings on mount
   useEffect(() => {
-    fetchServices();
     fetchIntakeFormSettings();
   }, []);
+
+  /*
+  TEMP DISABLED: Services intake support
+  const [services, setServices] = useState<Service[]>([]);
+  const [serviceSearch, setServiceSearch] = useState("");
 
   const fetchServices = async () => {
     try {
@@ -100,6 +108,7 @@ export default function RoutingForm({ dark = false }) {
       console.error('Error fetching services:', error);
     }
   };
+  */
 
   const fetchIntakeFormSettings = async () => {
     try {
@@ -119,10 +128,13 @@ export default function RoutingForm({ dark = false }) {
             name: data.settings.intake_form.name ?? true,
             email: data.settings.intake_form.email ?? true,
             phone: data.settings.intake_form.phone ?? false,
+            /*
+            TEMP DISABLED: Services intake support
             services: data.settings.intake_form.services ?? {
               enabled: false,
               allowed_service_ids: [],
             },
+            */
             file_upload: data.settings.intake_form.file_upload ?? false,
             additional_description: data.settings.intake_form.additional_description ?? false,
             custom_fields: data.settings.intake_form.custom_fields ?? [],
@@ -182,7 +194,6 @@ export default function RoutingForm({ dark = false }) {
 
   const handleIntakeFormCancel = () => {
     setShowIntakeForm(false);
-    setServiceSearch("");
   };
 
   const handleIntakeFormSubmit = async (e: React.FormEvent) => {
@@ -224,6 +235,8 @@ export default function RoutingForm({ dark = false }) {
     }
   };
 
+  /*
+  TEMP DISABLED: Services intake support
   const handleToggleService = (serviceId: string) => {
     const isSelected = intakeFormSettings.services.allowed_service_ids.includes(serviceId);
     const newServiceIds = isSelected
@@ -238,6 +251,7 @@ export default function RoutingForm({ dark = false }) {
       },
     });
   };
+  */
 
   const handleDeleteRuleClick = (id: number) => setDeleteRuleId(id);
 
@@ -490,7 +504,8 @@ export default function RoutingForm({ dark = false }) {
                     </label>
                   </div>
 
-                  {/* Services Field Toggle */}
+                  {/*
+                  TEMP DISABLED: Services Field Toggle
                   <div className="p-3 rounded-lg border border-slate-200 bg-white">
                     <div className="flex items-center justify-between mb-3">
                       <div>
@@ -517,59 +532,51 @@ export default function RoutingForm({ dark = false }) {
                           <p className="text-xs text-slate-500 italic">No services available. Create services first.</p>
                         ) : (
                           <>
-                            {/* Selected Services */}
-                            {intakeFormSettings.services.allowed_service_ids.length > 0 && (
-                              <div className="space-y-2">
-                                <div className="flex items-center justify-between">
-                                  <p className="text-xs font-medium text-slate-700">
-                                    Selected Services ({intakeFormSettings.services.allowed_service_ids.length})
-                                  </p>
-                                  <button
-                                    type="button"
-                                    onClick={() => setIntakeFormSettings({
-                                      ...intakeFormSettings,
-                                      services: {
-                                        ...intakeFormSettings.services,
-                                        allowed_service_ids: []
-                                      }
-                                    })}
-                                    className="text-xs text-red-600 hover:text-red-800 font-medium"
-                                  >
-                                    Clear All
-                                  </button>
-                                </div>
-                                <div className="flex flex-wrap gap-2">
-                                  {services
-                                    .filter(service => intakeFormSettings.services.allowed_service_ids.includes(service.id))
-                                    .map((service) => (
-                                      <div
-                                        key={service.id}
-                                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-indigo-100 text-indigo-700 border border-indigo-300"
-                                      >
-                                        <span className="text-xs font-medium">{service.name}</span>
-                                        <button
-                                          type="button"
-                                          onClick={() => handleToggleService(service.id)}
-                                          className="hover:bg-indigo-200 rounded-full p-0.5 transition"
-                                          title="Remove service"
-                                        >
-                                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
-                                          </svg>
-                                        </button>
-                                      </div>
-                                    ))}
-                                </div>
-                              </div>
-                            )}
-
-                            {/* Search and Available Services */}
                             <div className="space-y-2">
-                              <p className="text-xs font-medium text-slate-700">
-                                Add Services
-                              </p>
-                              
-                              {/* Search Input */}
+                              <div className="flex items-center justify-between">
+                                <p className="text-xs font-medium text-slate-700">
+                                  Selected Services ({intakeFormSettings.services.allowed_service_ids.length})
+                                </p>
+                                <button
+                                  type="button"
+                                  onClick={() => setIntakeFormSettings({
+                                    ...intakeFormSettings,
+                                    services: {
+                                      ...intakeFormSettings.services,
+                                      allowed_service_ids: []
+                                    }
+                                  })}
+                                  className="text-xs text-red-600 hover:text-red-800 font-medium"
+                                >
+                                  Clear All
+                                </button>
+                              </div>
+                              <div className="flex flex-wrap gap-2">
+                                {services
+                                  .filter(service => intakeFormSettings.services.allowed_service_ids.includes(service.id))
+                                  .map((service) => (
+                                    <div
+                                      key={service.id}
+                                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-indigo-100 text-indigo-700 border border-indigo-300"
+                                    >
+                                      <span className="text-xs font-medium">{service.name}</span>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleToggleService(service.id)}
+                                        className="hover:bg-indigo-200 rounded-full p-0.5 transition"
+                                        title="Remove service"
+                                      >
+                                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                                        </svg>
+                                      </button>
+                                    </div>
+                                  ))}
+                              </div>
+                            </div>
+
+                            <div className="space-y-2">
+                              <p className="text-xs font-medium text-slate-700">Add Services</p>
                               <div className="relative">
                                 <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -594,10 +601,9 @@ export default function RoutingForm({ dark = false }) {
                                 )}
                               </div>
 
-                              {/* Available Services Chips */}
                               <div className="flex flex-wrap gap-2 min-h-[40px] p-2 rounded-lg border border-slate-200 bg-slate-50">
                                 {services
-                                  .filter(service => 
+                                  .filter(service =>
                                     !intakeFormSettings.services.allowed_service_ids.includes(service.id) &&
                                     (serviceSearch === "" || service.name.toLowerCase().includes(serviceSearch.toLowerCase()))
                                   )
@@ -615,7 +621,7 @@ export default function RoutingForm({ dark = false }) {
                                       <span className="text-xs font-medium">{service.name}</span>
                                     </button>
                                   ))}
-                                {services.filter(service => 
+                                {services.filter(service =>
                                   !intakeFormSettings.services.allowed_service_ids.includes(service.id) &&
                                   (serviceSearch === "" || service.name.toLowerCase().includes(serviceSearch.toLowerCase()))
                                 ).length === 0 && (
@@ -630,6 +636,7 @@ export default function RoutingForm({ dark = false }) {
                       </div>
                     )}
                   </div>
+                  */}
 
                   {/* Additional Description Field Toggle */}
                   <div className="flex flex-wrap gap-3 items-center justify-between p-3 rounded-lg border border-slate-200 bg-white">

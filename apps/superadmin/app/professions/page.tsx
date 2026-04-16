@@ -2,13 +2,51 @@
 import React, { useState, useEffect } from 'react';
 import { Pagination, usePagination } from '@app/ui';
 import { ProfessionTableSkeleton } from '@/src/components/Professions/ProfessionTableSkeleton';
+import * as AppIcons from '@app/icons';
 
 interface Profession {
   id: number;
   name: string;
   created_at: string;
   enabled: boolean;
+  icon: string | null;
 }
+
+type ProfessionForm = {
+  name: string;
+  icon: string;
+};
+
+type IconComponent = React.ComponentType<{ className?: string }>;
+
+const ICON_OPTIONS: Array<{
+  key: string;
+  label: string;
+  icon: IconComponent;
+}> = Object.entries(AppIcons)
+  .filter(([key, value]) => {
+    if (typeof value !== 'function') return false;
+    return key.startsWith('Fc') || key.startsWith('Fa') || key.startsWith('Md');
+  })
+  .map(([key, value]) => {
+    const label = key
+      .replace(/^(Fc|Fa|Md)/, '')
+      .replace(/([A-Z])/g, ' $1')
+      .trim();
+    return {
+      key,
+      label,
+      icon: value as IconComponent,
+    };
+  })
+  .sort((a, b) => a.label.localeCompare(b.label));
+
+const DEFAULT_ICON_KEY = 'FcBriefcase';
+const CUSTOM_ICON_PREFIX = 'data:image/';
+
+const isCustomIconValue = (iconValue: string | null | undefined): iconValue is string => {
+  return typeof iconValue === 'string' && iconValue.startsWith(CUSTOM_ICON_PREFIX);
+};
 
 const ProfessionsPage: React.FC = () => {
   const [professions, setProfessions] = useState<Profession[]>([]);
@@ -18,7 +56,9 @@ const ProfessionsPage: React.FC = () => {
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [editingProfession, setEditingProfession] = useState<Profession | null>(null);
   const [deletingProfession, setDeletingProfession] = useState<Profession | null>(null);
-  const [formData, setFormData] = useState({ name: '' });
+  const [formData, setFormData] = useState<ProfessionForm>({ name: '', icon: DEFAULT_ICON_KEY });
+  const [iconSearch, setIconSearch] = useState('');
+  const [uploadingIcon, setUploadingIcon] = useState(false);
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
   const [modalError, setModalError] = useState<string | null>(null);
@@ -58,7 +98,8 @@ const ProfessionsPage: React.FC = () => {
 
   const handleAdd = () => {
     setEditingProfession(null);
-    setFormData({ name: '' });
+    setFormData({ name: '', icon: DEFAULT_ICON_KEY });
+    setIconSearch('');
     setFormErrors({});
     setModalError(null);
     setIsModalOpen(true);
@@ -66,7 +107,8 @@ const ProfessionsPage: React.FC = () => {
 
   const handleEdit = (profession: Profession) => {
     setEditingProfession(profession);
-    setFormData({ name: profession.name });
+    setFormData({ name: profession.name, icon: profession.icon || DEFAULT_ICON_KEY });
+    setIconSearch('');
     setFormErrors({});
     setModalError(null);
     setIsModalOpen(true);
@@ -80,6 +122,8 @@ const ProfessionsPage: React.FC = () => {
   const closeModal = () => {
     setIsModalOpen(false);
     setEditingProfession(null);
+    setIconSearch('');
+    setUploadingIcon(false);
     setFormErrors({});
     setModalError(null);
   };
@@ -107,7 +151,7 @@ const ProfessionsPage: React.FC = () => {
     setModalError(null);
 
     try {
-      const payload = { name: formData.name.trim() };
+      const payload = { name: formData.name.trim(), icon: formData.icon };
 
       const response = editingProfession
         ? await fetch(`/api/professions-list/${editingProfession.id}`, {
@@ -216,6 +260,54 @@ const ProfessionsPage: React.FC = () => {
   useEffect(() => {
     setCurrentPage(1);
   }, [filters.search]);
+
+  const filteredIcons = ICON_OPTIONS.filter((item) => {
+    if (!iconSearch.trim()) return true;
+    const query = iconSearch.toLowerCase();
+    return (
+      item.label.toLowerCase().includes(query) ||
+      item.key.toLowerCase().includes(query)
+    );
+  });
+
+  const isCustomSelected = isCustomIconValue(formData.icon);
+  const selectedIcon =
+    ICON_OPTIONS.find((item) => item.key === formData.icon) ??
+    ICON_OPTIONS.find((item) => item.key === DEFAULT_ICON_KEY)!;
+  const SelectedIconComponent = selectedIcon.icon;
+
+  const handleIconUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      setModalError('Please upload an image file.');
+      return;
+    }
+    if (file.size > 1024 * 1024) {
+      setModalError('Icon file size must be 1MB or less.');
+      return;
+    }
+
+    setUploadingIcon(true);
+    setModalError(null);
+    try {
+      const reader = new FileReader();
+      const iconDataUrl = await new Promise<string>((resolve, reject) => {
+        reader.onload = () => resolve(String(reader.result || ''));
+        reader.onerror = () => reject(new Error('Failed to read icon file'));
+        reader.readAsDataURL(file);
+      });
+      if (!isCustomIconValue(iconDataUrl)) {
+        throw new Error('Unsupported icon format');
+      }
+      setFormData((prev) => ({ ...prev, icon: iconDataUrl }));
+    } catch (err: unknown) {
+      setModalError(err instanceof Error ? err.message : 'Failed to upload icon');
+    } finally {
+      setUploadingIcon(false);
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -328,7 +420,29 @@ const ProfessionsPage: React.FC = () => {
                   {paginatedProfessions.map((profession) => (
                     <tr key={profession.id} className="bg-white border border-slate-200 hover:bg-slate-50 transition-colors">
                       <td className="px-6 py-4 whitespace-nowrap align-middle text-sm" data-label="Name">
-                        <span className="font-semibold text-slate-900">{profession.name}</span>
+                      {(() => {
+                          if (isCustomIconValue(profession.icon)) {
+                            return (
+                              <span className="inline-flex h-9 w-9 items-center justify-center overflow-hidden p-1">
+                                <img
+                                  src={profession.icon}
+                                  alt={`${profession.name} icon`}
+                                  className="h-7 w-7 object-contain"
+                                />
+                              </span>
+                            );
+                          }
+                          const iconOption =
+                            ICON_OPTIONS.find((item) => item.key === profession.icon) ||
+                            ICON_OPTIONS.find((item) => item.key === DEFAULT_ICON_KEY)!;
+                          const IconPreview = iconOption.icon;
+                          return (
+                            <span className="inline-flex items-center justify-center p-2">
+                              <IconPreview className="h-5 w-5" />
+                            </span>
+                          );
+                        })()}
+                        <span className="inline-flex items-center justify-center font-semibold text-slate-900">{profession.name}</span>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap align-middle text-sm" data-label="Enabled">
                         <label className="inline-flex items-center gap-2 cursor-pointer">
@@ -421,6 +535,81 @@ const ProfessionsPage: React.FC = () => {
                   {formErrors.name && (
                     <p className="mt-1 text-sm text-red-600">{formErrors.name}</p>
                   )}
+                </div>
+
+                <div className="grid gap-3">
+                  <label className="block text-sm font-medium text-slate-700">
+                    Icon
+                  </label>
+                  <div className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2">
+                    {isCustomSelected ? (
+                      <img
+                        src={formData.icon}
+                        alt="Custom icon preview"
+                        className="h-6 w-6 object-contain"
+                      />
+                    ) : (
+                      <SelectedIconComponent className="h-6 w-6" />
+                    )}
+                    <div className="text-sm text-slate-700">
+                      {isCustomSelected ? 'Custom uploaded icon' : `${selectedIcon.label} (${selectedIcon.key})`}
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <label className="inline-flex cursor-pointer items-center rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50">
+                      Upload custom icon
+                      <input
+                        type="file"
+                        accept="image/png,image/jpeg,image/jpg,image/webp,image/svg+xml"
+                        className="hidden"
+                        onChange={handleIconUpload}
+                        disabled={uploadingIcon}
+                      />
+                    </label>
+                    {isCustomSelected && (
+                      <button
+                        type="button"
+                        onClick={() => setFormData((prev) => ({ ...prev, icon: DEFAULT_ICON_KEY }))}
+                        className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                      >
+                        Use library icon
+                      </button>
+                    )}
+                    {uploadingIcon && <span className="text-xs text-slate-500">Uploading icon...</span>}
+                  </div>
+                  <input
+                    type="text"
+                    value={iconSearch}
+                    onChange={(e) => setIconSearch(e.target.value)}
+                    className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                    placeholder="Search icons..."
+                  />
+                  <div className="grid max-h-56 grid-cols-2 gap-2 overflow-y-auto rounded-lg border border-slate-200 bg-white p-2 sm:grid-cols-3">
+                    {filteredIcons.map((iconOption) => {
+                      const IconOptionComponent = iconOption.icon;
+                      const isSelected = formData.icon === iconOption.key;
+                      return (
+                        <button
+                          key={iconOption.key}
+                          type="button"
+                          onClick={() => setFormData((prev) => ({ ...prev, icon: iconOption.key }))}
+                          className={`flex items-center gap-2 rounded-lg border px-2 py-2 text-left text-xs transition ${
+                            isSelected
+                              ? 'border-indigo-500 bg-indigo-50 text-indigo-700'
+                              : 'border-slate-200 bg-white text-slate-700 hover:border-indigo-300 hover:bg-indigo-50/50'
+                          }`}
+                        >
+                          <IconOptionComponent className="h-5 w-5 shrink-0" />
+                          <span className="truncate">{iconOption.label}</span>
+                        </button>
+                      );
+                    })}
+                    {filteredIcons.length === 0 && (
+                      <div className="col-span-full rounded-lg border border-dashed border-slate-200 px-3 py-4 text-center text-xs text-slate-500">
+                        No icons match your search.
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 <div className="flex justify-end gap-3">

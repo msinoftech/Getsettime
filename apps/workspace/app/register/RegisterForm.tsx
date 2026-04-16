@@ -1,8 +1,9 @@
 "use client";
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, type ComponentType } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
+import * as AppIcons from "@app/icons";
 import {
   workspaceAdminNeedsOnboardingWizard,
   workspaceOnboardingLastCompletedStep,
@@ -15,11 +16,28 @@ import AvailabilityTimesheet, {
 import AlertMessage from "@/src/components/Auth/AlertMessage";
 
 /** Row from professions_list (onboarding catalog), not workspace professions.id */
-type Profession = { id: number; name: string };
+type Profession = {
+  id: number;
+  name: string;
+  icon: string | null;
+  departments_count: number;
+};
+
+type IconComponent = ComponentType<{ className?: string }>;
 
 const ONBOARDING_STEPS = 4;
 const OTHER_VALUE = "__other__";
 const ONBOARDING_BOOTSTRAP_TIMEOUT_MS = 45_000;
+const CUSTOM_ICON_PREFIX = "data:image/";
+const DEFAULT_PROFESSION_ICON_KEY = "FcBriefcase";
+
+function isCustomProfessionIcon(iconValue: string | null | undefined): iconValue is string {
+  return typeof iconValue === "string" && iconValue.startsWith(CUSTOM_ICON_PREFIX);
+}
+
+function isLibraryProfessionIcon(iconValue: string | null | undefined): iconValue is keyof typeof AppIcons {
+  return typeof iconValue === "string" && iconValue in AppIcons;
+}
 
 async function with_network_timeout<T>(
   promise: Promise<T>,
@@ -117,8 +135,9 @@ export default function RegisterForm() {
   const [customProfession, setCustomProfession] = useState("");
   // Step 1 — Department
   const [departmentSuggestions, setDepartmentSuggestions] = useState<string[]>([]);
-  const [selectedDepartment, setSelectedDepartment] = useState<string>("");
+  const [selectedDepartments, setSelectedDepartments] = useState<string[]>([]);
   const [customDepartment, setCustomDepartment] = useState("");
+  const [customDepartmentMode, setCustomDepartmentMode] = useState(false);
   // Step 4
   const [meetingOptions, setMeetingOptions] = useState({
     google_meet: true,
@@ -357,10 +376,10 @@ export default function RegisterForm() {
           (n) => n.toLowerCase() === savedName.toLowerCase()
         );
         if (exactInSuggestions) {
-          setSelectedDepartment(exactInSuggestions);
+          setSelectedDepartments([exactInSuggestions]);
         } else {
-          setSelectedDepartment(OTHER_VALUE);
           setCustomDepartment(savedName);
+          setSelectedDepartments([savedName]);
         }
       }
     }
@@ -464,8 +483,16 @@ export default function RegisterForm() {
   useEffect(() => {
     if (onboardingMode !== true) return;
 
-    if (!selectedProfessionId || selectedProfessionId === OTHER_VALUE) {
+    if (!selectedProfessionId) {
       setDepartmentSuggestions([]);
+      setSelectedDepartments([]);
+      setCustomDepartmentMode(false);
+      return;
+    }
+
+    if (selectedProfessionId === OTHER_VALUE) {
+      setDepartmentSuggestions([]);
+      setCustomDepartmentMode(true);
       return;
     }
 
@@ -480,9 +507,18 @@ export default function RegisterForm() {
         const data = await res.json();
         if (cancelled || !res.ok) return;
         const list = data.departments;
-        setDepartmentSuggestions(Array.isArray(list) ? list : []);
+        const normalized = Array.isArray(list) ? list : [];
+        setDepartmentSuggestions(normalized);
+        setSelectedDepartments((prev) => {
+          const stillValid = prev.filter((name) => normalized.includes(name));
+          return stillValid;
+        });
       } catch {
-        if (!cancelled) setDepartmentSuggestions([]);
+        if (!cancelled) {
+          setDepartmentSuggestions([]);
+          setSelectedDepartments([]);
+          setCustomDepartmentMode(false);
+        }
       }
     })();
 
@@ -501,10 +537,14 @@ export default function RegisterForm() {
 
   const saveStep1 = async (): Promise<boolean> => {
     const isOtherProfession = selectedProfessionId === OTHER_VALUE;
-    const isOtherDepartment = selectedDepartment === OTHER_VALUE;
     const hasProfession = isOtherProfession ? !!customProfession.trim() : !!selectedProfessionId;
-    const departmentName = isOtherDepartment ? customDepartment.trim() : selectedDepartment;
-    const hasDepartment = !!departmentName;
+    const customDepartmentName = customDepartment.trim();
+    const departmentNames = [
+      ...selectedDepartments,
+      ...((isOtherProfession || customDepartmentMode) && customDepartmentName ? [customDepartmentName] : []),
+    ];
+    const uniqueDepartmentNames = Array.from(new Set(departmentNames.map((name) => name.trim()).filter(Boolean)));
+    const hasDepartment = uniqueDepartmentNames.length > 0;
 
     if (!hasProfession || !hasDepartment || workspaceId == null) return false;
     setOnboardingSaving(true);
@@ -535,11 +575,9 @@ export default function RegisterForm() {
       const existingDepts: { id: number; name: string }[] = existingRes.ok
         ? (await existingRes.json()).departments ?? []
         : [];
-      const alreadyExists = existingDepts.some(
-        (d) => d.name.toLowerCase() === departmentName.toLowerCase()
-      );
-
-      if (!alreadyExists) {
+      const existingNameSet = new Set(existingDepts.map((d) => d.name.toLowerCase()));
+      for (const departmentName of uniqueDepartmentNames) {
+        if (existingNameSet.has(departmentName.toLowerCase())) continue;
         const deptRes = await fetch("/api/departments", {
           method: "POST",
           headers,
@@ -549,6 +587,7 @@ export default function RegisterForm() {
           const err = await deptRes.json().catch(() => ({}));
           throw new Error(err.error ?? "Failed to create department");
         }
+        existingNameSet.add(departmentName.toLowerCase());
       }
 
       setWorkspaceType(professionName);
@@ -728,11 +767,17 @@ export default function RegisterForm() {
   if (onboardingMode === true) {
     const googleSync = onboardingUser?.google_calendar_sync === true;
     const googleEmail = onboardingUser?.email ?? "";
+    const selectedProfessionName =
+      selectedProfessionId === OTHER_VALUE
+        ? customProfession.trim() || "Other"
+        : professions.find((p) => p.id === Number(selectedProfessionId))?.name ?? "";
     const onboardingNextDisabled =
       onboardingSaving ||
       (onboardingStep === 1 &&
         ((selectedProfessionId === OTHER_VALUE ? !customProfession.trim() : !selectedProfessionId) ||
-          (selectedDepartment === OTHER_VALUE ? !customDepartment.trim() : !selectedDepartment)));
+          (selectedProfessionId === OTHER_VALUE
+            ? selectedDepartments.length === 0 && !customDepartment.trim()
+            : selectedDepartments.length === 0)));
 
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-white to-purple-50 py-8">
@@ -796,8 +841,8 @@ export default function RegisterForm() {
               {/* Profession badges */}
               <div>
                 <h2 className="text-lg font-semibold text-gray-800 mb-1">What is your profession?</h2>
-                <p className="text-sm text-gray-500 mb-4">Select the option that best describes your work</p>
-                <div className="grid grid-cols-2 gap-3">
+                <p className="text-sm text-gray-500 mb-4">Select the option that best describes your work.</p>
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                   {professions.map((p) => (
                     <button
                       key={p.id}
@@ -805,32 +850,68 @@ export default function RegisterForm() {
                       onClick={() => {
                         setSelectedProfessionId(String(p.id));
                         setCustomProfession("");
-                        setSelectedDepartment("");
+                        setSelectedDepartments([]);
                         setCustomDepartment("");
+                        setCustomDepartmentMode(false);
                       }}
-                      className={`flex items-center gap-3 px-4 py-3 rounded-xl border-2 text-left font-medium transition ${
+                      className={`flex items-center gap-3 px-4 py-4 rounded-2xl border text-left transition ${
                         selectedProfessionId === String(p.id)
-                          ? "border-blue-600 bg-blue-50 text-blue-700"
-                          : "border-gray-200 text-gray-700 hover:border-gray-300 hover:bg-gray-50"
+                          ? "border-violet-300 bg-violet-50 text-slate-900 shadow-sm"
+                          : "border-gray-200 bg-white text-slate-900 hover:border-gray-300 hover:bg-gray-50"
                       }`}
                     >
-                      <span className="text-base">{p.name}</span>
+                      <span className="flex h-12 w-12 items-center justify-center rounded-xl bg-slate-100 text-xl text-slate-700">
+                        {isCustomProfessionIcon(p.icon) ? (
+                          <Image
+                            src={p.icon}
+                            alt={`${p.name} icon`}
+                            width={24}
+                            height={24}
+                            className="h-6 w-6 object-contain"
+                            unoptimized
+                          />
+                        ) : (() => {
+                            const fallbackIcon = AppIcons[DEFAULT_PROFESSION_ICON_KEY];
+                            const Icon =
+                              (isLibraryProfessionIcon(p.icon)
+                                ? AppIcons[p.icon]
+                                : fallbackIcon) as IconComponent | undefined;
+                            return Icon ? (
+                              <Icon className="h-5 w-5 text-slate-600" />
+                            ) : (
+                              <span className="text-lg">💼</span>
+                            );
+                          })()}
+                      </span>
+                      <span className="min-w-0">
+                        <span className="block text-lg font-semibold leading-tight text-slate-900">{p.name}</span>
+                        <span className="block text-sm text-slate-500">
+                          {p.departments_count} department{p.departments_count === 1 ? "" : "s"}
+                        </span>
+                      </span>
                     </button>
                   ))}
                   <button
                     type="button"
                     onClick={() => {
                       setSelectedProfessionId(OTHER_VALUE);
-                      setSelectedDepartment("");
+                      setSelectedDepartments([]);
                       setCustomDepartment("");
+                      setCustomDepartmentMode(true);
                     }}
-                    className={`flex items-center gap-3 px-4 py-3 rounded-xl border-2 text-left font-medium transition ${
+                    className={`flex items-center gap-3 px-4 py-4 rounded-2xl border text-left transition ${
                       selectedProfessionId === OTHER_VALUE
-                        ? "border-blue-600 bg-blue-50 text-blue-700"
-                        : "border-gray-200 text-gray-700 hover:border-gray-300 hover:bg-gray-50"
+                        ? "border-violet-300 bg-violet-50 text-slate-900 shadow-sm"
+                        : "border-gray-200 bg-white text-slate-900 hover:border-gray-300 hover:bg-gray-50"
                     }`}
                   >
-                    <span className="text-base">Other</span>
+                    <span className="flex h-12 w-12 items-center justify-center rounded-xl bg-slate-100 text-xl">
+                      ✨
+                    </span>
+                    <span>
+                      <span className="block text-lg font-semibold leading-tight text-slate-900">Other</span>
+                      <span className="block text-sm text-slate-500">0 departments</span>
+                    </span>
                   </button>
                 </div>
                 {selectedProfessionId === OTHER_VALUE && (
@@ -847,37 +928,115 @@ export default function RegisterForm() {
 
               {/* Department */}
               <div>
-                <h2 className="text-lg font-semibold text-gray-800 mb-1">Department</h2>
-                <p className="text-sm text-gray-500 mb-4">
-                  {selectedProfessionId && selectedProfessionId !== OTHER_VALUE
-                    ? "Suggestions match the profession you selected above. You can still add a custom department."
-                    : "Choose a catalog profession first to see suggested departments, or use Other and enter your own."}
-                </p>
-                <select
-                  id="department"
-                  value={selectedDepartment}
-                  onChange={(e) => {
-                    setSelectedDepartment(e.target.value);
-                    if (e.target.value !== OTHER_VALUE) setCustomDepartment("");
-                  }}
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white"
-                >
-                  <option value="">Select a department</option>
-                  {departmentSuggestions.map((name) => (
-                    <option key={name} value={name}>{name}</option>
-                  ))}
-                  <option value={OTHER_VALUE}>Other</option>
-                </select>
-                {selectedDepartment === OTHER_VALUE && (
-                  <input
-                    type="text"
-                    placeholder="e.g. General Practice"
-                    className="mt-3 w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    value={customDepartment}
-                    onChange={(e) => setCustomDepartment(e.target.value)}
-                    autoFocus
-                  />
+                <h2 className="text-lg font-semibold text-gray-800 mb-3">Department Suggestions</h2>
+                {!!selectedProfessionName && selectedProfessionId !== OTHER_VALUE && (
+                  <div className="mb-4 flex justify-end">
+                    <span className="inline-flex items-center rounded-full bg-violet-100 px-3 py-1 text-sm font-medium text-violet-700">
+                      {selectedProfessionName}
+                    </span>
+                  </div>
                 )}
+                <div className="rounded-3xl border border-violet-200 bg-white p-5">
+                  <div className="mb-4 flex items-center justify-between">
+                    <h3 className="text-sm font-semibold tracking-[0.2em] text-violet-700 uppercase">Selected Departments</h3>
+                    <span className="inline-flex items-center rounded-full bg-violet-100 px-3 py-1 text-sm font-medium text-violet-700">
+                      {selectedDepartments.length} selected
+                    </span>
+                  </div>
+                  <div className="mb-6 flex flex-wrap gap-2">
+                    {selectedDepartments.length > 0 ? (
+                      selectedDepartments.map((name) => (
+                        <span key={name} className="inline-flex items-center gap-2 rounded-full bg-violet-600 px-4 py-2 text-sm font-medium text-white">
+                          {name}
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setSelectedDepartments((prev) => prev.filter((dept) => dept !== name))
+                            }
+                            className="rounded-full bg-violet-500 px-2 py-0.5 text-xs font-semibold hover:bg-violet-400"
+                          >
+                            Remove
+                          </button>
+                        </span>
+                      ))
+                    ) : (
+                      <p className="text-sm text-gray-500">No department selected yet.</p>
+                    )}
+                  </div>
+
+                  {selectedProfessionId &&
+                    selectedProfessionId !== OTHER_VALUE &&
+                    departmentSuggestions.length > 0 && (
+                    <div className="mb-6 flex flex-wrap gap-3">
+                      {departmentSuggestions.map((name) => {
+                        const isSelected = selectedDepartments.includes(name);
+                        return (
+                          <button
+                            key={name}
+                            type="button"
+                            onClick={() =>
+                              setSelectedDepartments((prev) =>
+                                prev.includes(name)
+                                  ? prev.filter((dept) => dept !== name)
+                                  : [...prev, name]
+                              )
+                            }
+                            className={`inline-flex items-center gap-2 rounded-full border px-5 py-2 text-base font-medium transition ${
+                              isSelected
+                                ? "border-violet-500 bg-violet-50 text-violet-700"
+                                : "border-slate-300 bg-white text-slate-700 hover:border-violet-300"
+                            }`}
+                          >
+                            {name}
+                            <span className="text-lg leading-none">{isSelected ? "−" : "+"}</span>
+                          </button>
+                        );
+                      })}
+                      <button
+                        type="button"
+                        onClick={() => setCustomDepartmentMode((prev) => !prev)}
+                        className={`inline-flex items-center gap-2 rounded-full border px-5 py-2 text-base font-medium transition ${
+                          customDepartmentMode
+                            ? "border-violet-500 bg-violet-50 text-violet-700"
+                            : "border-slate-300 bg-white text-slate-700 hover:border-violet-300"
+                        }`}
+                      >
+                        Other
+                        <span className="text-lg leading-none">{customDepartmentMode ? "−" : "+"}</span>
+                      </button>
+                    </div>
+                    )}
+
+                  {(selectedProfessionId === OTHER_VALUE || customDepartmentMode) && (
+                    <div className="rounded-2xl border border-dashed border-violet-200 p-4">
+                      <p className="mb-3 text-lg text-slate-700">Add custom department</p>
+                      <div className="flex flex-col gap-3 sm:flex-row">
+                        <input
+                          type="text"
+                          placeholder="e.g. Support, Accounts"
+                          className="flex-1 rounded-2xl border border-slate-300 px-4 py-3 text-base focus:ring-2 focus:ring-violet-400 focus:border-transparent"
+                          value={customDepartment}
+                          onChange={(e) => setCustomDepartment(e.target.value)}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const value = customDepartment.trim();
+                            if (!value) return;
+                            setSelectedDepartments((prev) => {
+                              if (prev.some((name) => name.toLowerCase() === value.toLowerCase())) return prev;
+                              return [...prev, value];
+                            });
+                            setCustomDepartment("");
+                          }}
+                          className="rounded-2xl bg-violet-600 px-6 py-3 text-white font-semibold hover:bg-violet-700 transition"
+                        >
+                          Add
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           )}

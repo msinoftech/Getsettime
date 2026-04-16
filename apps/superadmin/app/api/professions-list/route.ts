@@ -7,7 +7,7 @@ export async function GET() {
 
     const { data: rows, error } = await supabaseServer
       .from('professions_list')
-      .select('id, name, enabled, created_at, updated_at')
+      .select('id, name, icon, enabled, created_at, updated_at')
       .order('name', { ascending: true });
 
     if (error) {
@@ -26,13 +26,17 @@ export async function GET() {
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { name } = body as { name?: unknown };
+    const { name, icon } = body as { name?: unknown; icon?: unknown };
 
     if (typeof name !== 'string' || !name.trim()) {
       return NextResponse.json({ error: 'Name is required' }, { status: 400 });
     }
+    if (icon !== undefined && typeof icon !== 'string') {
+      return NextResponse.json({ error: 'Icon must be a string' }, { status: 400 });
+    }
 
     const trimmed = name.trim();
+    const trimmedIcon = typeof icon === 'string' && icon.trim() ? icon.trim() : 'FcBriefcase';
     const supabaseServer = getSupabaseServer();
 
     const { data: existing } = await supabaseServer
@@ -47,8 +51,8 @@ export async function POST(req: Request) {
 
     const { data: row, error } = await supabaseServer
       .from('professions_list')
-      .insert({ name: trimmed, enabled: true })
-      .select('id, name, enabled, created_at, updated_at')
+      .insert({ name: trimmed, icon: trimmedIcon, enabled: true })
+      .select('id, name, icon, enabled, created_at, updated_at')
       .single();
 
     if (error) {

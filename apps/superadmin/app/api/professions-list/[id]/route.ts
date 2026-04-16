@@ -9,10 +9,10 @@ export async function PUT(
     const resolvedParams = await Promise.resolve(params);
     const { id } = resolvedParams;
     const body = await req.json();
-    const { name, enabled } = body as { name?: unknown; enabled?: unknown };
+    const { name, enabled, icon } = body as { name?: unknown; enabled?: unknown; icon?: unknown };
 
-    if (name === undefined && enabled === undefined) {
-      return NextResponse.json({ error: 'Provide name and/or enabled' }, { status: 400 });
+    if (name === undefined && enabled === undefined && icon === undefined) {
+      return NextResponse.json({ error: 'Provide name and/or enabled and/or icon' }, { status: 400 });
     }
 
     const supabaseServer = getSupabaseServer();
@@ -45,6 +45,13 @@ export async function PUT(
         return NextResponse.json({ error: 'enabled must be a boolean' }, { status: 400 });
       }
       patch.enabled = enabled;
+    }
+
+    if (icon !== undefined) {
+      if (typeof icon !== 'string') {
+        return NextResponse.json({ error: 'icon must be a string' }, { status: 400 });
+      }
+      patch.icon = icon.trim() || 'FcBriefcase';
     }
 
     const { data: profession, error } = await supabaseServer
