@@ -64,6 +64,41 @@ function createAuthenticatedClient(req: NextRequest) {
   return { supabase, token };
 }
 
+type ServiceProviderMeta = { id: string; name: string };
+
+function normalizeServiceProviders(value: unknown): ServiceProviderMeta[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((entry) => {
+      if (!entry || typeof entry !== 'object') return null;
+      const e = entry as Record<string, unknown>;
+      const id = typeof e.id === 'string' ? e.id : null;
+      const name = typeof e.name === 'string' ? e.name : '';
+      if (!id) return null;
+      return { id, name };
+    })
+    .filter((e): e is ServiceProviderMeta => e !== null);
+}
+
+function parseMetaData(raw: unknown): Record<string, unknown> | null {
+  if (raw == null) return null;
+  if (typeof raw === 'string') {
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      return null;
+    }
+    return null;
+  }
+  if (typeof raw === 'object' && !Array.isArray(raw)) {
+    return raw as Record<string, unknown>;
+  }
+  return null;
+}
+
 // GET: Fetch all services for the workspace
 export async function GET(req: NextRequest) {
   try {
@@ -81,9 +116,11 @@ export async function GET(req: NextRequest) {
     }
 
     // RLS automatically filters by workspace_id from JWT
+    // flag=false rows are soft-deleted and must not appear in the workspace UI
     const { data, error } = await supabase
       .from('services')
       .select('*, departments(name)')
+      .eq('flag', true)
       .order('created_at', { ascending: false });
 
     if (error) {
@@ -115,7 +152,7 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json();
-    const { name, description, price, department_id } = body;
+    const { name, description, price, department_id, duration, status, meta_data } = body;
 
     if (!name || name.trim() === '') {
       return NextResponse.json({ error: 'Service name is required' }, { status: 400 });
@@ -138,6 +175,32 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: msg }, { status: 400 });
     }
 
+    const normalizedStatus: 'active' | 'inactive' =
+      status === 'inactive' ? 'inactive' : 'active';
+
+    const parsedDuration =
+      typeof duration === 'number'
+        ? Math.trunc(duration)
+        : duration !== undefined && duration !== null && String(duration).trim() !== ''
+          ? parseInt(String(duration), 10)
+          : 30;
+    const finalDuration =
+      Number.isFinite(parsedDuration) && parsedDuration > 0 ? parsedDuration : 30;
+
+    const incomingMeta = parseMetaData(meta_data);
+    const finalMetaData: Record<string, unknown> = {
+      service_providers: normalizeServiceProviders(incomingMeta?.service_providers),
+    };
+
+    // If the caller sent other top-level meta_data keys, preserve them.
+    if (incomingMeta) {
+      for (const [k, v] of Object.entries(incomingMeta)) {
+        if (k !== 'service_providers' && !(k in finalMetaData)) {
+          finalMetaData[k] = v;
+        }
+      }
+    }
+
     // RLS validates workspace_id matches JWT; we provide it for INSERT WITH CHECK policy
     const { data, error } = await supabase
       .from('services')
@@ -147,6 +210,10 @@ export async function POST(req: NextRequest) {
         description: description?.trim() || null,
         price: price ? parseFloat(price) : null,
         department_id: departmentIdResolved,
+        duration: finalDuration,
+        status: normalizedStatus,
+        flag: true,
+        meta_data: finalMetaData,
       })
       .select('*, departments(name)')
       .single();
@@ -187,14 +254,19 @@ export async function PUT(req: NextRequest) {
     }
 
     const body = await req.json();
-    const { id, name, description, price, department_id } = body;
+    const {
+      id,
+      name,
+      description,
+      price,
+      department_id,
+      duration,
+      status,
+      meta_data,
+    } = body;
 
     if (!id) {
       return NextResponse.json({ error: 'Service ID is required' }, { status: 400 });
-    }
-
-    if (!name || name.trim() === '') {
-      return NextResponse.json({ error: 'Service name is required' }, { status: 400 });
     }
 
     const workspaceId = user.user_metadata?.workspace_id;
@@ -202,10 +274,33 @@ export async function PUT(req: NextRequest) {
       return NextResponse.json({ error: 'Workspace ID not found' }, { status: 400 });
     }
 
-    let departmentIdResolved: number | null | undefined = undefined;
+    // Build the update payload only from fields actually present in the body so
+    // callers can perform narrow updates (e.g. just rename, toggle status, or
+    // mutate meta_data) without wiping unrelated columns.
+    const updatePayload: Record<string, unknown> = {};
+
+    if (name !== undefined) {
+      if (typeof name !== 'string' || name.trim() === '') {
+        return NextResponse.json({ error: 'Service name is required' }, { status: 400 });
+      }
+      updatePayload.name = name.trim();
+    }
+
+    if (description !== undefined) {
+      updatePayload.description =
+        typeof description === 'string' && description.trim() ? description.trim() : null;
+    }
+
+    if (price !== undefined) {
+      updatePayload.price =
+        price === null || price === ''
+          ? null
+          : parseFloat(String(price));
+    }
+
     if (department_id !== undefined) {
       try {
-        departmentIdResolved = await resolveDepartmentIdForWorkspace(
+        updatePayload.department_id = await resolveDepartmentIdForWorkspace(
           supabase,
           workspaceId,
           department_id
@@ -216,13 +311,66 @@ export async function PUT(req: NextRequest) {
       }
     }
 
-    const updatePayload: Record<string, unknown> = {
-      name: name.trim(),
-      description: description?.trim() || null,
-      price: price ? parseFloat(price) : null,
-    };
-    if (departmentIdResolved !== undefined) {
-      updatePayload.department_id = departmentIdResolved;
+    if (duration !== undefined) {
+      const parsed =
+        typeof duration === 'number' ? Math.trunc(duration) : parseInt(String(duration), 10);
+      if (!Number.isFinite(parsed) || parsed <= 0) {
+        return NextResponse.json(
+          { error: 'Duration must be a positive number of minutes' },
+          { status: 400 }
+        );
+      }
+      updatePayload.duration = parsed;
+    }
+
+    if (status !== undefined) {
+      if (status !== 'active' && status !== 'inactive') {
+        return NextResponse.json(
+          { error: "Invalid status; must be 'active' or 'inactive'" },
+          { status: 400 }
+        );
+      }
+      updatePayload.status = status;
+    }
+
+    if (meta_data !== undefined) {
+      const { data: existing, error: fetchError } = await supabase
+        .from('services')
+        .select('meta_data')
+        .eq('id', id)
+        .single();
+
+      if (fetchError || !existing) {
+        return NextResponse.json(
+          { error: 'Service not found or unauthorized' },
+          { status: 404 }
+        );
+      }
+
+      const parsedMetaData = parseMetaData(meta_data);
+      const existingMetaData =
+        (existing.meta_data as Record<string, unknown> | null) ?? {};
+      const mergedMetaData: Record<string, unknown> = { ...existingMetaData };
+
+      if (parsedMetaData) {
+        if ('service_providers' in parsedMetaData) {
+          mergedMetaData.service_providers = normalizeServiceProviders(
+            parsedMetaData.service_providers
+          );
+        }
+        // Preserve any other top-level keys the caller sent.
+        for (const [k, v] of Object.entries(parsedMetaData)) {
+          if (k !== 'service_providers') {
+            mergedMetaData[k] = v;
+          }
+        }
+      }
+
+      updatePayload.meta_data = mergedMetaData;
+    }
+
+    if (Object.keys(updatePayload).length === 0) {
+      return NextResponse.json({ error: 'No fields to update' }, { status: 400 });
     }
 
     // RLS automatically filters by workspace_id from JWT
@@ -246,7 +394,7 @@ export async function PUT(req: NextRequest) {
       type: 'service',
       action: 'updated',
       title: 'Service updated',
-      description: data?.name || name.trim(),
+      description: data?.name || (typeof name === 'string' ? name.trim() : ''),
     });
 
     return NextResponse.json({ service: data });
@@ -257,7 +405,7 @@ export async function PUT(req: NextRequest) {
   }
 }
 
-// DELETE: Delete a service
+// DELETE: Soft-delete a service so its doctor assignments can be restored later
 export async function DELETE(req: NextRequest) {
   try {
     const result = createAuthenticatedClient(req);
@@ -279,10 +427,12 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ error: 'Service ID is required' }, { status: 400 });
     }
 
-    // RLS automatically filters by workspace_id from JWT
+    // Soft delete: set flag=false so the row disappears from the workspace UI
+    // but preserves meta_data.service_providers so doctors stay mapped if the
+    // service is restored later. RLS enforces workspace isolation.
     const { error } = await supabase
       .from('services')
-      .delete()
+      .update({ flag: false })
       .eq('id', id);
 
     if (error) {
@@ -307,4 +457,3 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ error: error?.message || 'Server error' }, { status: 500 });
   }
 }
-

@@ -18,6 +18,21 @@ import { Step1DepartmentProvider } from './MultiStepBooking/Step1DepartmentProvi
 import { Step2ServiceSelection } from './MultiStepBooking/Step2ServiceSelection';
 import { Step4IntakeForm } from './MultiStepBooking/Step4IntakeForm';
 import { Step5Success } from './MultiStepBooking/Step5Success';
+import { AdminNoticeBanner, AdminNoticeIcon } from './MultiStepBooking/AdminNotice';
+import { useAuth } from '@/src/providers/AuthProvider';
+
+function resolve_admin_notice(user: unknown): string | null {
+  if (!user || typeof user !== 'object') return null;
+  const metadata = (user as { user_metadata?: Record<string, unknown> | null })
+    .user_metadata;
+  if (!metadata || typeof metadata !== 'object') return null;
+  const settings = (metadata as Record<string, unknown>).event_type_settings;
+  if (!settings || typeof settings !== 'object') return null;
+  const notice = (settings as Record<string, unknown>).admin_notice;
+  if (typeof notice !== 'string') return null;
+  const trimmed = notice.trim();
+  return trimmed ? trimmed : null;
+}
 
 const Step3DateTime = lazy(() =>
   import('./MultiStepBooking/Step3DateTime').then((m) => ({ default: m.Step3DateTime }))
@@ -36,6 +51,8 @@ const StepFallback = () => (
 
 const MultiStepBookingForm = ({ onSave, onCancel }: MultiStepBookingFormProps) => {
   const { general, settings, loading: loadingSettings } = useWorkspaceSettings();
+  const { user } = useAuth();
+  const admin_notice = resolve_admin_notice(user);
   const [step, setStep] = useState(1);
   const [selectedDepartment, setSelectedDepartment] = useState<Department | null>(null);
   const [selectedProvider, setSelectedProvider] = useState<ServiceProvider | null>(null);
@@ -352,6 +369,12 @@ const MultiStepBookingForm = ({ onSave, onCancel }: MultiStepBookingFormProps) =
           <div className="absolute -top-40 -right-40 w-80 h-80 rounded-full opacity-10 blur-3xl" style={{ background: `radial-gradient(circle, ${primary}, transparent)` }} />
           <div className="absolute -bottom-40 -left-40 w-80 h-80 rounded-full opacity-10 blur-3xl" style={{ background: `radial-gradient(circle, ${accent}, transparent)` }} />
         </div>
+        {/*admin_notice && (
+          <AdminNoticeIcon
+            notice={admin_notice}
+            className="absolute right-3 top-3 sm:right-4 sm:top-4"
+          />
+        )*/}
         <div className="flex flex-col lg:grid lg:grid-cols-2 relative z-10">
           <BookingPreviewSidebar
             workspaceName={workspaceName}
@@ -493,6 +516,11 @@ const MultiStepBookingForm = ({ onSave, onCancel }: MultiStepBookingFormProps) =
             </div>
           </div>
         </div>
+        {/*admin_notice && (
+          <div className="relative z-10 border-t border-slate-200 bg-white px-4 py-3 sm:px-6 lg:px-8">
+            <AdminNoticeBanner notice={admin_notice} className="mt-0" />
+          </div>
+        )*/}
       </div>
     </div>
   );

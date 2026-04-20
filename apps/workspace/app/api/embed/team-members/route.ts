@@ -96,6 +96,18 @@ export async function GET(req: NextRequest) {
           typeof phoneRaw === 'string' && phoneRaw.trim() !== ''
             ? phoneRaw
             : null;
+
+        const eventTypeSettingsRaw = meta?.event_type_settings;
+        const eventTypeSettings =
+          eventTypeSettingsRaw && typeof eventTypeSettingsRaw === 'object'
+            ? (eventTypeSettingsRaw as Record<string, unknown>)
+            : null;
+        const adminNoticeRaw = eventTypeSettings?.admin_notice;
+        const admin_notice =
+          typeof adminNoticeRaw === 'string' && adminNoticeRaw.trim() !== ''
+            ? adminNoticeRaw
+            : null;
+
         return {
           id: u.id,
           email: u.email,
@@ -107,6 +119,7 @@ export async function GET(req: NextRequest) {
           email_confirmed_at: u.email_confirmed_at,
           deactivated: u.user_metadata?.deactivated || false,
           is_workspace_owner: u.user_metadata?.is_workspace_owner === true,
+          admin_notice,
         };
       });
 

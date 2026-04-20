@@ -21,6 +21,8 @@ export interface ServiceProvider {
   name: string;
   email: string;
   departments: number[];
+  admin_notice?: string | null;
+  is_workspace_owner?: boolean;
 }
 
 export interface BreakTime {

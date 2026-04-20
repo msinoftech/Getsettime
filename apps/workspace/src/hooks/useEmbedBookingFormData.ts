@@ -45,6 +45,7 @@ export function useEmbedBookingFormData({
   const [loadingServices, setLoadingServices] = useState(false);
   const [settingsIntakeForm, setSettingsIntakeForm] = useState<IntakeFormSettings | undefined>(undefined);
   const [generalSettings, setGeneralSettings] = useState<{ primaryColor?: string; accentColor?: string; timezone?: string } | null>(null);
+  const [workspaceOwnerAdminNotice, setWorkspaceOwnerAdminNotice] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchSettings = async () => {
@@ -74,13 +75,28 @@ export function useEmbedBookingFormData({
           const depData = await depRes.json();
           const tmData = await tmRes.json();
           const allDepts = depData.departments || [];
-          const allProviders = (tmData.teamMembers || []).filter(
-            (m: { role?: string; deactivated?: boolean }) =>
-              m.role === 'service_provider' && !m.deactivated
+          const allTeamMembers = (tmData.teamMembers || []) as Array<{
+            role?: string;
+            deactivated?: boolean;
+            departments?: number[];
+            is_workspace_owner?: boolean;
+            admin_notice?: string | null;
+          }>;
+          const owner = allTeamMembers.find(
+            (m) => m.is_workspace_owner && !m.deactivated
+          );
+          const ownerNoticeRaw = owner?.admin_notice;
+          setWorkspaceOwnerAdminNotice(
+            typeof ownerNoticeRaw === 'string' && ownerNoticeRaw.trim() !== ''
+              ? ownerNoticeRaw
+              : null
+          );
+          const allProviders = allTeamMembers.filter(
+            (m) => m.role === 'service_provider' && !m.deactivated
           );
           const withProviders = allDepts.filter((dept: Department) =>
             allProviders.some(
-              (p: { departments?: number[] }) => p.departments && p.departments.includes(dept.id)
+              (p) => p.departments && p.departments.includes(dept.id)
             )
           );
           setDepartments(withProviders);
@@ -271,5 +287,6 @@ export function useEmbedBookingFormData({
     loadingServices,
     intakeForm: effectiveIntakeForm,
     generalSettings,
+    workspaceOwnerAdminNotice,
   };
 }

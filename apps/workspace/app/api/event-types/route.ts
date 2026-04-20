@@ -177,7 +177,47 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    return NextResponse.json({ data: data || [] });
+    const event_types = data || [];
+    const event_type_ids = event_types
+      .map((row: { id: number | string | null }) => row.id)
+      .filter((id: number | string | null): id is number | string => id !== null && id !== undefined);
+
+    const bookings_count_by_event_type = new Map<string, number>();
+    if (event_type_ids.length > 0) {
+      const { data: booking_rows, error: bookings_error } = await supabase
+        .from('bookings')
+        .select('event_type_id')
+        .in('event_type_id', event_type_ids);
+
+      if (bookings_error) {
+        console.error('Error fetching booking counts:', bookings_error);
+      } else {
+        for (const row of booking_rows ?? []) {
+          const key = row.event_type_id == null ? '' : String(row.event_type_id);
+          if (!key) continue;
+          bookings_count_by_event_type.set(
+            key,
+            (bookings_count_by_event_type.get(key) || 0) + 1
+          );
+        }
+      }
+    }
+
+    const data_with_counts = event_types.map((row: Record<string, unknown>) => ({
+      ...row,
+      bookings_count:
+        bookings_count_by_event_type.get(String(row.id)) ?? 0,
+    }));
+
+    const total_bookings_count = data_with_counts.reduce(
+      (sum: number, row: { bookings_count?: number }) => sum + (row.bookings_count ?? 0),
+      0
+    );
+
+    return NextResponse.json({
+      data: data_with_counts,
+      total_bookings_count,
+    });
   } catch (err: any) {
     console.error('Error:', err);
     return NextResponse.json({ error: err?.message || 'Server error' }, { status: 500 });

@@ -4,7 +4,8 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
 async function get_or_create_workspace_profession_id(
   supabase: SupabaseClient,
-  name: string
+  name: string,
+  professionsListId: number | null = null
 ): Promise<{ id: number | null; error?: string }> {
   const trimmed = name.trim();
   if (!trimmed) {
@@ -13,31 +14,75 @@ async function get_or_create_workspace_profession_id(
 
   const lower = trimmed.toLowerCase();
 
-  const { data: exact } = await supabase.from('professions').select('id').eq('name', trimmed).maybeSingle();
+  // Backfill admin_professions_id on an existing row only when we now know the
+  // catalog id and the row doesn't have one yet; never overwrite an existing value.
+  const backfillAdminProfessionsIdIfMissing = async (
+    professionId: number,
+    currentAdminProfessionsId: number | null | undefined
+  ) => {
+    if (professionsListId == null) return;
+    if (currentAdminProfessionsId != null) return;
+    await supabase
+      .from('professions')
+      .update({ admin_professions_id: professionsListId })
+      .eq('id', professionId)
+      .is('admin_professions_id', null);
+  };
+
+  const { data: exact } = await supabase
+    .from('professions')
+    .select('id, admin_professions_id')
+    .eq('name', trimmed)
+    .maybeSingle();
   if (exact?.id != null) {
+    await backfillAdminProfessionsIdIfMissing(
+      exact.id,
+      exact.admin_professions_id as number | null
+    );
     return { id: exact.id };
   }
 
-  const { data: professionRows, error: listErr } = await supabase.from('professions').select('id, name');
+  const { data: professionRows, error: listErr } = await supabase
+    .from('professions')
+    .select('id, name, admin_professions_id');
   if (listErr) {
     return { id: null, error: listErr.message };
   }
-  const caseInsensitiveHit = (professionRows ?? []).find((r) => r.name.toLowerCase() === lower);
+  const caseInsensitiveHit = (professionRows ?? []).find(
+    (r) => (r.name as string).toLowerCase() === lower
+  );
   if (caseInsensitiveHit?.id != null) {
+    await backfillAdminProfessionsIdIfMissing(
+      caseInsensitiveHit.id as number,
+      caseInsensitiveHit.admin_professions_id as number | null
+    );
     return { id: caseInsensitiveHit.id };
+  }
+
+  const insertPayload: Record<string, unknown> = { name: trimmed, enabled: true };
+  if (professionsListId != null) {
+    insertPayload.admin_professions_id = professionsListId;
   }
 
   const { data: inserted, error } = await supabase
     .from('professions')
-    .insert({ name: trimmed, enabled: true })
-    .select('id')
+    .insert(insertPayload)
+    .select('id, admin_professions_id')
     .single();
 
   if (error) {
     if (error.code === '23505') {
-      const { data: again } = await supabase.from('professions').select('id, name');
-      const hit = (again ?? []).find((r) => r.name.toLowerCase() === lower);
-      if (hit?.id != null) return { id: hit.id };
+      const { data: again } = await supabase
+        .from('professions')
+        .select('id, name, admin_professions_id');
+      const hit = (again ?? []).find((r) => (r.name as string).toLowerCase() === lower);
+      if (hit?.id != null) {
+        await backfillAdminProfessionsIdIfMissing(
+          hit.id as number,
+          hit.admin_professions_id as number | null
+        );
+        return { id: hit.id };
+      }
     }
     return { id: null, error: error.message };
   }
@@ -91,7 +136,9 @@ export async function GET(req: NextRequest) {
     const supabase = createSupabaseServerClient();
     const { data, error } = await supabase
       .from('workspaces')
-      .select('id, name, slug, logo_url, type, profession_id, professions(name)')
+      .select(
+        'id, name, slug, logo_url, type, profession_id, professions(name, admin_professions_id)'
+      )
       .eq('id', workspaceId)
       .single();
 
@@ -111,7 +158,7 @@ export async function GET(req: NextRequest) {
       logo_url: string | null;
       type: string | null;
       profession_id: number | null;
-      professions: { name?: string } | null;
+      professions: { name?: string; admin_professions_id?: number | null } | null;
     };
 
     return NextResponse.json({
@@ -123,6 +170,7 @@ export async function GET(req: NextRequest) {
         type: row.type,
         profession_id: row.profession_id,
         profession_name: row.professions?.name ?? null,
+        admin_professions_id: row.professions?.admin_professions_id ?? null,
       },
     });
   } catch (err: unknown) {
@@ -183,7 +231,7 @@ export async function PUT(req: NextRequest) {
       if (listRow.enabled === false) {
         return NextResponse.json({ error: 'This profession is not available for selection' }, { status: 400 });
       }
-      const resolved = await get_or_create_workspace_profession_id(supabase, listRow.name);
+      const resolved = await get_or_create_workspace_profession_id(supabase, listRow.name, lid);
       if (resolved.id == null) {
         return NextResponse.json(
           { error: resolved.error ?? 'Could not assign profession' },

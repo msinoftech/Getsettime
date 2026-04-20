@@ -23,6 +23,7 @@ import { Step1DepartmentProvider } from './MultiStepBooking/Step1DepartmentProvi
 import { Step2ServiceSelection } from './MultiStepBooking/Step2ServiceSelection';
 import { Step4IntakeForm } from './MultiStepBooking/Step4IntakeForm';
 import { Step5Success } from './MultiStepBooking/Step5Success';
+import { AdminNoticeBanner, AdminNoticeIcon } from './MultiStepBooking/AdminNotice';
 
 const Step3DateTime = lazy(() =>
   import('./MultiStepBooking/Step3DateTime').then((m) => ({ default: m.Step3DateTime }))
@@ -104,6 +105,7 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
     loadingServices,
     intakeForm,
     generalSettings,
+    workspaceOwnerAdminNotice,
   } = useEmbedBookingFormData({
     workspace,
     selectedDepartment,
@@ -448,6 +450,13 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
   const primary = workspacePrimaryColor || DEFAULT_PRIMARY_COLOR;
   const accent = workspaceAccentColor || primary || DEFAULT_ACCENT_COLOR;
 
+  const provider_admin_notice =
+    typeof selectedProvider?.admin_notice === 'string' &&
+    selectedProvider.admin_notice.trim() !== ''
+      ? selectedProvider.admin_notice.trim()
+      : null;
+  const admin_notice = provider_admin_notice ?? workspaceOwnerAdminNotice;
+
   return (
     <div className="w-full max-w-7xl h-auto mx-auto px-6 sm:px-4 py-4 sm:py-6 lg:py-8">
       <div className="rounded-xl drop-shadow-xl overflow-hidden bg-gray-100 relative backdrop-blur-xl">
@@ -461,6 +470,12 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
             style={{ background: `radial-gradient(circle, ${accent}, transparent)` }}
           />
         </div>
+        {/*admin_notice && (
+          <AdminNoticeIcon
+            notice={admin_notice}
+            className="absolute right-3 top-3 sm:right-4 sm:top-4"
+          />
+        )*/}
         <div className="flex flex-col lg:grid lg:grid-cols-2 relative z-10">
           <BookingPreviewSidebar
             workspaceName={workspace.name}
@@ -610,6 +625,11 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
             </div>
           </div>
         </div>
+        {/*admin_notice && (
+          <div className="relative z-10 border-t border-slate-200 bg-white px-4 py-3 sm:px-6 lg:px-8">
+            <AdminNoticeBanner notice={admin_notice} className="mt-0" />
+          </div>
+        )*/}
       </div>
     </div>
   );

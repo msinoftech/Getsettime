@@ -1,6 +1,23 @@
 "use client";
-import { useState, useEffect } from "react";
-import Link from "next/link";
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  LuCheck as Check,
+  LuPlus as Plus,
+  LuSearch as Search,
+  LuStethoscope as Stethoscope,
+  LuBuilding2 as Building2,
+  LuSparkles as Sparkles,
+  LuBriefcaseMedical as BriefcaseMedical,
+  LuUserPlus as UserPlus,
+  LuCircleAlert as AlertCircle,
+  LuLayers3 as Layers3,
+  LuPencil as Pencil,
+  LuTrash2 as Trash2,
+  LuPower as Power,
+  LuPowerOff as PowerOff,
+  LuX as X,
+} from "react-icons/lu";
 import { supabase } from "@/lib/supabaseClient";
 import { AlertModal } from "@/src/components/ui/AlertModal";
 import { ConfirmModal } from "@/src/components/ui/ConfirmModal";
@@ -8,10 +25,7 @@ import { DepartmentSkeleton } from "@/src/components/ui/DepartmentSkeleton";
 import { useServiceProviders } from "@/src/hooks/useBookingLookups";
 import type { ServiceProvider } from "@/src/types/booking-entities";
 
-interface Service {
-  id: string;
-  name: string;
-}
+type DepartmentStatus = "active" | "inactive";
 
 interface DepartmentService {
   id: string;
@@ -28,6 +42,8 @@ interface Department {
   workspace_id: number;
   name: string;
   description: string | null;
+  status: DepartmentStatus;
+  flag: boolean;
   meta_data: {
     services?: DepartmentService[];
     service_providers?: DepartmentServiceProviderMeta[];
@@ -44,193 +60,371 @@ function serviceProviderDisplayName(p: ServiceProvider): string {
   );
 }
 
+const DELETE_CONFIRM_MESSAGE =
+  "Do you want to delete it? If you delete it then you need to again assign doctors. If you just want to hide this department, you can also deactivate it and it will hide from the booking form; you can activate it again anytime in the future.";
+
 export default function DepartmentsPage() {
-  const { data: serviceProviders, loading: providersLoading } = useServiceProviders();
+  const { data: serviceProviders } = useServiceProviders();
+
   const [departments, setDepartments] = useState<Department[]>([]);
-  const [services, setServices] = useState<Service[]>([]);
-  const [showDepartmentForm, setShowDepartmentForm] = useState(false);
-  const [editingDepartment, setEditingDepartment] = useState<Department | null>(null);
-  const [departmentFormData, setDepartmentFormData] = useState({
-    name: "",
-    description: "",
-  });
-  const [selectedServices, setSelectedServices] = useState<DepartmentService[]>([]);
-  const [selectedServiceProviders, setSelectedServiceProviders] = useState<
-    DepartmentServiceProviderMeta[]
-  >([]);
-  const [servicesLoading, setServicesLoading] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [selectedDepartmentId, setSelectedDepartmentId] = useState<number | null>(
+    null
+  );
+
+  const [departmentName, setDepartmentName] = useState("");
+  const [editingDepartmentId, setEditingDepartmentId] = useState<number | null>(
+    null
+  );
+  const [editDepartmentName, setEditDepartmentName] = useState("");
+
+  const [search, setSearch] = useState("");
+  const [viewMode, setViewMode] = useState<"all" | "assigned" | "unassigned">(
+    "all"
+  );
+  const [departmentFilter, setDepartmentFilter] = useState<
+    "all" | "active" | "inactive"
+  >("all");
+
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  // When suggestions exist, the custom-name input is hidden behind an "Other" chip.
+  // When there are no suggestions, the input is always visible.
+  const [showCustomInput, setShowCustomInput] = useState(false);
+  const customInputRef = useRef<HTMLInputElement>(null);
+
   const [initialLoading, setInitialLoading] = useState(true);
+  const [busyAction, setBusyAction] = useState(false);
+
   const [alertMessage, setAlertMessage] = useState<string | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
 
-  // Fetch departments and services on mount
-  useEffect(() => {
-    fetchDepartments();
-    fetchServices();
+  const getAuthToken = useCallback(async () => {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    return session?.access_token ?? null;
   }, []);
 
-  const fetchDepartments = async () => {
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) return;
+  const fetchDepartments = useCallback(
+    async (opts?: { selectId?: number | null; silent?: boolean }) => {
+      if (!opts?.silent) setInitialLoading(true);
+      try {
+        const token = await getAuthToken();
+        if (!token) return;
 
-      const response = await fetch('/api/departments', {
-        headers: {
-          'Authorization': `Bearer ${session.access_token}`,
-        },
-      });
+        const response = await fetch("/api/departments", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
 
-      if (response.ok) {
+        if (!response.ok) return;
+
         const data = await response.json();
-        setDepartments(data.departments || []);
+        const list: Department[] = data.departments || [];
+        setDepartments(list);
+
+        setSelectedDepartmentId((prev) => {
+          if (opts && "selectId" in opts) {
+            return opts.selectId ?? list[0]?.id ?? null;
+          }
+          if (prev !== null && list.some((d) => d.id === prev)) return prev;
+          return list[0]?.id ?? null;
+        });
+      } catch (error) {
+        console.error("Error fetching departments:", error);
+      } finally {
+        if (!opts?.silent) setInitialLoading(false);
       }
-    } catch (error) {
-      console.error('Error fetching departments:', error);
-    } finally {
-      setInitialLoading(false);
-    }
-  };
+    },
+    [getAuthToken]
+  );
 
-  const fetchServices = async () => {
+  const fetchSuggestions = useCallback(async () => {
     try {
-      setServicesLoading(true);
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) return;
+      const token = await getAuthToken();
+      if (!token) return;
 
-      const response = await fetch('/api/services', {
-        headers: {
-          'Authorization': `Bearer ${session.access_token}`,
-        },
+      const workspaceRes = await fetch("/api/workspace", {
+        headers: { Authorization: `Bearer ${token}` },
       });
+      if (!workspaceRes.ok) return;
 
-      if (response.ok) {
-        const data = await response.json();
-        setServices(data.services || []);
-      }
-    } catch (error) {
-      console.error('Error fetching services:', error);
-    } finally {
-      setServicesLoading(false);
-    }
-  };
-
-  const handleNewDepartment = () => {
-    setEditingDepartment(null);
-    setDepartmentFormData({ name: "", description: "" });
-    setSelectedServices([]);
-    setSelectedServiceProviders([]);
-    setShowDepartmentForm(true);
-  };
-
-  const handleEditDepartment = (department: Department) => {
-    setEditingDepartment(department);
-    setDepartmentFormData({
-      name: department.name,
-      description: department.description || "",
-    });
-    // Load services from meta_data
-    const servicesFromMeta = department.meta_data?.services || [];
-    setSelectedServices(servicesFromMeta);
-    const providersFromMeta = department.meta_data?.service_providers || [];
-    setSelectedServiceProviders(
-      providersFromMeta.map((p) => ({
-        id: p.id,
-        name: p.name || "Unknown",
-      }))
-    );
-    setShowDepartmentForm(true);
-  };
-
-  const handleDepartmentFormCancel = () => {
-    setShowDepartmentForm(false);
-    setEditingDepartment(null);
-    setDepartmentFormData({ name: "", description: "" });
-    setSelectedServices([]);
-    setSelectedServiceProviders([]);
-  };
-
-  const handleAddService = (service: Service) => {
-    // Prevent duplicates
-    if (selectedServices.some(s => s.id === service.id)) {
-      return;
-    }
-    setSelectedServices([...selectedServices, { id: service.id, name: service.name }]);
-  };
-
-  const handleRemoveService = (serviceId: string) => {
-    setSelectedServices(selectedServices.filter(s => s.id !== serviceId));
-  };
-
-  const handleAddServiceProvider = (provider: ServiceProvider) => {
-    if (selectedServiceProviders.some((p) => p.id === provider.id)) return;
-    setSelectedServiceProviders([
-      ...selectedServiceProviders,
-      { id: provider.id, name: serviceProviderDisplayName(provider) },
-    ]);
-  };
-
-  const handleRemoveServiceProvider = (providerId: string) => {
-    setSelectedServiceProviders(
-      selectedServiceProviders.filter((p) => p.id !== providerId)
-    );
-  };
-
-  const handleDepartmentFormSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) {
-        setAlertMessage('Not authenticated');
+      const workspaceData = await workspaceRes.json();
+      // `admin_professions_id` on `professions` stores the originating
+      // `professions_list.id` and is the catalog key used by the Quick
+      // Suggestions endpoint below.
+      const adminProfessionsId: number | null =
+        workspaceData?.workspace?.admin_professions_id ?? null;
+      if (!adminProfessionsId) {
+        setSuggestions([]);
         return;
       }
 
-      const meta_data: {
-        services: DepartmentService[];
-        service_providers: DepartmentServiceProviderMeta[];
-      } = {
-        services: selectedServices,
-        service_providers: selectedServiceProviders,
-      };
+      const catalogRes = await fetch(
+        `/api/catalog/departments?profession_id=${adminProfessionsId}`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      if (!catalogRes.ok) return;
 
-      const url = '/api/departments';
-      const method = editingDepartment ? 'PUT' : 'POST';
-      const body = editingDepartment
-        ? { 
-            id: editingDepartment.id, 
-            name: departmentFormData.name,
-            description: departmentFormData.description,
-            meta_data 
-          }
-        : { 
-            name: departmentFormData.name,
-            description: departmentFormData.description,
-            meta_data 
-          };
+      const catalogData = await catalogRes.json();
+      const names: string[] = Array.isArray(catalogData?.departments)
+        ? catalogData.departments
+        : [];
+      setSuggestions(names);
+    } catch (error) {
+      console.error("Error fetching department suggestions:", error);
+    }
+  }, [getAuthToken]);
 
+  useEffect(() => {
+    fetchDepartments();
+    fetchSuggestions();
+  }, [fetchDepartments, fetchSuggestions]);
+
+  const selectedDepartment = useMemo(
+    () => departments.find((d) => d.id === selectedDepartmentId) ?? null,
+    [departments, selectedDepartmentId]
+  );
+
+  const providerAssignments = useMemo(() => {
+    const map = new Map<string, number[]>();
+    departments.forEach((d) => {
+      const providers = d.meta_data?.service_providers ?? [];
+      providers.forEach((p) => {
+        const prev = map.get(p.id) ?? [];
+        if (!prev.includes(d.id)) {
+          map.set(p.id, [...prev, d.id]);
+        }
+      });
+    });
+    return map;
+  }, [departments]);
+
+  type DoctorRow = {
+    id: string;
+    name: string;
+    role: string;
+    assignedDepartmentIds: number[];
+  };
+
+  const doctors = useMemo<DoctorRow[]>(() => {
+    return serviceProviders.map((sp) => ({
+      id: sp.id,
+      name: serviceProviderDisplayName(sp),
+      role: "Doctor",
+      assignedDepartmentIds: providerAssignments.get(sp.id) ?? [],
+    }));
+  }, [serviceProviders, providerAssignments]);
+
+  const filteredDoctors = useMemo(() => {
+    if (!selectedDepartmentId) return doctors;
+    const term = search.trim().toLowerCase();
+    return doctors.filter((doctor) => {
+      const matchesSearch = term === "" || doctor.name.toLowerCase().includes(term);
+      const isAssignedToCurrent = doctor.assignedDepartmentIds.includes(
+        selectedDepartmentId
+      );
+      if (viewMode === "assigned") return matchesSearch && isAssignedToCurrent;
+      if (viewMode === "unassigned") return matchesSearch && !isAssignedToCurrent;
+      return matchesSearch;
+    });
+  }, [doctors, search, selectedDepartmentId, viewMode]);
+
+  const assignedDoctors = useMemo(() => {
+    if (!selectedDepartmentId) return [];
+    return doctors.filter((d) =>
+      d.assignedDepartmentIds.includes(selectedDepartmentId)
+    );
+  }, [doctors, selectedDepartmentId]);
+
+  const availableDoctors = useMemo(() => {
+    if (!selectedDepartmentId) return doctors;
+    return doctors.filter(
+      (d) => !d.assignedDepartmentIds.includes(selectedDepartmentId)
+    );
+  }, [doctors, selectedDepartmentId]);
+
+  const visibleAssignedDoctors = useMemo(() => {
+    if (!selectedDepartmentId) return [];
+    return filteredDoctors.filter((d) =>
+      d.assignedDepartmentIds.includes(selectedDepartmentId)
+    );
+  }, [filteredDoctors, selectedDepartmentId]);
+
+  const visibleAvailableDoctors = useMemo(() => {
+    if (!selectedDepartmentId) return filteredDoctors;
+    return filteredDoctors.filter(
+      (d) => !d.assignedDepartmentIds.includes(selectedDepartmentId)
+    );
+  }, [filteredDoctors, selectedDepartmentId]);
+
+  const totalAssignments = useMemo(
+    () =>
+      doctors.reduce(
+        (sum, doctor) => sum + doctor.assignedDepartmentIds.length,
+        0
+      ),
+    [doctors]
+  );
+
+  const unassignedDoctorsCount = useMemo(
+    () => doctors.filter((d) => d.assignedDepartmentIds.length === 0).length,
+    [doctors]
+  );
+
+  const activeDepartmentsCount = useMemo(
+    () => departments.filter((d) => d.status === "active").length,
+    [departments]
+  );
+
+  const inactiveDepartmentsCount = useMemo(
+    () => departments.filter((d) => d.status === "inactive").length,
+    [departments]
+  );
+
+  const filteredDepartments = useMemo(() => {
+    if (departmentFilter === "active") {
+      return departments.filter((d) => d.status === "active");
+    }
+    if (departmentFilter === "inactive") {
+      return departments.filter((d) => d.status === "inactive");
+    }
+    return departments;
+  }, [departments, departmentFilter]);
+
+  const suggestionAlreadyExists = useCallback(
+    (name: string) =>
+      departments.some((d) => d.name.toLowerCase() === name.toLowerCase()),
+    [departments]
+  );
+
+  const getDepartmentName = useCallback(
+    (id: number) => departments.find((d) => d.id === id)?.name ?? "",
+    [departments]
+  );
+
+  const getDepartmentStatus = useCallback(
+    (id: number): DepartmentStatus =>
+      departments.find((d) => d.id === id)?.status ?? "inactive",
+    [departments]
+  );
+
+  const getDepartmentDoctorCount = useCallback(
+    (departmentId: number) =>
+      doctors.filter((doctor) =>
+        doctor.assignedDepartmentIds.includes(departmentId)
+      ).length,
+    [doctors]
+  );
+
+  const callApi = useCallback(
+    async (
+      method: "POST" | "PUT" | "DELETE",
+      body?: Record<string, unknown>,
+      query?: string
+    ) => {
+      const token = await getAuthToken();
+      if (!token) {
+        setAlertMessage("Not authenticated");
+        return null;
+      }
+      const url = query ? `/api/departments?${query}` : "/api/departments";
       const response = await fetch(url, {
         method,
         headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${session.access_token}`,
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify(body),
+        body: body ? JSON.stringify(body) : undefined,
       });
-
-      if (response.ok) {
-        await fetchDepartments();
-        handleDepartmentFormCancel();
-      } else {
-        const errorData = await response.json();
-        setAlertMessage(`Error: ${errorData.error || 'Failed to save department'}`);
+      if (!response.ok) {
+        const err = await response.json().catch(() => null);
+        setAlertMessage(err?.error || `Request failed (${response.status})`);
+        return null;
       }
-    } catch (error) {
-      console.error('Error saving department:', error);
-      setAlertMessage('An error occurred while saving the department');
-    } finally {
-      setLoading(false);
+      return response.json().catch(() => ({}));
+    },
+    [getAuthToken]
+  );
+
+  const createDepartment = useCallback(
+    async (rawName: string) => {
+      const name = rawName.trim();
+      if (!name) return;
+
+      const existing = departments.find(
+        (d) => d.name.toLowerCase() === name.toLowerCase()
+      );
+      if (existing) {
+        setSelectedDepartmentId(existing.id);
+        setDepartmentName("");
+        setShowCustomInput(false);
+        return;
+      }
+
+      setBusyAction(true);
+      const data = await callApi("POST", { name, status: "active" });
+      setBusyAction(false);
+
+      if (data?.department?.id != null) {
+        await fetchDepartments({ selectId: data.department.id, silent: true });
+      }
+      setDepartmentName("");
+      setShowCustomInput(false);
+    },
+    [callApi, departments, fetchDepartments]
+  );
+
+  const handleAddDepartment = () => createDepartment(departmentName);
+
+  const addSuggestedDepartment = (name: string) => createDepartment(name);
+
+  const startEditDepartment = (department: Department) => {
+    setEditingDepartmentId(department.id);
+    setEditDepartmentName(department.name);
+  };
+
+  const cancelEditDepartment = () => {
+    setEditingDepartmentId(null);
+    setEditDepartmentName("");
+  };
+
+  const saveDepartmentEdit = async (departmentId: number) => {
+    const trimmedName = editDepartmentName.trim();
+    if (!trimmedName) return;
+
+    const duplicate = departments.find(
+      (d) =>
+        d.id !== departmentId &&
+        d.name.toLowerCase() === trimmedName.toLowerCase()
+    );
+    if (duplicate) {
+      setAlertMessage("Another department with this name already exists.");
+      return;
+    }
+
+    setBusyAction(true);
+    const data = await callApi("PUT", { id: departmentId, name: trimmedName });
+    setBusyAction(false);
+
+    if (data?.department) {
+      setDepartments((prev) =>
+        prev.map((d) => (d.id === departmentId ? { ...d, ...data.department } : d))
+      );
+      cancelEditDepartment();
+    }
+  };
+
+  const toggleDepartmentStatus = async (department: Department) => {
+    const nextStatus: DepartmentStatus =
+      department.status === "active" ? "inactive" : "active";
+
+    setBusyAction(true);
+    const data = await callApi("PUT", { id: department.id, status: nextStatus });
+    setBusyAction(false);
+
+    if (data?.department) {
+      setDepartments((prev) =>
+        prev.map((d) => (d.id === department.id ? { ...d, ...data.department } : d))
+      );
     }
   };
 
@@ -238,375 +432,804 @@ export default function DepartmentsPage() {
 
   const handleDeleteDepartmentConfirm = async () => {
     if (!deleteConfirmId) return;
-    setLoading(true);
 
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session?.access_token) {
-        setDeleteConfirmId(null);
-        setAlertMessage('Not authenticated');
-        setLoading(false);
-        return;
-      }
-
-      const response = await fetch(`/api/departments?id=${deleteConfirmId}`, {
-        method: 'DELETE',
-        headers: {
-          'Authorization': `Bearer ${session.access_token}`,
-        },
-      });
-
-      if (response.ok) {
-        await fetchDepartments();
-        setDeleteConfirmId(null);
-      } else {
-        const errorData = await response.json();
-        setDeleteConfirmId(null);
-        setAlertMessage(`Error: ${errorData.error || 'Failed to delete department'}`);
-      }
-    } catch (error) {
-      console.error('Error deleting department:', error);
+    if (departments.length <= 1) {
       setDeleteConfirmId(null);
-      setAlertMessage('An error occurred while deleting the department');
-    } finally {
-      setLoading(false);
+      setAlertMessage("You must keep at least one department.");
+      return;
+    }
+
+    setBusyAction(true);
+    const data = await callApi(
+      "DELETE",
+      undefined,
+      `id=${deleteConfirmId}`
+    );
+    setBusyAction(false);
+
+    if (data) {
+      const removedId = deleteConfirmId;
+      setDeleteConfirmId(null);
+      await fetchDepartments({
+        selectId:
+          removedId === selectedDepartmentId
+            ? departments.find((d) => d.id !== removedId)?.id ?? null
+            : selectedDepartmentId,
+        silent: true,
+      });
+    } else {
+      setDeleteConfirmId(null);
     }
   };
 
-  // Get available services (not already selected)
-  const availableServices = services.filter(
-    service => !selectedServices.some(selected => selected.id === service.id)
-  );
+  const assignDoctor = async (doctor: DoctorRow) => {
+    if (!selectedDepartment || selectedDepartment.status === "inactive") return;
+    if (doctor.assignedDepartmentIds.includes(selectedDepartment.id)) return;
 
-  const availableServiceProviders = serviceProviders.filter(
-    (p) => !selectedServiceProviders.some((s) => s.id === p.id)
-  );
+    const current =
+      selectedDepartment.meta_data?.service_providers ?? [];
+    const nextProviders: DepartmentServiceProviderMeta[] = [
+      ...current,
+      { id: doctor.id, name: doctor.name },
+    ];
+
+    setBusyAction(true);
+    const data = await callApi("PUT", {
+      id: selectedDepartment.id,
+      meta_data: { service_providers: nextProviders },
+    });
+    setBusyAction(false);
+
+    if (data?.department) {
+      setDepartments((prev) =>
+        prev.map((d) =>
+          d.id === selectedDepartment.id ? { ...d, ...data.department } : d
+        )
+      );
+    }
+  };
+
+  const unassignDoctor = async (doctor: DoctorRow) => {
+    if (!selectedDepartment) return;
+    const current =
+      selectedDepartment.meta_data?.service_providers ?? [];
+    const nextProviders = current.filter((p) => p.id !== doctor.id);
+
+    setBusyAction(true);
+    const data = await callApi("PUT", {
+      id: selectedDepartment.id,
+      meta_data: { service_providers: nextProviders },
+    });
+    setBusyAction(false);
+
+    if (data?.department) {
+      setDepartments((prev) =>
+        prev.map((d) =>
+          d.id === selectedDepartment.id ? { ...d, ...data.department } : d
+        )
+      );
+    }
+  };
+
+  const DoctorCard = ({
+    doctor,
+    assigned,
+  }: {
+    doctor: DoctorRow;
+    assigned: boolean;
+  }) => {
+    return (
+      <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex min-w-0 flex-1 items-start gap-3">
+            <div
+              className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl ${
+                assigned
+                  ? "bg-indigo-50 text-indigo-600"
+                  : "bg-emerald-50 text-emerald-600"
+              }`}
+            >
+              <Stethoscope className="h-5 w-5" />
+            </div>
+
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="truncate text-sm font-semibold text-slate-900">
+                  {doctor.name}
+                </p>
+                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600">
+                  {doctor.role}
+                </span>
+              </div>
+
+              <div className="mt-3 flex flex-wrap gap-2">
+                {doctor.assignedDepartmentIds.length > 0 ? (
+                  doctor.assignedDepartmentIds.map((depId) => {
+                    const departmentStatus = getDepartmentStatus(depId);
+
+                    return (
+                      <span
+                        key={depId}
+                        className={`rounded-full px-2.5 py-1 text-[11px] font-medium ${
+                          depId === selectedDepartmentId
+                            ? "bg-indigo-100 text-indigo-700"
+                            : "border border-slate-200 bg-slate-50 text-slate-600"
+                        }`}
+                      >
+                        {getDepartmentName(depId)}
+                        {departmentStatus === "inactive" ? " • Inactive" : ""}
+                      </span>
+                    );
+                  })
+                ) : (
+                  <span className="rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-medium text-amber-700">
+                    No department assigned
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {assigned ? (
+            <button
+              type="button"
+              onClick={() => unassignDoctor(doctor)}
+              disabled={busyAction}
+              className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-600 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              Remove
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => assignDoctor(doctor)}
+              disabled={
+                busyAction || selectedDepartment?.status === "inactive"
+              }
+              className="inline-flex items-center gap-1 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Assign
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  if (initialLoading) {
+    return <DepartmentSkeleton />;
+  }
 
   return (
-    <section className="space-y-6 rounded-xl">
-      <header className="flex flex-wrap justify-between relative gap-3">
-        <div className="text-sm text-slate-500">
-          <h3 className="text-xl font-semibold text-slate-800">Departments</h3>
-          <p className="text-xs text-slate-500">Manage departments and assign services to them.</p>
-        </div>
-        <button onClick={handleNewDepartment} className="cursor-pointer text-sm font-bold text-indigo-600 transition hover:text-indigo-700">+ New Department</button>
-      </header>
-
-      {/* Departments List */}
-      {initialLoading ? (
-        <DepartmentSkeleton />
-      ) : (
-      <div className="rounded-2xl bg-white shadow-md p-6">
-        {departments.length === 0 ? (
-          <div className="text-center py-12">
-            <svg className="mx-auto h-12 w-12 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
-            </svg>
-            <h3 className="mt-2 text-sm font-medium text-slate-900">No departments</h3>
-            <p className="mt-1 text-sm text-slate-500">Get started by creating your first department.</p>
-            <div className="mt-6">
-              <button
-                onClick={handleNewDepartment}
-                className="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-              >
-                <svg className="-ml-1 mr-2 h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                </svg>
-                New Department
-              </button>
-            </div>
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {departments.map((department) => {
-              const departmentServices = department.meta_data?.services || [];
-              const departmentProviders =
-                department.meta_data?.service_providers || [];
-              return (
-                <div key={department.id} className="flex flex-wrap items-start justify-between gap-4 p-4 rounded-xl border border-slate-200 bg-white hover:shadow-sm transition">
-                  <div className="flex-grow">
-                    <div className="flex items-center gap-2">
-                      <h4 className="text-base font-medium text-slate-800 truncate">{department.name}</h4>
-                    </div>
-                    {department.description && (
-                      <p className="mt-1 text-sm text-slate-600 line-clamp-2">{department.description}</p>
-                    )}
-                    {departmentServices.length > 0 && (
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        <span className="w-full text-xs font-medium text-slate-500">Services</span>
-                        {departmentServices.map((service) => (
-                          <span
-                            key={service.id}
-                            className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-indigo-100 text-indigo-800"
-                          >
-                            {service.name}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                    {departmentProviders.length > 0 && (
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        <span className="w-full text-xs font-medium text-slate-500">Service providers</span>
-                        {departmentProviders.map((p) => (
-                          <span
-                            key={p.id}
-                            className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800"
-                          >
-                            {p.name}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                    <p className="mt-2 text-xs text-slate-400">
-                      Created {new Date(department.created_at).toLocaleDateString()}
-                    </p>
-                  </div>
-                  <div className="flex gap-2 flex-shrink-0">
-                    <button
-                      onClick={() => handleEditDepartment(department)}
-                      className="inline-flex items-center rounded-md bg-indigo-50 px-3 py-1.5 text-xs font-medium text-indigo-700 hover:bg-indigo-100 transition"
-                    >
-                      Edit
-                    </button>
-                    <button
-                      onClick={() => handleDeleteDepartmentClick(department.id)}
-                      className="inline-flex items-center rounded-md bg-red-50 px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-100 transition"
-                      disabled={loading}
-                    >
-                      Delete
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
-      )}
-
-      {/* Department Form Modal */}
-      {showDepartmentForm && (
-        <div className={`fixed inset-0 z-40 flex m-0 justify-end transition-opacity duration-200 ${showDepartmentForm ? 'pointer-events-auto opacity-100' : 'pointer-events-none opacity-0'}`}>
-          <div className={`absolute inset-0 bg-black/40 transition-opacity duration-300 ${showDepartmentForm ? 'opacity-100' : 'opacity-0'}`} aria-hidden="true" onClick={handleDepartmentFormCancel}/>
-          <section className={`relative h-full w-full max-w-xl transform bg-white shadow-2xl transition-transform duration-300 ${showDepartmentForm ? 'translate-x-0' : 'translate-x-full'}`}>
-            <div className="flex items-center justify-between border-b border-gray-200 px-6 py-4">
-              <div>
-                <h2 className="text-lg font-semibold text-gray-800">{editingDepartment ? "Edit Department" : "Create New Department"}</h2>
-                <p className="text-xs text-slate-500 mt-1">Fill in the department details below</p>
-              </div>
-              <button className="rounded-full p-2 text-gray-500 hover:bg-gray-100 transition" aria-label="Close form" onClick={handleDepartmentFormCancel}>
-                <svg className="h-5 w-5" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" viewBox="0 0 24 24">
-                  <path d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-            <div className="h-[calc(100%-4rem)] overflow-y-auto p-6">
-              <form onSubmit={handleDepartmentFormSubmit} className="space-y-5">
-                <div>
-                  <label className="block text-sm font-medium mb-2 text-slate-700">
-                    Department Name <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={departmentFormData.name}
-                    onChange={(e) => setDepartmentFormData({ ...departmentFormData, name: e.target.value })}
-                    placeholder="e.g., Sales, Support, Engineering"
-                    className="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition"
-                    required
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium mb-2 text-slate-700">
-                    Description
-                  </label>
-                  <textarea
-                    value={departmentFormData.description}
-                    onChange={(e) => setDepartmentFormData({ ...departmentFormData, description: e.target.value })}
-                    placeholder="Brief description of the department (optional)"
-                    rows={4}
-                    className="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none resize-none transition"
-                  />
-                  <p className="mt-1 text-xs text-slate-500">Provide details to help understand this department</p>
-                </div>
-
-                {/* Services Selector */}
-                <div>
-                  <label className="block text-sm font-medium mb-2 text-slate-700">
-                    Services
-                  </label>
-                  
-                  {/* Selected Services Chips */}
-                  {selectedServices.length > 0 && (
-                    <div className="mb-3 flex flex-wrap gap-2">
-                      {selectedServices.map((service) => (
-                        <span
-                          key={service.id}
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium bg-indigo-100 text-indigo-800"
-                        >
-                          {service.name}
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveService(service.id)}
-                            className="ml-1 inline-flex items-center justify-center w-4 h-4 rounded-full hover:bg-indigo-200 transition"
-                            aria-label={`Remove ${service.name}`}
-                          >
-                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                            </svg>
-                          </button>
-                        </span>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* Services Dropdown/Selector */}
-                  {servicesLoading ? (
-                    <div className="text-sm text-slate-500">Loading services...</div>
-                  ) : availableServices.length > 0 ? (
-                    <div className="border border-slate-300 rounded-lg p-3 max-h-48 overflow-y-auto">
-                      <div className="space-y-2">
-                        {availableServices.map((service) => (
-                          <button
-                            key={service.id}
-                            type="button"
-                            onClick={() => handleAddService(service)}
-                            className="w-full text-left px-3 py-2 rounded-md text-sm text-slate-700 hover:bg-indigo-50 hover:text-indigo-700 transition"
-                          >
-                            <div className="flex items-center gap-2">
-                              <svg className="w-4 h-4 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                              </svg>
-                              {service.name}
-                            </div>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  ) : services.length === 0 ? (
-                    <div className="text-sm text-slate-500 border border-slate-300 rounded-lg p-3">
-                      No services available. Create services first to assign them to departments.
-                    </div>
-                  ) : (
-                    <div className="text-sm text-slate-500 border border-slate-300 rounded-lg p-3">
-                      All available services have been added.
-                    </div>
-                  )}
-                  <p className="mt-1 text-xs text-slate-500">Select services to associate with this department</p>
-                </div>
-
-                {/* Service providers (optional) */}
-                <div>
-                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                    <label className="text-sm font-medium text-slate-700">
-                      Service providers <span className="text-slate-400 font-normal">(optional)</span>
-                    </label>
-                    <Link
-                      href="/team-members"
-                      className="text-sm font-semibold text-emerald-700 hover:text-emerald-900 underline-offset-2 hover:underline shrink-0"
-                    >
-                      Add service provider
-                    </Link>
+    <div className="min-h-screen bg-slate-50">
+      <div className="mx-auto max-w-7xl px-4 py-6 md:px-6 xl:px-8">
+        <div className="space-y-6">
+          {/* Top Header */}
+          <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+            <div className="relative">
+              <div className="absolute inset-0 bg-gradient-to-r from-indigo-600 via-violet-600 to-sky-500 opacity-[0.07]" />
+              <div className="relative flex flex-col gap-5 p-5 md:p-7 lg:flex-row lg:items-center lg:justify-between">
+                <div className="max-w-2xl">
+                  <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-indigo-100 bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-700">
+                    <Sparkles className="h-3.5 w-3.5" />
+                    Professional Department Workspace
                   </div>
 
-                  {selectedServiceProviders.length > 0 && (
-                    <div className="mb-3 flex flex-wrap gap-2">
-                      {selectedServiceProviders.map((p) => (
-                        <span
-                          key={p.id}
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium bg-emerald-100 text-emerald-800"
-                        >
-                          {p.name}
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveServiceProvider(p.id)}
-                            className="ml-1 inline-flex items-center justify-center w-4 h-4 rounded-full hover:bg-emerald-200 transition"
-                            aria-label={`Remove ${p.name}`}
-                          >
-                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                            </svg>
-                          </button>
-                        </span>
-                      ))}
-                    </div>
-                  )}
-
-                  {providersLoading ? (
-                    <div className="text-sm text-slate-500">Loading service providers...</div>
-                  ) : availableServiceProviders.length > 0 ? (
-                    <div className="border border-slate-300 rounded-lg p-3 max-h-48 overflow-y-auto">
-                      <div className="space-y-2">
-                        {availableServiceProviders.map((provider) => (
-                          <button
-                            key={provider.id}
-                            type="button"
-                            onClick={() => handleAddServiceProvider(provider)}
-                            className="w-full text-left px-3 py-2 rounded-md text-sm text-slate-700 hover:bg-emerald-50 hover:text-emerald-800 transition"
-                          >
-                            <div className="flex items-center gap-2">
-                              <svg className="w-4 h-4 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                              </svg>
-                              {serviceProviderDisplayName(provider)}
-                            </div>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  ) : serviceProviders.length === 0 ? (
-                    <div className="text-sm text-slate-600 border border-slate-300 rounded-lg p-3 bg-slate-50/80">
-                      No service providers are set up yet. Use <strong>Add service provider</strong> above to open Team members and invite or assign the service provider role.
-                    </div>
-                  ) : (
-                    <div className="text-sm text-slate-500 border border-slate-300 rounded-lg p-3">
-                      All listed service providers have been added.
-                    </div>
-                  )}
-                  <p className="mt-1 text-xs text-slate-500">
-                    Link staff who primarily handle this department (stored in department metadata)
+                  <h1 className="text-2xl font-bold tracking-tight text-slate-900 md:text-3xl">
+                    Department &amp; Doctor Assignment
+                  </h1>
+                  <p className="mt-2 text-sm leading-6 text-slate-600 md:text-base">
+                    Manage departments, assign doctors to multiple specialties,
+                    and keep your clinic structure organized with a clear and
+                    powerful admin experience.
                   </p>
                 </div>
 
-                <div className="flex gap-3 justify-end pt-6 border-t border-slate-200">
+                <div className="flex w-full flex-col gap-3 sm:flex-row lg:w-auto">
+                  <div className="relative min-w-[260px]">
+                    <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                    <input
+                      value={search}
+                      onChange={(e) => setSearch(e.target.value)}
+                      placeholder="Search doctor name..."
+                      className="w-full rounded-2xl border border-slate-300 bg-white py-3 pl-10 pr-4 text-sm outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100"
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Stats */}
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+              <div className="flex items-start justify-between">
+                <div>
+                  <p className="text-sm font-medium text-slate-500">Departments</p>
+                  <p className="mt-2 text-2xl font-bold text-slate-900">
+                    {departments.length}
+                  </p>
+                </div>
+                <div className="rounded-2xl bg-indigo-50 p-3 text-indigo-600">
+                  <Building2 className="h-5 w-5" />
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+              <div className="flex items-start justify-between">
+                <div>
+                  <p className="text-sm font-medium text-slate-500">Active</p>
+                  <p className="mt-2 text-2xl font-bold text-slate-900">
+                    {activeDepartmentsCount}
+                  </p>
+                </div>
+                <div className="rounded-2xl bg-emerald-50 p-3 text-emerald-600">
+                  <Power className="h-5 w-5" />
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+              <div className="flex items-start justify-between">
+                <div>
+                  <p className="text-sm font-medium text-slate-500">Inactive</p>
+                  <p className="mt-2 text-2xl font-bold text-slate-900">
+                    {inactiveDepartmentsCount}
+                  </p>
+                </div>
+                <div className="rounded-2xl bg-slate-100 p-3 text-slate-600">
+                  <PowerOff className="h-5 w-5" />
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+              <div className="flex items-start justify-between">
+                <div>
+                  <p className="text-sm font-medium text-slate-500">Assignments</p>
+                  <p className="mt-2 text-2xl font-bold text-slate-900">
+                    {totalAssignments}
+                  </p>
+                </div>
+                <div className="rounded-2xl bg-violet-50 p-3 text-violet-600">
+                  <BriefcaseMedical className="h-5 w-5" />
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+              <div className="flex items-start justify-between">
+                <div>
+                  <p className="text-sm font-medium text-slate-500">Unassigned</p>
+                  <p className="mt-2 text-2xl font-bold text-slate-900">
+                    {unassignedDoctorsCount}
+                  </p>
+                </div>
+                <div className="rounded-2xl bg-amber-50 p-3 text-amber-600">
+                  <AlertCircle className="h-5 w-5" />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid gap-6 xl:grid-cols-[380px_minmax(0,1fr)]">
+            {/* Left Sidebar */}
+            <div className="space-y-6">
+              <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                <div className="mb-4">
+                  <h2 className="text-lg font-semibold text-slate-900">
+                    Department List
+                  </h2>
+                  <p className="mt-1 text-sm text-slate-500">
+                    Add, edit, activate, deactivate, and delete departments.
+                  </p>
+                </div>
+
+                {suggestions.length > 0 && (
+                  <div className="mt-5">
+                    <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                      Quick Suggestions
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {suggestions.map((item) => {
+                        const exists = suggestionAlreadyExists(item);
+
+                        return (
+                          <button
+                            key={item}
+                            type="button"
+                            onClick={() => !exists && addSuggestedDepartment(item)}
+                            disabled={busyAction}
+                            className={`rounded-full px-3 py-1.5 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-60 ${
+                              exists
+                                ? "border border-emerald-200 bg-emerald-50 text-emerald-700"
+                                : "border border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
+                            }`}
+                          >
+                            {exists ? "\u2713" : "+"} {item}
+                          </button>
+                        );
+                      })}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowCustomInput(true);
+                          setTimeout(() => customInputRef.current?.focus(), 0);
+                        }}
+                        disabled={busyAction}
+                        className={`rounded-full px-3 py-1.5 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-60 ${
+                          showCustomInput
+                            ? "border border-indigo-300 bg-indigo-50 text-indigo-700"
+                            : "border border-dashed border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
+                        }`}
+                      >
+                        + Other
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {(suggestions.length === 0 || showCustomInput) && (
+                  <div className="mt-5 flex gap-2">
+                    <input
+                      ref={customInputRef}
+                      value={departmentName}
+                      onChange={(e) => setDepartmentName(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          handleAddDepartment();
+                        } else if (e.key === "Escape" && suggestions.length > 0) {
+                          e.preventDefault();
+                          setDepartmentName("");
+                          setShowCustomInput(false);
+                        }
+                      }}
+                      placeholder="Add new department"
+                      className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleAddDepartment}
+                      disabled={busyAction || !departmentName.trim()}
+                      className="rounded-2xl bg-indigo-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      Add
+                    </button>
+                    {suggestions.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDepartmentName("");
+                          setShowCustomInput(false);
+                        }}
+                        disabled={busyAction}
+                        className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        Cancel
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                <div className="mt-5 flex flex-wrap gap-2">
                   <button
                     type="button"
-                    onClick={handleDepartmentFormCancel}
-                    className="px-4 py-2 rounded-lg text-sm font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 transition"
-                    disabled={loading}
+                    onClick={() => setDepartmentFilter("all")}
+                    className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${
+                      departmentFilter === "all"
+                        ? "bg-slate-900 text-white"
+                        : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                    }`}
                   >
-                    Cancel
+                    All
                   </button>
                   <button
-                    type="submit"
-                    className="px-4 py-2 rounded-lg text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
-                    disabled={loading}
+                    type="button"
+                    onClick={() => setDepartmentFilter("active")}
+                    className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${
+                      departmentFilter === "active"
+                        ? "bg-emerald-600 text-white"
+                        : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                    }`}
                   >
-                    {loading ? 'Saving...' : (editingDepartment ? 'Update Department' : 'Create Department')}
+                    Active
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDepartmentFilter("inactive")}
+                    className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${
+                      departmentFilter === "inactive"
+                        ? "bg-slate-600 text-white"
+                        : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                    }`}
+                  >
+                    Inactive
                   </button>
                 </div>
-              </form>
+
+                <div className="mt-5 space-y-3">
+                  {filteredDepartments.map((dep) => {
+                    const active = dep.id === selectedDepartmentId;
+                    const count = getDepartmentDoctorCount(dep.id);
+                    const isEditing = editingDepartmentId === dep.id;
+
+                    return (
+                      <div
+                        key={dep.id}
+                        className={`rounded-2xl border p-3 transition ${
+                          active
+                            ? "border-indigo-500 bg-indigo-50 shadow-sm"
+                            : "border-slate-200 bg-white hover:border-slate-300"
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <button
+                            type="button"
+                            onClick={() => setSelectedDepartmentId(dep.id)}
+                            className="min-w-0 flex-1 text-left"
+                          >
+                            <div className="flex items-center gap-2">
+                              <p
+                                className={`truncate text-sm font-semibold ${
+                                  active ? "text-indigo-700" : "text-slate-900"
+                                }`}
+                              >
+                                {dep.name}
+                              </p>
+
+                              <span
+                                className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+                                  dep.status === "active"
+                                    ? "bg-emerald-100 text-emerald-700"
+                                    : "bg-slate-200 text-slate-600"
+                                }`}
+                              >
+                                {dep.status}
+                              </span>
+                            </div>
+
+                            <p className="mt-1 text-xs text-slate-500">
+                              {count} doctor{count !== 1 ? "s" : ""}
+                            </p>
+                          </button>
+
+                          {active && (
+                            <div className="rounded-full bg-indigo-100 p-1 text-indigo-600">
+                              <Check className="h-4 w-4" />
+                            </div>
+                          )}
+                        </div>
+
+                        {isEditing ? (
+                          <div className="mt-3 space-y-2">
+                            <input
+                              value={editDepartmentName}
+                              onChange={(e) =>
+                                setEditDepartmentName(e.target.value)
+                              }
+                              placeholder="Enter department name"
+                              className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100"
+                            />
+
+                            <div className="flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                onClick={() => saveDepartmentEdit(dep.id)}
+                                disabled={busyAction || !editDepartmentName.trim()}
+                                className="inline-flex items-center gap-1 rounded-xl bg-indigo-600 px-3 py-2 text-xs font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+                              >
+                                <Check className="h-3.5 w-3.5" />
+                                Save
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={cancelEditDepartment}
+                                className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-50"
+                              >
+                                <X className="h-3.5 w-3.5" />
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              onClick={() => startEditDepartment(dep)}
+                              className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                              Edit
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => toggleDepartmentStatus(dep)}
+                              disabled={busyAction}
+                              className={`inline-flex items-center gap-1 rounded-xl px-3 py-2 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-60 ${
+                                dep.status === "active"
+                                  ? "border border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100"
+                                  : "border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                              }`}
+                            >
+                              {dep.status === "active" ? (
+                                <>
+                                  <PowerOff className="h-3.5 w-3.5" />
+                                  Inactivate
+                                </>
+                              ) : (
+                                <>
+                                  <Power className="h-3.5 w-3.5" />
+                                  Activate
+                                </>
+                              )}
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteDepartmentClick(dep.id)}
+                              disabled={busyAction || departments.length === 1}
+                              className="inline-flex items-center gap-1 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-600 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                              Delete
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+
+                  {filteredDepartments.length === 0 && (
+                    <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center">
+                      <p className="text-sm font-semibold text-slate-700">
+                        No departments found
+                      </p>
+                      <p className="mt-1 text-xs text-slate-500">
+                        Try switching filter or add a new department.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
-          </section>
+
+            {/* Right Content */}
+            <div className="space-y-6">
+              {/* Department Overview */}
+              <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm md:p-6">
+                <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+                  <div>
+                    <div className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600">
+                      <Layers3 className="h-3.5 w-3.5" />
+                      Selected Department
+                    </div>
+
+                    <div className="mt-3 flex flex-wrap items-center gap-3">
+                      <h2 className="text-2xl font-bold text-slate-900">
+                        {selectedDepartment?.name ?? "No department selected"}
+                      </h2>
+
+                      {selectedDepartment && (
+                        <span
+                          className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wide ${
+                            selectedDepartment.status === "active"
+                              ? "bg-emerald-100 text-emerald-700"
+                              : "bg-slate-200 text-slate-600"
+                          }`}
+                        >
+                          {selectedDepartment.status}
+                        </span>
+                      )}
+                    </div>
+
+                    <p className="mt-1 text-sm text-slate-500">
+                      View doctors assigned to this department and quickly add new ones.
+                    </p>
+
+                    {selectedDepartment?.status === "inactive" && (
+                      <div className="mt-3 inline-flex items-center gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700">
+                        <AlertCircle className="h-4 w-4" />
+                        This department is inactive. New doctor assignment is disabled.
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                        Assigned
+                      </p>
+                      <p className="mt-1 text-xl font-bold text-slate-900">
+                        {assignedDoctors.length}
+                      </p>
+                    </div>
+
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                        Available
+                      </p>
+                      <p className="mt-1 text-xl font-bold text-slate-900">
+                        {availableDoctors.length}
+                      </p>
+                    </div>
+
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                        Coverage
+                      </p>
+                      <p className="mt-1 text-xl font-bold text-slate-900">
+                        {doctors.length === 0
+                          ? "0%"
+                          : `${Math.round(
+                              (assignedDoctors.length / doctors.length) * 100
+                            )}%`}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-5 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setViewMode("all")}
+                    className={`rounded-full px-4 py-2 text-sm font-medium transition ${
+                      viewMode === "all"
+                        ? "bg-slate-900 text-white"
+                        : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                    }`}
+                  >
+                    All
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setViewMode("assigned")}
+                    className={`rounded-full px-4 py-2 text-sm font-medium transition ${
+                      viewMode === "assigned"
+                        ? "bg-indigo-600 text-white"
+                        : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                    }`}
+                  >
+                    Assigned Only
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setViewMode("unassigned")}
+                    className={`rounded-full px-4 py-2 text-sm font-medium transition ${
+                      viewMode === "unassigned"
+                        ? "bg-amber-500 text-white"
+                        : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                    }`}
+                  >
+                    Unassigned Only
+                  </button>
+                </div>
+              </div>
+
+              {/* Panels */}
+              <div className="grid gap-6 lg:grid-cols-2">
+                {/* Assigned */}
+                <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+                  <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
+                    <div>
+                      <h3 className="text-base font-semibold text-slate-900">
+                        Assigned Doctors
+                      </h3>
+                      <p className="text-sm text-slate-500">
+                        Doctors currently in {selectedDepartment?.name ?? "—"}
+                      </p>
+                    </div>
+
+                    <span className="rounded-full bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-700">
+                      {visibleAssignedDoctors.length}
+                    </span>
+                  </div>
+
+                  <div className="max-h-[620px] space-y-4 overflow-y-auto p-5">
+                    {visibleAssignedDoctors.length === 0 ? (
+                      <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center">
+                        <p className="text-sm font-semibold text-slate-700">
+                          No assigned doctors found
+                        </p>
+                        <p className="mt-1 text-xs text-slate-500">
+                          Assigned doctors will appear here for this department.
+                        </p>
+                      </div>
+                    ) : (
+                      visibleAssignedDoctors.map((doctor) => (
+                        <DoctorCard
+                          key={doctor.id}
+                          doctor={doctor}
+                          assigned={true}
+                        />
+                      ))
+                    )}
+                  </div>
+                </div>
+
+                {/* Available */}
+                <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+                  <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
+                    <div>
+                      <h3 className="text-base font-semibold text-slate-900">
+                        Available Doctors
+                      </h3>
+                      <p className="text-sm text-slate-500">
+                        Doctors available for assignment
+                      </p>
+                    </div>
+
+                    <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
+                      {visibleAvailableDoctors.length}
+                    </span>
+                  </div>
+
+                  <div className="max-h-[620px] space-y-4 overflow-y-auto p-5">
+                    {visibleAvailableDoctors.length === 0 ? (
+                      <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center">
+                        <p className="text-sm font-semibold text-slate-700">
+                          No available doctors found
+                        </p>
+                        <p className="mt-1 text-xs text-slate-500">
+                          All matching doctors are already assigned.
+                        </p>
+                      </div>
+                    ) : (
+                      visibleAvailableDoctors.map((doctor) => (
+                        <DoctorCard
+                          key={doctor.id}
+                          doctor={doctor}
+                          assigned={false}
+                        />
+                      ))
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Bottom Notice */}
+              <div className="rounded-3xl border border-indigo-100 bg-gradient-to-r from-indigo-50 via-white to-sky-50 p-5 shadow-sm">
+                <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                  <div>
+                    <h3 className="text-lg font-semibold text-slate-900">
+                      Better clinic control with multi-department assignment
+                    </h3>
+                    <p className="mt-1 text-sm text-slate-600">
+                      This structure helps workspace admins manage doctors faster,
+                      avoid confusion during booking, and maintain cleaner service allocation.
+                    </p>
+                  </div>
+
+                  <div className="inline-flex items-center gap-2 rounded-2xl bg-indigo-600 px-4 py-3 text-sm font-semibold text-white shadow-sm">
+                    <UserPlus className="h-4 w-4" />
+                    Smart Assignment Enabled
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
-      )}
+      </div>
 
       {deleteConfirmId && (
         <ConfirmModal
-          title="Delete Department"
-          message="Are you sure you want to delete this department? This action cannot be undone."
+          title="Delete department"
+          message={DELETE_CONFIRM_MESSAGE}
           confirmLabel="Delete"
           variant="danger"
           onConfirm={handleDeleteDepartmentConfirm}
           onCancel={() => setDeleteConfirmId(null)}
-          loading={loading}
+          loading={busyAction}
         />
       )}
 
       {alertMessage && (
         <AlertModal message={alertMessage} onClose={() => setAlertMessage(null)} />
       )}
-    </section>
+    </div>
   );
 }
-

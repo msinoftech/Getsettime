@@ -13,7 +13,6 @@ export type event_type_form_state = {
 };
 
 const DURATION_PRESETS = [15, 30, 45, 60] as const;
-const BUFFER_PRESETS = [0, 5, 10, 15] as const;
 
 function parse_non_negative_int(s: string, fallback = 0): number {
   if (s.trim() === "") return fallback;
@@ -60,16 +59,6 @@ function duration_preset_selected(
   return total_duration_minutes(hours, minutes_part) === preset;
 }
 
-function buffer_preset_selected(
-  before: string,
-  after: string,
-  chip: number
-): boolean {
-  const b = parse_non_negative_int(before);
-  const a = parse_non_negative_int(after);
-  return b === chip && a === chip;
-}
-
 function location_type_label(value: string): string {
   switch (value) {
     case "in_person":
@@ -83,13 +72,6 @@ function location_type_label(value: string): string {
     default:
       return "Not set";
   }
-}
-
-function format_buffer_preview(before: string, after: string): string {
-  const b = parse_non_negative_int(before);
-  const a = parse_non_negative_int(after);
-  if (b === 0 && a === 0) return "None";
-  return `${b}m before · ${a}m after`;
 }
 
 type EventTypeFormLayoutProps = {
@@ -120,7 +102,7 @@ export function EventTypeFormLayout({
 
   const on_digit_field = useCallback(
     (
-      field: "duration_hours" | "duration_minutes_part" | "buffer_before" | "buffer_after",
+      field: "duration_hours" | "duration_minutes_part",
       raw: string
     ) => {
       if (raw === "" || /^\d+$/.test(raw)) {
@@ -142,14 +124,6 @@ export function EventTypeFormLayout({
     [patch]
   );
 
-  const on_buffer_preset = useCallback(
-    (chip: number) => {
-      const s = chip === 0 ? "" : String(chip);
-      patch({ buffer_before: s, buffer_after: s });
-    },
-    [patch]
-  );
-
   const total_min = total_duration_minutes(value.duration_hours, value.duration_minutes_part);
 
   const digit_key_filter = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -167,36 +141,35 @@ export function EventTypeFormLayout({
   };
 
   return (
-    <div className="bg-slate-50 p-6 md:p-10">
-      <div className="mx-auto max-w-7xl">
-        <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <p className="text-sm font-semibold uppercase tracking-[0.22em] text-violet-600">
-              Event types
-            </p>
-            <h1
-              id="event-type-form-heading"
-              className="mt-2 text-3xl font-semibold tracking-tight text-slate-900 md:text-4xl"
-            >
-              {editingId ? "Update event type" : "Create event type"}
-            </h1>
-            <p className="mt-3 max-w-2xl text-sm text-slate-600 md:text-base">
-              Set duration with hours and minutes, buffers, location, and visibility. Clients see public
-              types on your booking page.
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={onCancel}
-              className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50"
-            >
-              Close
-            </button>
-          </div>
+    <div className="rounded-2xl bg-slate-50 p-4 md:p-6">
+      <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.22em] text-violet-600">
+            Event types
+          </p>
+          <h1
+            id="event-type-form-heading"
+            className="mt-2 text-2xl font-semibold tracking-tight text-slate-900 md:text-3xl"
+          >
+            {editingId ? "Update event type" : "Create event type"}
+          </h1>
+          <p className="mt-2 max-w-2xl text-sm text-slate-600">
+            Set duration with hours and minutes, location, and visibility. Clients see public types
+            on your booking page.
+          </p>
         </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50"
+          >
+            Close
+          </button>
+        </div>
+      </div>
 
-        <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
+      <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
           <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_20px_60px_rgba(15,23,42,0.06)] md:p-7">
             <div className="flex flex-col gap-4 border-b border-slate-100 pb-5 md:flex-row md:items-start md:justify-between">
               <div>
@@ -308,77 +281,26 @@ export function EventTypeFormLayout({
                   </div>
 
                   <div className="rounded-3xl bg-white p-4 shadow-sm">
-                    <div className="grid gap-4 md:grid-cols-2">
-                      <div>
-                        <p className="mb-3 text-sm font-medium text-slate-700">Quick minute presets</p>
-                        <div className="grid grid-cols-2 gap-3">
-                          {DURATION_PRESETS.map((item) => (
-                            <button
-                              key={item}
-                              type="button"
-                              onClick={() => on_duration_preset(item)}
-                              className={`rounded-2xl border px-4 py-3 text-sm font-medium transition ${
-                                duration_preset_selected(
-                                  value.duration_hours,
-                                  value.duration_minutes_part,
-                                  item
-                                )
-                                  ? "border-violet-500 bg-violet-600 text-white shadow-lg shadow-violet-200"
-                                  : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-white"
-                              }`}
-                            >
-                              {item} min
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-
-                      <div>
-                        <p className="mb-3 text-sm font-medium text-slate-700">Buffer before / after</p>
-                        <div className="grid grid-cols-2 gap-3">
-                          {BUFFER_PRESETS.map((item) => (
-                            <button
-                              key={item}
-                              type="button"
-                              onClick={() => on_buffer_preset(item)}
-                              className={`rounded-2xl border px-4 py-3 text-sm font-medium transition ${
-                                buffer_preset_selected(value.buffer_before, value.buffer_after, item)
-                                  ? "border-slate-900 bg-slate-900 text-white"
-                                  : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-white"
-                              }`}
-                            >
-                              {item === 0 ? "None" : `${item} min`}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="mt-5 grid gap-3 md:grid-cols-2">
-                      <label className="block">
-                        <span className="mb-2 block text-sm font-medium text-slate-700">Buffer before (minutes)</span>
-                        <input
-                          type="text"
-                          inputMode="numeric"
-                          value={value.buffer_before}
-                          onChange={(e) => on_digit_field("buffer_before", e.target.value)}
-                          onKeyDown={digit_key_filter}
-                          placeholder="e.g. 10"
-                          className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none focus:border-violet-400 focus:bg-white"
-                        />
-                      </label>
-                      <label className="block">
-                        <span className="mb-2 block text-sm font-medium text-slate-700">Buffer after (minutes)</span>
-                        <input
-                          type="text"
-                          inputMode="numeric"
-                          value={value.buffer_after}
-                          onChange={(e) => on_digit_field("buffer_after", e.target.value)}
-                          onKeyDown={digit_key_filter}
-                          placeholder="e.g. 5"
-                          className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none focus:border-violet-400 focus:bg-white"
-                        />
-                      </label>
+                    <p className="mb-3 text-sm font-medium text-slate-700">Quick minute presets</p>
+                    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                      {DURATION_PRESETS.map((item) => (
+                        <button
+                          key={item}
+                          type="button"
+                          onClick={() => on_duration_preset(item)}
+                          className={`rounded-2xl border px-4 py-3 text-sm font-medium transition ${
+                            duration_preset_selected(
+                              value.duration_hours,
+                              value.duration_minutes_part,
+                              item
+                            )
+                              ? "border-violet-500 bg-violet-600 text-white shadow-lg shadow-violet-200"
+                              : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-white"
+                          }`}
+                        >
+                          {item} min
+                        </button>
+                      ))}
                     </div>
                   </div>
                 </div>
@@ -464,12 +386,6 @@ export function EventTypeFormLayout({
                     <span className="shrink-0 font-medium text-white">{format_duration_label(total_min)}</span>
                   </div>
                   <div className="flex items-center justify-between gap-2 rounded-2xl bg-white/5 px-4 py-3">
-                    <span>Buffer</span>
-                    <span className="shrink-0 text-right font-medium text-white">
-                      {format_buffer_preview(value.buffer_before, value.buffer_after)}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between gap-2 rounded-2xl bg-white/5 px-4 py-3">
                     <span>Location</span>
                     <span className="shrink-0 font-medium text-white">
                       {location_type_label(value.location_type)}
@@ -487,7 +403,6 @@ export function EventTypeFormLayout({
               </div>
             </div>
           </aside>
-        </div>
       </div>
     </div>
   );
