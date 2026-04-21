@@ -40,5 +40,14 @@ export type Booking = {
     phone: string | null;
     email: string | null;
   } | null;
+  /**
+   * Server-enriched record creator resolved from `host_user_id`. Null for
+   * bookings created through the public embed (no authenticated host).
+   */
+  creator?: {
+    id: string;
+    name: string;
+    email: string | null;
+  } | null;
 };
 

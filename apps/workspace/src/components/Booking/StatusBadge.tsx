@@ -23,7 +23,7 @@ export function StatusBadge({
 
   return (
     <span
-      className={`inline-flex px-2 py-1 text-xs font-medium rounded-md ${styleClass} ${className}`}
+      className={`inline-flex px-2 py-1 text-xs font-medium capitalize rounded-md ${styleClass} ${className}`}
     >
       {status || 'Pending'}
     </span>

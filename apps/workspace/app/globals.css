@@ -62,3 +62,67 @@ body{
     justify-content: flex-end;
   }
 }
+
+/*
+ * Scoped print mode for the Booking Details card.
+ * The `.print-mode-booking` class is toggled on <html> around window.print()
+ * so that only the element marked with `data-print-root="booking-details"`
+ * (and its descendants) appears on the printed page while page chrome
+ * (sidebar, topbar, outer padding) is hidden. Within the card, individual
+ * action controls rely on Tailwind's `print:hidden` utility.
+ */
+@media print {
+  html.print-mode-booking,
+  html.print-mode-booking body {
+    background: #ffffff !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  html.print-mode-booking body * {
+    visibility: hidden !important;
+  }
+
+  /* Collapse page chrome entirely so it doesn't reserve layout space or
+     bleed into the printed page. */
+  html.print-mode-booking aside,
+  html.print-mode-booking header,
+  html.print-mode-booking nav {
+    display: none !important;
+  }
+
+  html.print-mode-booking [data-print-root="booking-details"],
+  html.print-mode-booking [data-print-root="booking-details"] * {
+    visibility: visible !important;
+  }
+
+  /* Nested <nav>/<header>/<aside> *inside* the print root (if any) must
+     still render - re-enable them after the blanket hide above. */
+  html.print-mode-booking [data-print-root="booking-details"] aside,
+  html.print-mode-booking [data-print-root="booking-details"] header,
+  html.print-mode-booking [data-print-root="booking-details"] nav {
+    display: revert !important;
+  }
+
+  html.print-mode-booking [data-print-root="booking-details"] {
+    position: absolute !important;
+    inset: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    border: none !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    overflow: visible !important;
+  }
+
+  html.print-mode-booking [data-print-root="booking-details"] .sticky {
+    position: static !important;
+  }
+
+  /* Tailwind's `print:hidden` is already display:none via @media print,
+     but we re-assert it inside the print root to win over visibility rules. */
+  html.print-mode-booking [data-print-root="booking-details"] .print\:hidden {
+    display: none !important;
+  }
+}

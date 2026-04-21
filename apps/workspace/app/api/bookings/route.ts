@@ -176,6 +176,79 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
+    // Enrich each booking with creator info resolved from host_user_id so the
+    // UI can show who created the record. Public embed bookings have
+    // host_user_id = null and remain null creators (rendered as guests client-side).
+    const rawRows = (data || []) as Array<Record<string, unknown>>;
+    const uniqueHostUserIds = Array.from(
+      new Set(
+        rawRows
+          .map((r) => r.host_user_id)
+          .filter(
+            (id): id is string => typeof id === 'string' && id.length > 0
+          )
+      )
+    );
+
+    type BookingCreator = {
+      id: string;
+      name: string;
+      email: string | null;
+    };
+    const creatorById = new Map<string, BookingCreator>();
+
+    if (uniqueHostUserIds.length > 0) {
+      const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+      if (serviceKey) {
+        const adminClient = createClient(supabaseUrl, serviceKey, {
+          auth: { autoRefreshToken: false, persistSession: false },
+        });
+        const lookups = await Promise.all(
+          uniqueHostUserIds.map(async (id) => {
+            try {
+              const { data: userResult } =
+                await adminClient.auth.admin.getUserById(id);
+              return { id, user: userResult?.user ?? null };
+            } catch {
+              return { id, user: null };
+            }
+          })
+        );
+        for (const entry of lookups) {
+          if (!entry.user) continue;
+          const meta = (entry.user.user_metadata || {}) as Record<
+            string,
+            unknown
+          >;
+          const rawName =
+            typeof meta.name === 'string' ? meta.name.trim() : '';
+          const rawFullName =
+            typeof meta.full_name === 'string' ? meta.full_name.trim() : '';
+          const emailPrefix =
+            typeof entry.user.email === 'string' && entry.user.email.includes('@')
+              ? entry.user.email.split('@')[0]
+              : '';
+          const resolvedName =
+            rawName || rawFullName || emailPrefix || 'Unknown';
+          creatorById.set(entry.id, {
+            id: entry.id,
+            name: resolvedName,
+            email: entry.user.email ?? null,
+          });
+        }
+      }
+    }
+
+    const enrichedData = rawRows.map((row) => {
+      const hostUserId =
+        typeof row.host_user_id === 'string' ? row.host_user_id : null;
+      const creator =
+        hostUserId && creatorById.has(hostUserId)
+          ? creatorById.get(hostUserId) ?? null
+          : null;
+      return { ...row, creator };
+    });
+
     // Fetch Google Calendar busy slots when date range requested (for availability)
     let calendarBusy: { start_at: string; end_at: string }[] = [];
     if (startDate && endDate && workspaceId) {
@@ -196,7 +269,7 @@ export async function GET(req: NextRequest) {
     }
 
     return NextResponse.json({
-      data: data || [],
+      data: enrichedData,
       calendar_busy: calendarBusy,
       pagination: {
         page,
