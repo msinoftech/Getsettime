@@ -57,11 +57,12 @@ export async function syncDepartmentServiceProvidersWithTeamDepartments(
       .meta_data ?? {}) as Record<string, unknown>;
     const rawSps = meta.service_providers;
     const list: ProviderEntry[] = Array.isArray(rawSps)
-      ? (rawSps as unknown[]).reduce<ProviderEntry[]>((acc, item) => {
+        ? (rawSps as unknown[]).reduce<ProviderEntry[]>((acc, item) => {
           if (!item || typeof item !== "object" || !("id" in item)) return acc;
-          const id = (item as { id: unknown }).id;
+          const o = item as unknown as Record<string, unknown>;
+          const id = o["id"];
           if (typeof id !== "string") return acc;
-          const name = (item as { name: unknown }).name;
+          const name = o["name"];
           acc.push({
             id,
             name: typeof name === "string" ? name : "",
