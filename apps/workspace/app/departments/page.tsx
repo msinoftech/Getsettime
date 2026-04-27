@@ -63,8 +63,18 @@ function serviceProviderDisplayName(p: ServiceProvider): string {
 const DELETE_CONFIRM_MESSAGE =
   "Do you want to delete it? If you delete it then you need to again assign doctors. If you just want to hide this department, you can also deactivate it and it will hide from the booking form; you can activate it again anytime in the future.";
 
+/** Single-provider department chips: rotate styles like the Team “Roles” row. */
+const SOLE_SP_DEPARTMENT_CHIP_STYLES = [
+  "bg-blue-100 text-blue-800",
+  "bg-indigo-100 text-indigo-800",
+  "border border-amber-300/80 bg-amber-100 text-amber-800",
+  "bg-violet-100 text-violet-800",
+  "bg-emerald-100 text-emerald-800",
+] as const;
+
 export default function DepartmentsPage() {
-  const { data: serviceProviders } = useServiceProviders();
+  const { data: serviceProviders, loading: spLoading } = useServiceProviders();
+  const showFullDoctorFlow = serviceProviders.length > 1;
 
   const [departments, setDepartments] = useState<Department[]>([]);
   const [selectedDepartmentId, setSelectedDepartmentId] = useState<number | null>(
@@ -290,6 +300,22 @@ export default function DepartmentsPage() {
     return departments;
   }, [departments, departmentFilter]);
 
+  const soleProviderId = useMemo(
+    () => (serviceProviders.length === 1 ? serviceProviders[0]!.id : null),
+    [serviceProviders]
+  );
+
+  const assignedDepartmentsForSoleProvider = useMemo(() => {
+    if (!soleProviderId) return [];
+    return departments.filter((d) => {
+      const sps = d.meta_data?.service_providers ?? [];
+      if (!sps.some((p) => p.id === soleProviderId)) return false;
+      if (departmentFilter === "active") return d.status === "active";
+      if (departmentFilter === "inactive") return d.status === "inactive";
+      return true;
+    });
+  }, [departments, soleProviderId, departmentFilter]);
+
   const suggestionAlreadyExists = useCallback(
     (name: string) =>
       departments.some((d) => d.name.toLowerCase() === name.toLowerCase()),
@@ -361,7 +387,42 @@ export default function DepartmentsPage() {
       }
 
       setBusyAction(true);
-      const data = await callApi("POST", { name, status: "active" });
+      const sole =
+        serviceProviders.length === 1 ? serviceProviders[0] : undefined;
+      const data = (await callApi("POST", {
+        name,
+        status: "active",
+        ...(sole
+          ? {
+              meta_data: {
+                service_providers: [
+                  { id: sole.id, name: serviceProviderDisplayName(sole) },
+                ],
+              },
+            }
+          : {}),
+      })) as {
+        department?: Department;
+        restored?: boolean;
+        reused?: boolean;
+      } | null;
+
+      if (sole && data?.restored && data.department?.id != null) {
+        const d = data.department;
+        const current = d.meta_data?.service_providers ?? [];
+        if (!current.some((p) => p.id === sole.id)) {
+          await callApi("PUT", {
+            id: d.id,
+            meta_data: {
+              service_providers: [
+                ...current,
+                { id: sole.id, name: serviceProviderDisplayName(sole) },
+              ],
+            },
+          });
+        }
+      }
+
       setBusyAction(false);
 
       if (data?.department?.id != null) {
@@ -370,7 +431,7 @@ export default function DepartmentsPage() {
       setDepartmentName("");
       setShowCustomInput(false);
     },
-    [callApi, departments, fetchDepartments]
+    [callApi, departments, fetchDepartments, serviceProviders]
   );
 
   const handleAddDepartment = () => createDepartment(departmentName);
@@ -597,9 +658,14 @@ export default function DepartmentsPage() {
     );
   };
 
-  if (initialLoading) {
+  if (initialLoading || spLoading) {
     return <DepartmentSkeleton />;
   }
+
+  const soleServiceProviderName =
+    serviceProviders.length === 1
+      ? serviceProviderDisplayName(serviceProviders[0]!)
+      : null;
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -617,32 +683,38 @@ export default function DepartmentsPage() {
                   </div>
 
                   <h1 className="text-2xl font-bold tracking-tight text-slate-900 md:text-3xl">
-                    Department &amp; Doctor Assignment
+                    {showFullDoctorFlow
+                      ? "Department & Doctor Assignment"
+                      : "Departments"}
                   </h1>
                   <p className="mt-2 text-sm leading-6 text-slate-600 md:text-base">
-                    Manage departments, assign doctors to multiple specialties,
-                    and keep your clinic structure organized with a clear and
-                    powerful admin experience.
+                    {showFullDoctorFlow
+                      ? "Manage departments, assign doctors to multiple specialties, and keep your clinic structure organized with a clear admin experience."
+                      : "Add and manage department names, visibility, and status. They appear on your booking form when active."}
                   </p>
                 </div>
 
-                <div className="flex w-full flex-col gap-3 sm:flex-row lg:w-auto">
-                  <div className="relative min-w-[260px]">
-                    <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                    <input
-                      value={search}
-                      onChange={(e) => setSearch(e.target.value)}
-                      placeholder="Search doctor name..."
-                      className="w-full rounded-2xl border border-slate-300 bg-white py-3 pl-10 pr-4 text-sm outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100"
-                    />
+                {showFullDoctorFlow && (
+                  <div className="flex w-full flex-col gap-3 sm:flex-row lg:w-auto">
+                    <div className="relative min-w-[260px]">
+                      <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                      <input
+                        value={search}
+                        onChange={(e) => setSearch(e.target.value)}
+                        placeholder="Search doctor name..."
+                        className="w-full rounded-2xl border border-slate-300 bg-white py-3 pl-10 pr-4 text-sm outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100"
+                      />
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
             </div>
           </div>
 
           {/* Stats */}
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+          <div
+            className={`grid gap-4 md:grid-cols-2 ${showFullDoctorFlow ? "xl:grid-cols-5" : "xl:grid-cols-3"}`}
+          >
             <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
               <div className="flex items-start justify-between">
                 <div>
@@ -685,33 +757,41 @@ export default function DepartmentsPage() {
               </div>
             </div>
 
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-              <div className="flex items-start justify-between">
-                <div>
-                  <p className="text-sm font-medium text-slate-500">Assignments</p>
-                  <p className="mt-2 text-2xl font-bold text-slate-900">
-                    {totalAssignments}
-                  </p>
+            {showFullDoctorFlow && (
+              <>
+                <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <p className="text-sm font-medium text-slate-500">
+                        Assignments
+                      </p>
+                      <p className="mt-2 text-2xl font-bold text-slate-900">
+                        {totalAssignments}
+                      </p>
+                    </div>
+                    <div className="rounded-2xl bg-violet-50 p-3 text-violet-600">
+                      <BriefcaseMedical className="h-5 w-5" />
+                    </div>
+                  </div>
                 </div>
-                <div className="rounded-2xl bg-violet-50 p-3 text-violet-600">
-                  <BriefcaseMedical className="h-5 w-5" />
-                </div>
-              </div>
-            </div>
 
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-              <div className="flex items-start justify-between">
-                <div>
-                  <p className="text-sm font-medium text-slate-500">Unassigned</p>
-                  <p className="mt-2 text-2xl font-bold text-slate-900">
-                    {unassignedDoctorsCount}
-                  </p>
+                <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <p className="text-sm font-medium text-slate-500">
+                        Unassigned
+                      </p>
+                      <p className="mt-2 text-2xl font-bold text-slate-900">
+                        {unassignedDoctorsCount}
+                      </p>
+                    </div>
+                    <div className="rounded-2xl bg-amber-50 p-3 text-amber-600">
+                      <AlertCircle className="h-5 w-5" />
+                    </div>
+                  </div>
                 </div>
-                <div className="rounded-2xl bg-amber-50 p-3 text-amber-600">
-                  <AlertCircle className="h-5 w-5" />
-                </div>
-              </div>
-            </div>
+              </>
+            )}
           </div>
 
           <div className="grid gap-6 xl:grid-cols-[380px_minmax(0,1fr)]">
@@ -1002,6 +1082,8 @@ export default function DepartmentsPage() {
             <div className="space-y-6">
               {/* Department Overview */}
               <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm md:p-6">
+                {showFullDoctorFlow ? (
+                  <>
                 <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
                   <div>
                     <div className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600">
@@ -1028,89 +1110,183 @@ export default function DepartmentsPage() {
                     </div>
 
                     <p className="mt-1 text-sm text-slate-500">
-                      View doctors assigned to this department and quickly add new ones.
+                      View doctors assigned to this department and quickly add
+                      new ones.
                     </p>
 
                     {selectedDepartment?.status === "inactive" && (
                       <div className="mt-3 inline-flex items-center gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700">
                         <AlertCircle className="h-4 w-4" />
-                        This department is inactive. New doctor assignment is disabled.
+                        This department is inactive. New doctor assignment is
+                        disabled.
                       </div>
                     )}
                   </div>
 
-                  <div className="grid gap-3 sm:grid-cols-3">
-                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                      <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                        Assigned
-                      </p>
-                      <p className="mt-1 text-xl font-bold text-slate-900">
-                        {assignedDoctors.length}
-                      </p>
-                    </div>
+                    <div className="grid gap-3 sm:grid-cols-3">
+                      <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                        <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                          Assigned
+                        </p>
+                        <p className="mt-1 text-xl font-bold text-slate-900">
+                          {assignedDoctors.length}
+                        </p>
+                      </div>
 
-                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                      <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                        Available
-                      </p>
-                      <p className="mt-1 text-xl font-bold text-slate-900">
-                        {availableDoctors.length}
-                      </p>
-                    </div>
+                      <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                        <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                          Available
+                        </p>
+                        <p className="mt-1 text-xl font-bold text-slate-900">
+                          {availableDoctors.length}
+                        </p>
+                      </div>
 
-                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                      <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                        Coverage
-                      </p>
-                      <p className="mt-1 text-xl font-bold text-slate-900">
-                        {doctors.length === 0
-                          ? "0%"
-                          : `${Math.round(
-                              (assignedDoctors.length / doctors.length) * 100
-                            )}%`}
-                      </p>
+                      <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                        <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                          Coverage
+                        </p>
+                        <p className="mt-1 text-xl font-bold text-slate-900">
+                          {doctors.length === 0
+                            ? "0%"
+                            : `${Math.round(
+                                (assignedDoctors.length / doctors.length) * 100
+                              )}%`}
+                        </p>
+                      </div>
                     </div>
-                  </div>
                 </div>
 
                 <div className="mt-5 flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setViewMode("all")}
-                    className={`rounded-full px-4 py-2 text-sm font-medium transition ${
-                      viewMode === "all"
-                        ? "bg-slate-900 text-white"
-                        : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
-                    }`}
-                  >
-                    All
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setViewMode("assigned")}
-                    className={`rounded-full px-4 py-2 text-sm font-medium transition ${
-                      viewMode === "assigned"
-                        ? "bg-indigo-600 text-white"
-                        : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
-                    }`}
-                  >
-                    Assigned Only
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setViewMode("unassigned")}
-                    className={`rounded-full px-4 py-2 text-sm font-medium transition ${
-                      viewMode === "unassigned"
-                        ? "bg-amber-500 text-white"
-                        : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
-                    }`}
-                  >
-                    Unassigned Only
-                  </button>
-                </div>
+                    <button
+                      type="button"
+                      onClick={() => setViewMode("all")}
+                      className={`rounded-full px-4 py-2 text-sm font-medium transition ${
+                        viewMode === "all"
+                          ? "bg-slate-900 text-white"
+                          : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                      }`}
+                    >
+                      All
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setViewMode("assigned")}
+                      className={`rounded-full px-4 py-2 text-sm font-medium transition ${
+                        viewMode === "assigned"
+                          ? "bg-indigo-600 text-white"
+                          : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                      }`}
+                    >
+                      Assigned Only
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setViewMode("unassigned")}
+                      className={`rounded-full px-4 py-2 text-sm font-medium transition ${
+                        viewMode === "unassigned"
+                          ? "bg-amber-500 text-white"
+                          : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                      }`}
+                    >
+                      Unassigned Only
+                    </button>
+                  </div>
+                  </>
+                ) : soleServiceProviderName ? (
+                  <>
+                    <div className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600">
+                      <Stethoscope className="h-3.5 w-3.5" />
+                      Service provider
+                    </div>
+
+                    <h2 className="mt-3 text-2xl font-bold tracking-tight capitalize text-slate-900 md:text-3xl">
+                      {soleServiceProviderName}
+                    </h2>
+
+                    <p className="mt-2 text-sm text-slate-500">
+                      New departments you add on the left are automatically
+                      assigned to this provider. Click a chip to match the
+                      selection on the left; filters above the list still apply
+                      to which chips appear.
+                    </p>
+
+                    <div className="mt-4">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-xs font-medium text-slate-600">
+                          Assigned departments:
+                        </span>
+                        {assignedDepartmentsForSoleProvider.length === 0 ? (
+                          <span className="text-xs text-slate-500">
+                            None match this filter, or not assigned yet. Add
+                            from the list on the left.
+                          </span>
+                        ) : (
+                          assignedDepartmentsForSoleProvider.map((dep, i) => {
+                            const isSelected = dep.id === selectedDepartmentId;
+                            const colorClass =
+                              dep.status === "inactive"
+                                ? "bg-slate-200 text-slate-600"
+                                : SOLE_SP_DEPARTMENT_CHIP_STYLES[
+                                    i % SOLE_SP_DEPARTMENT_CHIP_STYLES.length
+                                  ];
+                            return (
+                              <button
+                                key={dep.id}
+                                type="button"
+                                onClick={() =>
+                                  setSelectedDepartmentId(dep.id)
+                                }
+                                className={`inline-flex max-w-full min-w-0 items-center px-2.5 py-0.5 text-left text-xs font-medium leading-snug transition rounded-full ${colorClass} ${
+                                  isSelected
+                                    ? "ring-2 ring-indigo-500 ring-offset-1"
+                                    : "hover:opacity-90"
+                                }`}
+                                title={
+                                  dep.status === "inactive"
+                                    ? `${dep.name} (inactive)`
+                                    : dep.name
+                                }
+                              >
+                                <span className="min-w-0 truncate">
+                                  {dep.name}
+                                  {dep.status === "inactive" ? " · off" : ""}
+                                </span>
+                              </button>
+                            );
+                          })
+                        )}
+                      </div>
+                    </div>
+
+                    {selectedDepartment?.status === "inactive" && (
+                      <div className="mt-3 inline-flex items-center gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700">
+                        <AlertCircle className="h-4 w-4" />
+                        This department is inactive. It stays hidden from the
+                        booking form until you activate it.
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <div className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600">
+                      <Building2 className="h-3.5 w-3.5" />
+                      Departments
+                    </div>
+                    <h2 className="mt-3 text-xl font-bold text-slate-900">
+                      No service provider yet
+                    </h2>
+                    <p className="mt-2 text-sm text-slate-600">
+                      Add a service provider from Team so you can link them to
+                      departments. You can still add department names on the
+                      left; they will be connectable once a provider exists.
+                    </p>
+                  </>
+                )}
               </div>
 
               {/* Panels */}
+              {showFullDoctorFlow && (
               <div className="grid gap-6 lg:grid-cols-2">
                 {/* Assigned */}
                 <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
@@ -1190,8 +1366,10 @@ export default function DepartmentsPage() {
                   </div>
                 </div>
               </div>
+              )}
 
               {/* Bottom Notice */}
+              {showFullDoctorFlow && (
               <div className="rounded-3xl border border-indigo-100 bg-gradient-to-r from-indigo-50 via-white to-sky-50 p-5 shadow-sm">
                 <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
                   <div>
@@ -1210,6 +1388,18 @@ export default function DepartmentsPage() {
                   </div>
                 </div>
               </div>
+              )}
+              {!showFullDoctorFlow && serviceProviders.length === 1 && (
+              <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                <h3 className="text-base font-semibold text-slate-900">
+                  Tips for a single provider workspace
+                </h3>
+                <p className="mt-1 text-sm text-slate-600">
+                  You can add more service providers from Team at any time; this page
+                  will then let you assign them per department.
+                </p>
+              </div>
+              )}
             </div>
           </div>
         </div>

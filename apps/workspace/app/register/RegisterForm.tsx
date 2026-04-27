@@ -14,6 +14,7 @@ import AvailabilityTimesheet, {
   type availability_timesheet_save_feedback,
 } from "@/src/components/Settings/AvailabilityTimesheet";
 import AlertMessage from "@/src/components/Auth/AlertMessage";
+import { ROLE_WORKSPACE_ADMIN, ROLE_CUSTOMER } from "@/src/constants/roles";
 
 /** Row from professions_list (onboarding catalog), not workspace professions.id */
 type Profession = {
@@ -251,8 +252,8 @@ export default function RegisterForm() {
     }
 
     const userRole = meta.role as string | undefined;
-    if (userRole && userRole !== "workspace_admin") {
-      router.replace(userRole === "customer" ? "/my-bookings" : "/");
+    if (userRole && userRole !== ROLE_WORKSPACE_ADMIN) {
+      router.replace(userRole === ROLE_CUSTOMER ? "/my-bookings" : "/");
       return;
     }
 

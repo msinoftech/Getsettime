@@ -9,15 +9,25 @@ import type {
   Service,
 } from '@/src/types/booking-entities';
 import type { service_provider_display_source } from '@/src/utils/service_provider_display';
+import { userActsAsServiceProviderFromMetadata } from '@/lib/service_provider_role';
 
 interface TeamMember {
   id: string;
   email: string;
   name?: string;
   role?: string;
+  additional_roles?: string[];
   phone?: string | null;
   raw_user_meta_data?: { full_name?: string; name?: string; phone?: string };
   is_workspace_owner?: boolean;
+}
+
+function memberActsAsServiceProvider(m: TeamMember): boolean {
+  return userActsAsServiceProviderFromMetadata({
+    role: m.role ?? null,
+    is_workspace_owner: m.is_workspace_owner,
+    additional_roles: m.additional_roles ?? null,
+  });
 }
 
 export function useEventTypes() {
@@ -171,7 +181,7 @@ export function useServiceProviders() {
           );
         }
         const providers: ServiceProvider[] = members
-          .filter((m) => m.role === 'service_provider')
+          .filter(memberActsAsServiceProvider)
           .map((m) => {
             const phoneFromMeta = m.raw_user_meta_data?.phone;
             const phone =

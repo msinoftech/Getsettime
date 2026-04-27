@@ -94,7 +94,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Invalid email format' }, { status: 400 });
     }
 
-    if (!['workspace_admin', 'manager', 'service_provider', 'customer'].includes(role)) {
+    if (!['workspace_admin', 'manager', 'service_provider', 'staff', 'customer'].includes(role)) {
       return NextResponse.json({ error: 'Invalid role' }, { status: 400 });
     }
 

@@ -44,7 +44,7 @@ function isPublicPath(pathname: string): boolean {
 }
 
 // Allowed roles for workspace app
-const ALLOWED_ROLES = ['workspace_admin', 'customer', 'manager', 'service_provider'];
+const ALLOWED_ROLES = ['workspace_admin', 'customer', 'manager', 'service_provider', 'staff'];
 
 const ONBOARDING_AUTH_CHECK_TIMEOUT_MS = 30_000;
 /** Cap entire syncAuthFromSession so LayoutWrapper never spins forever on stuck getUser / network. */

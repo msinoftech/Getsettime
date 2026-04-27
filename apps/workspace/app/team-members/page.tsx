@@ -1,12 +1,44 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
+import {
+  LuBadgeCheck,
+  LuBriefcase,
+  LuCalendar,
+  LuClock,
+  LuCrown,
+  LuEllipsis,
+  LuListFilter,
+  LuLock,
+  LuMail,
+  LuPencil,
+  LuPhone,
+  LuPower,
+  LuSearch,
+  LuStar,
+  LuStethoscope,
+  LuUserCog,
+  LuUserPlus,
+  LuUsers,
+} from "react-icons/lu";
 import { supabase } from "@/lib/supabaseClient";
+import { useAuth } from "@/src/providers/AuthProvider";
 import { ConfirmModal } from "@/src/components/ui/ConfirmModal";
 import { TeamMemberSkeleton } from "@/src/components/ui/TeamMemberSkeleton";
+import {
+  ASSIGNABLE_ROLES,
+  OWNER_DISALLOWED_ROLES,
+  MANAGE_ROLES,
+  ROLE_SERVICE_PROVIDER,
+  formatRoleLabel,
+} from "@/src/constants/roles";
+import { userActsAsServiceProviderFromMetadata } from "@/lib/service_provider_role";
 
 interface Department {
   id: number;
   name: string;
+  meta_data?: {
+    service_providers?: { id: string; name: string }[];
+  } | null;
 }
 
 interface TeamMember {
@@ -14,6 +46,7 @@ interface TeamMember {
   email: string;
   name: string;
   role: string | null;
+  additional_roles: string[];
   departments: number[];
   phone: string | null;
   created_at: string;
@@ -22,7 +55,155 @@ interface TeamMember {
   is_workspace_owner: boolean;
 }
 
+function teamMemberActsAsServiceProvider(m: TeamMember): boolean {
+  return userActsAsServiceProviderFromMetadata({
+    role: m.role,
+    is_workspace_owner: m.is_workspace_owner,
+    additional_roles: m.additional_roles,
+  });
+}
+
+/**
+ * Department IDs where this user appears in `departments.meta_data.service_providers`
+ * (same source as the Departments page assignments).
+ */
+function getDepartmentIdsFromDepartmentsTable(
+  userId: string,
+  depts: Department[]
+): number[] {
+  const ids: number[] = [];
+  for (const d of depts) {
+    const sps = d.meta_data?.service_providers;
+    if (!Array.isArray(sps)) continue;
+    if (sps.some((p) => p.id === userId)) ids.push(d.id);
+  }
+  return ids;
+}
+
+/**
+ * Department ids shown in the Team UI and edit form.
+ * For service providers, use only `departments.meta_data.service_providers` — the
+ * same source as the Departments page. `user_metadata.departments` is updated
+ * when saving on Team but can stay stale after changes on the Departments
+ * page, so we must not merge it in for SPs.
+ */
+function getEffectiveDepartmentIdsForMember(
+  m: TeamMember,
+  depts: Department[]
+): number[] {
+  if (teamMemberActsAsServiceProvider(m)) {
+    return getDepartmentIdsFromDepartmentsTable(m.id, depts);
+  }
+  return [...new Set(m.departments ?? [])];
+}
+
+function getSortedDepartmentIdsForDisplay(
+  m: TeamMember,
+  depts: Department[]
+): number[] {
+  const ids = getEffectiveDepartmentIdsForMember(m, depts);
+  return [...ids].sort((a, b) => {
+    const na = depts.find((d) => d.id === a)?.name ?? "";
+    const nb = depts.find((d) => d.id === b)?.name ?? "";
+    return na.localeCompare(nb);
+  });
+}
+
+type MemberUiStatus = "active" | "invited" | "onboarding" | "inactive";
+
+type StatusFilter = "all" | MemberUiStatus;
+
+const STATUS_FILTER_CHIPS: { id: StatusFilter; label: string; shortLabel: string }[] =
+  [
+    { id: "all", label: "All", shortLabel: "All" },
+    { id: "active", label: "Active", shortLabel: "Active" },
+    { id: "invited", label: "Invited", shortLabel: "Invited" },
+    {
+      id: "onboarding",
+      label: "Onboarding pending",
+      shortLabel: "Onboarding",
+    },
+    { id: "inactive", label: "Inactive", shortLabel: "Inactive" },
+  ];
+
+function getMemberUiStatus(
+  m: TeamMember,
+  depts: Department[]
+): MemberUiStatus {
+  if (m.deactivated) return "inactive";
+  if (!m.email_confirmed_at) return "invited";
+  if (
+    teamMemberActsAsServiceProvider(m) &&
+    getSortedDepartmentIdsForDisplay(m, depts).length === 0
+  ) {
+    return "onboarding";
+  }
+  return "active";
+}
+
+function getStatusLabel(s: MemberUiStatus): string {
+  if (s === "onboarding") return "Onboarding pending";
+  if (s === "invited") return "Invited";
+  if (s === "inactive") return "Inactive";
+  if (s === "active") return "Active";
+  return s;
+}
+
+function getStatusPillClass(s: MemberUiStatus): string {
+  switch (s) {
+    case "active":
+      return "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200";
+    case "invited":
+      return "bg-violet-50 text-violet-700 ring-1 ring-violet-200";
+    case "onboarding":
+      return "bg-amber-50 text-amber-700 ring-1 ring-amber-200";
+    case "inactive":
+      return "bg-rose-50 text-rose-700 ring-1 ring-rose-200";
+  }
+}
+
+function getRolePillClass(role: string | null): string {
+  if (!role)
+    return "bg-slate-100 text-slate-700 ring-1 ring-slate-200";
+  const map: Record<string, string> = {
+    workspace_admin:
+      "bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200",
+    manager: "bg-fuchsia-50 text-fuchsia-700 ring-1 ring-fuchsia-200",
+    service_provider: "bg-sky-50 text-sky-700 ring-1 ring-sky-200",
+    staff: "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200",
+    customer: "bg-slate-100 text-slate-700 ring-1 ring-slate-200",
+  };
+  return map[role] ?? "bg-slate-100 text-slate-700 ring-1 ring-slate-200";
+}
+
+function isRecentlyJoined(createdAt: string, deactivated: boolean): boolean {
+  if (deactivated) return false;
+  return (
+    Date.now() - new Date(createdAt).getTime() <
+    7 * 24 * 60 * 60 * 1000
+  );
+}
+
+function formatMemberAddedDate(createdAt: string): string {
+  return new Date(createdAt).toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
+
 export default function TeamMembersPage() {
+  const { user: currentUser } = useAuth();
+  const currentUserRole =
+    (currentUser?.user_metadata?.role as string | undefined) ?? null;
+  const currentUserIsOwner =
+    currentUser?.user_metadata?.is_workspace_owner === true;
+  // Owner OR workspace_admin OR manager may manage team members.
+  // Service providers and customers see no management buttons.
+  const canManageMembers =
+    currentUserIsOwner ||
+    (currentUserRole !== null && MANAGE_ROLES.includes(currentUserRole));
+
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [showMemberForm, setShowMemberForm] = useState(false);
@@ -33,12 +214,13 @@ export default function TeamMembersPage() {
     email: "",
     phone: "",
     password: "",
-    role: "service_provider",
+    role: ROLE_SERVICE_PROVIDER,
+    additional_roles: [] as string[],
     departments: [] as number[],
   });
   const [inviteFormData, setInviteFormData] = useState({
     email: "",
-    role: "service_provider",
+    role: ROLE_SERVICE_PROVIDER,
     departments: [] as number[],
   });
   const [inviteUrl, setInviteUrl] = useState<string | null>(null);
@@ -50,11 +232,66 @@ export default function TeamMembersPage() {
     action: "deactivate" | "activate";
     memberId: string;
   } | null>(null);
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [openActionsId, setOpenActionsId] = useState<string | null>(null);
+
+  const teamStats = useMemo(() => {
+    let active = 0;
+    let invited = 0;
+    let onboarding = 0;
+    let providers = 0;
+    for (const m of teamMembers) {
+      const s = getMemberUiStatus(m, departments);
+      if (s === "active") active++;
+      if (s === "invited") invited++;
+      if (s === "onboarding") onboarding++;
+      if (teamMemberActsAsServiceProvider(m)) providers++;
+    }
+    return {
+      total: teamMembers.length,
+      active,
+      invited,
+      onboarding,
+      providers,
+    };
+  }, [teamMembers, departments]);
+
+  const filteredTeamMembers = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return teamMembers.filter((m) => {
+      const ui = getMemberUiStatus(m, departments);
+      if (statusFilter !== "all" && ui !== statusFilter) return false;
+      if (!q) return true;
+      const deptNames = getSortedDepartmentIdsForDisplay(m, departments)
+        .map((id) => departments.find((d) => d.id === id)?.name)
+        .filter(Boolean)
+        .join(" ");
+      const roleBits = [
+        m.role,
+        ...m.additional_roles,
+        m.is_workspace_owner ? "owner" : null,
+      ]
+        .filter(Boolean)
+        .join(" ");
+      return (
+        m.name.toLowerCase().includes(q) ||
+        m.email.toLowerCase().includes(q) ||
+        roleBits.toLowerCase().includes(q) ||
+        getStatusLabel(ui).toLowerCase().includes(q) ||
+        deptNames.toLowerCase().includes(q)
+      );
+    });
+  }, [teamMembers, departments, search, statusFilter]);
 
   useEffect(() => {
     fetchTeamMembers();
     fetchDepartments();
   }, []);
+
+  useEffect(() => {
+    setOpenActionsId(null);
+  }, [search, statusFilter, teamMembers]);
 
   const fetchTeamMembers = async () => {
     try {
@@ -109,7 +346,8 @@ export default function TeamMembersPage() {
       email: "",
       phone: "",
       password: "",
-      role: "service_provider",
+      role: ROLE_SERVICE_PROVIDER,
+      additional_roles: [],
       departments: [],
     });
     setError(null);
@@ -121,7 +359,7 @@ export default function TeamMembersPage() {
   const handleInviteMember = () => {
     setInviteFormData({
       email: "",
-      role: "service_provider",
+      role: ROLE_SERVICE_PROVIDER,
       departments: [],
     });
     setInviteUrl(null);
@@ -138,8 +376,9 @@ export default function TeamMembersPage() {
       email: member.email,
       phone: member.phone ?? "",
       password: "", // Don't show password for editing
-      role: member.role || "service_provider",
-      departments: member.departments || [],
+      role: member.role || ROLE_SERVICE_PROVIDER,
+      additional_roles: member.additional_roles ?? [],
+      departments: getEffectiveDepartmentIdsForMember(member, departments),
     });
     setError(null);
     setSuccess(null);
@@ -154,7 +393,8 @@ export default function TeamMembersPage() {
       email: "",
       phone: "",
       password: "",
-      role: "service_provider",
+      role: ROLE_SERVICE_PROVIDER,
+      additional_roles: [],
       departments: [],
     });
     setError(null);
@@ -165,7 +405,7 @@ export default function TeamMembersPage() {
     setShowInviteForm(false);
     setInviteFormData({
       email: "",
-      role: "service_provider",
+      role: ROLE_SERVICE_PROVIDER,
       departments: [],
     });
     setInviteUrl(null);
@@ -179,6 +419,22 @@ export default function TeamMembersPage() {
         ? prev.departments.filter(id => id !== departmentId)
         : [...prev.departments, departmentId];
       return { ...prev, departments };
+    });
+  };
+
+  const toggleAdditionalRole = (role: string) => {
+    setMemberFormData(prev => {
+      const additional_roles = prev.additional_roles.includes(role)
+        ? prev.additional_roles.filter(r => r !== role)
+        : [...prev.additional_roles, role];
+      // Clear departments when service_provider is no longer present in any role slot.
+      const stillServiceProvider =
+        prev.role === ROLE_SERVICE_PROVIDER || additional_roles.includes(ROLE_SERVICE_PROVIDER);
+      return {
+        ...prev,
+        additional_roles,
+        departments: stillServiceProvider ? prev.departments : [],
+      };
     });
   };
 
@@ -207,6 +463,10 @@ export default function TeamMembersPage() {
 
       const url = '/api/team-members';
       const method = editingMember ? 'PUT' : 'POST';
+      // additional_roles is only meaningful for owners; send only then to keep payload clean.
+      const additionalRolesForOwner = editingMember?.is_workspace_owner
+        ? memberFormData.additional_roles.filter(r => r !== memberFormData.role)
+        : undefined;
       const body = editingMember
         ? {
             id: editingMember.id,
@@ -215,6 +475,9 @@ export default function TeamMembersPage() {
             phone: memberFormData.phone,
             role: memberFormData.role,
             departments: memberFormData.departments,
+            ...(additionalRolesForOwner !== undefined
+              ? { additional_roles: additionalRolesForOwner }
+              : {}),
           }
         : {
             name: memberFormData.name,
@@ -312,12 +575,6 @@ export default function TeamMembersPage() {
     }
   };
 
-  const getDepartmentNames = (departmentIds: number[]): string[] => {
-    return departmentIds
-      .map(id => departments.find(d => d.id === id)?.name)
-      .filter((name): name is string => name !== undefined);
-  };
-
   const handleInviteFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -362,31 +619,9 @@ export default function TeamMembersPage() {
   };
 
   return (
-    <section className="space-y-6 rounded-xl">
-      <header className="flex flex-wrap justify-between relative gap-3">
-        <div className="text-sm text-slate-500">
-          <h3 className="text-xl font-semibold text-slate-800">Team Members</h3>
-          <p className="text-xs text-slate-500">Manage your team members and their access.</p>
-        </div>
-        <div className="flex gap-3">
-          <button
-            onClick={handleInviteMember}
-            className="cursor-pointer text-sm font-bold text-green-600 transition hover:text-green-700"
-          >
-            + Invite Team Member
-          </button>
-          <button
-            onClick={handleNewMember}
-            className="cursor-pointer text-sm font-bold text-indigo-600 transition hover:text-indigo-700"
-          >
-            + New Team Member
-          </button>
-        </div>
-      </header>
-
-      {/* Error/Success Messages */}
+    <div className="w-full space-y-6">
       {error && (
-        <div className="rounded-lg bg-red-50 border border-red-200 p-4">
+        <div className="rounded-lg border border-red-200 bg-red-50 p-4">
           <div className="flex items-center gap-2">
             <svg className="h-5 w-5 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -397,7 +632,7 @@ export default function TeamMembersPage() {
       )}
 
       {success && (
-        <div className="rounded-lg bg-green-50 border border-green-200 p-4">
+        <div className="rounded-lg border border-green-200 bg-green-50 p-4">
           <div className="flex items-center gap-2">
             <svg className="h-5 w-5 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -407,131 +642,435 @@ export default function TeamMembersPage() {
         </div>
       )}
 
-      {/* Team Members List */}
       {initialLoading ? (
         <TeamMemberSkeleton />
       ) : (
-      <div className="rounded-2xl bg-white shadow-md p-6">
-        {teamMembers.length === 0 ? (
-          <div className="text-center py-12">
-            <svg className="mx-auto h-12 w-12 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
-            </svg>
-            <h3 className="mt-2 text-sm font-medium text-slate-900">No team members</h3>
-            <p className="mt-1 text-sm text-slate-500">Get started by adding your first team member.</p>
-            <div className="mt-6">
-              <button
-                onClick={handleNewMember}
-                className="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-              >
-                <svg className="-ml-1 mr-2 h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                </svg>
-                New Team Member
-              </button>
-            </div>
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {teamMembers.map((member) => {
-              const departmentNames = getDepartmentNames(member.departments);
-              return (
-                <div
-                  key={member.id}
-                  className={`flex flex-wrap items-start justify-between gap-4 p-4 rounded-xl border ${
-                    member.deactivated
-                      ? 'border-slate-200 bg-slate-50 opacity-60'
-                      : 'border-slate-200 bg-white hover:shadow-sm'
-                  } transition`}
-                >
-                  <div className="flex-grow">
-                    <div className="flex flex-col sm:flex-row gap-2">
-                      <div className="h-10 w-10 rounded-full bg-indigo-500 flex items-center justify-center text-white font-medium">
-                        {member.name.charAt(0).toUpperCase()}
-                      </div>
-                      <div>
-                        <h4 className="text-base font-medium text-slate-800">
-                          {member.name}
-                          {member.deactivated && (
-                            <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-slate-200 text-slate-600">
-                              Deactivated
-                            </span>
-                          )}
-                        </h4>
-                        <p className="text-sm text-slate-600">{member.email}</p>
-                        {member.phone ? (
-                          <p className="text-sm text-slate-600">{member.phone}</p>
-                        ) : null}
-                      </div>
-                    </div>
-                    <div className="mt-2 flex flex-wrap gap-2 items-center">
-                      {member.role && (
-                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-                          {member.role.replace('_', ' ')}
-                        </span>
-                      )}
-                      {member.is_workspace_owner && (
-                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800 border border-amber-300">
-                          Owner
-                        </span>
-                      )}
-                      {departmentNames.length > 0 && (
-                        <>
-                          {departmentNames.map((name) => (
-                            <span
-                              key={name}
-                              className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-indigo-100 text-indigo-800"
-                            >
-                              {name}
-                            </span>
-                          ))}
-                        </>
-                      )}
-                    </div>
-                    <p className="mt-2 text-xs text-slate-400">
-                      Added {new Date(member.created_at).toLocaleDateString()}
+        <div className="mx-auto max-w-7xl">
+          <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_20px_60px_-30px_rgba(15,23,42,0.25)]">
+            <div className="border-b border-slate-100 bg-gradient-to-r from-sky-50 via-white to-indigo-50 px-5 py-5 md:px-7 md:py-6">
+              <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+                <div className="space-y-3">
+                  <div className="inline-flex items-center gap-2 rounded-full border border-sky-100 bg-white/80 px-3 py-1 text-xs font-semibold text-sky-700 shadow-sm backdrop-blur">
+                    <LuUsers className="h-4 w-4" aria-hidden />
+                    Team Access Management
+                  </div>
+                  <div>
+                    <h1 className="text-2xl font-semibold tracking-tight text-slate-900 md:text-3xl">
+                      Team Members
+                    </h1>
+                    <p className="mt-1 max-w-2xl text-sm text-slate-600 md:text-base">
+                      Manage team access, invite staff, onboard providers, and control roles with full action history.
                     </p>
                   </div>
-                  <div className="flex gap-2 flex-shrink-0">
-                    {member.is_workspace_owner ? (
-                      <span className="inline-flex items-center rounded-md bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-500" title="Owner role is locked">
-                        Role locked
-                      </span>
-                    ) : (
-                      <>
-                        <button
-                          onClick={() => handleEditMember(member)}
-                          className="inline-flex items-center rounded-md bg-indigo-50 px-3 py-1.5 text-xs font-medium text-indigo-700 hover:bg-indigo-100 transition"
-                          disabled={loading || member.deactivated}
-                        >
-                          Edit
-                        </button>
-                        {!member.deactivated ? (
-                          <button
-                            onClick={() => handleDeactivateClick(member.id)}
-                            className="inline-flex items-center rounded-md bg-red-50 px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-100 transition"
-                            disabled={loading}
-                          >
-                            Deactivate
-                          </button>
-                        ) : (
-                          <button
-                            onClick={() => handleActivateClick(member.id)}
-                            className="inline-flex items-center rounded-md bg-green-50 px-3 py-1.5 text-xs font-medium text-green-700 hover:bg-green-100 transition"
-                            disabled={loading}
-                          >
-                            Activate
-                          </button>
-                        )}
-                      </>
-                    )}
-                  </div>
                 </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
+                {canManageMembers && (
+                  <div className="flex flex-col gap-3 sm:flex-row">
+                    <button
+                      type="button"
+                      onClick={handleInviteMember}
+                      className="inline-flex h-11 items-center justify-center rounded-xl border border-emerald-200 bg-emerald-50 px-5 text-sm font-medium text-emerald-700 shadow-none transition hover:bg-emerald-100"
+                    >
+                      <LuMail className="mr-2 h-4 w-4" aria-hidden />
+                      Invite Staff / Manager
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleNewMember}
+                      className="inline-flex h-11 items-center justify-center rounded-xl bg-slate-900 px-5 text-sm font-medium text-white transition hover:bg-slate-800"
+                    >
+                      <LuUserPlus className="mr-2 h-4 w-4" aria-hidden />
+                      Add Service Provider
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+                {(
+                  [
+                    ["Total Members", teamStats.total, LuUsers, "bg-slate-100 text-slate-700"],
+                    ["Active Members", teamStats.active, LuBadgeCheck, "bg-emerald-50 text-emerald-700"],
+                    ["Pending Invites", teamStats.invited, LuStar, "bg-violet-50 text-violet-700"],
+                    [
+                      "Provider Onboarding",
+                      teamStats.onboarding,
+                      LuStethoscope,
+                      "bg-amber-50 text-amber-700",
+                    ],
+                    [
+                      "Service Providers",
+                      teamStats.providers,
+                      LuBriefcase,
+                      "bg-sky-50 text-sky-700",
+                    ],
+                  ] as const
+                ).map(([label, value, StatIcon, iconClass]) => (
+                  <div
+                    key={String(label)}
+                    className="rounded-2xl border border-slate-200 bg-white shadow-sm"
+                  >
+                    <div className="flex items-center justify-between p-5">
+                      <div>
+                        <p className="text-sm text-slate-500">{label}</p>
+                        <p className="mt-1 text-2xl font-semibold text-slate-900">{value}</p>
+                      </div>
+                      <div className={`rounded-2xl p-3 ${iconClass}`}>
+                        <StatIcon className="h-5 w-5" aria-hidden />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="p-5 md:p-7">
+              <div className="mb-5 flex w-full min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:gap-3">
+                <div className="relative min-h-12 w-full min-w-0 sm:min-w-[12rem] sm:flex-1">
+                  <div
+                    className="pointer-events-none absolute inset-y-0 left-0 flex w-12 items-center justify-center text-slate-400"
+                    aria-hidden
+                  >
+                    <LuSearch className="h-4 w-4 shrink-0" />
+                  </div>
+                  <input
+                    type="search"
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    placeholder="Search by member name, email, role, department, or status..."
+                    className="box-border h-12 w-full min-w-0 rounded-xl border border-slate-200 bg-white pl-12 pr-3 text-sm font-normal leading-normal text-slate-900 shadow-none outline-none focus:ring-2 focus:ring-sky-200"
+                  />
+                </div>
+                <div className="flex w-full min-w-0 shrink-0 flex-nowrap justify-start gap-2 overflow-x-auto overflow-y-hidden pb-1 pt-0.5 [scrollbar-gutter:stable] sm:w-auto sm:pb-0 sm:pt-0">
+                  {STATUS_FILTER_CHIPS.map((chip) => {
+                    const isActive = statusFilter === chip.id;
+                    return (
+                      <button
+                        key={chip.id}
+                        type="button"
+                        onClick={() => setStatusFilter(chip.id)}
+                        className={`inline-flex h-10 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl px-3.5 text-sm font-medium transition sm:h-11 sm:px-4 ${
+                          isActive
+                            ? "bg-slate-900 text-white shadow-sm"
+                            : "border border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:text-slate-900"
+                        }`}
+                      >
+                        <LuListFilter
+                          className="h-3.5 w-3.5 shrink-0 sm:h-4 sm:w-4"
+                          aria-hidden
+                        />
+                        <span className="inline lg:hidden">{chip.shortLabel}</span>
+                        <span className="hidden lg:inline">{chip.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {teamMembers.length === 0 ? (
+                <div className="rounded-[24px] border border-dashed border-slate-300 bg-slate-50 px-6 py-14 text-center">
+                  <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-white shadow-sm">
+                    <LuUsers className="h-6 w-6 text-slate-400" aria-hidden />
+                  </div>
+                  <h3 className="mt-4 text-lg font-semibold text-slate-900">No team members</h3>
+                  <p className="mt-2 text-sm text-slate-500">
+                    Get started by inviting staff or adding a service provider.
+                  </p>
+                  {canManageMembers && (
+                    <div className="mt-6 flex flex-wrap justify-center gap-3">
+                      <button
+                        type="button"
+                        onClick={handleInviteMember}
+                        className="inline-flex h-11 items-center rounded-xl border border-emerald-200 bg-white px-5 text-sm font-medium text-emerald-700 transition hover:bg-emerald-50"
+                      >
+                        <LuMail className="mr-2 h-4 w-4" aria-hidden />
+                        Invite Staff / Manager
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleNewMember}
+                        className="inline-flex h-11 items-center rounded-xl bg-slate-900 px-5 text-sm font-medium text-white transition hover:bg-slate-800"
+                      >
+                        <LuUserPlus className="mr-2 h-4 w-4" aria-hidden />
+                        Add Service Provider
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ) : filteredTeamMembers.length === 0 ? (
+                <div className="rounded-[24px] border border-dashed border-slate-300 bg-slate-50 px-6 py-14 text-center">
+                  <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-white shadow-sm">
+                    <LuUsers className="h-6 w-6 text-slate-400" aria-hidden />
+                  </div>
+                  <h3 className="mt-4 text-lg font-semibold text-slate-900">No team members found</h3>
+                  <p className="mt-2 text-sm text-slate-500">
+                    Try changing the search or filter, or add a new team member to get started.
+                  </p>
+                </div>
+              ) : (
+                <div className="grid gap-4">
+                  {filteredTeamMembers.map((member) => {
+                    const displayDeptIds = getSortedDepartmentIdsForDisplay(
+                      member,
+                      departments
+                    );
+                    const ui = getMemberUiStatus(member, departments);
+                    const roleLocked =
+                      member.is_workspace_owner && !currentUserIsOwner;
+                    const showActions =
+                      canManageMembers && !roleLocked;
+                    const canDeactivateThisMember =
+                      showActions && !member.is_workspace_owner;
+                    return (
+                      <div
+                        key={member.id}
+                        className={`group rounded-[24px] border border-slate-200 bg-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-[0_18px_40px_-28px_rgba(15,23,42,0.45)] ${
+                          member.deactivated ? "opacity-70" : ""
+                        }`}
+                      >
+                        <div className="p-5 md:p-6">
+                          <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
+                            <div className="flex min-w-0 flex-1 gap-4">
+                              <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-500 text-lg font-semibold text-white shadow-sm">
+                                {member.name.charAt(0).toUpperCase()}
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <h3 className="text-lg font-semibold text-slate-900">
+                                    {member.name}
+                                  </h3>
+                                  {roleLocked && (
+                                    <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600">
+                                      <LuLock className="h-3.5 w-3.5" aria-hidden />
+                                      Role Locked
+                                    </span>
+                                  )}
+                                  {isRecentlyJoined(member.created_at, member.deactivated) && (
+                                    <span className="rounded-full bg-violet-50 px-2.5 py-1 text-xs font-semibold text-violet-700 ring-1 ring-violet-200">
+                                      New
+                                    </span>
+                                  )}
+                                  {member.deactivated && (
+                                    <span className="inline-flex items-center rounded-full bg-slate-200 px-2.5 py-1 text-xs font-medium text-slate-600">
+                                      Deactivated
+                                    </span>
+                                  )}
+                                </div>
+
+                                <div className="mt-2 grid gap-2 text-sm text-slate-600 md:grid-cols-2">
+                                  <div className="flex min-w-0 items-center gap-2">
+                                    <LuMail className="h-4 w-4 shrink-0 text-slate-400" aria-hidden />
+                                    <span className="truncate">{member.email}</span>
+                                  </div>
+                                  <div className="flex min-w-0 items-center gap-2">
+                                    <LuPhone className="h-4 w-4 shrink-0 text-slate-400" aria-hidden />
+                                    <span>{member.phone?.trim() ? member.phone : "—"}</span>
+                                  </div>
+                                  <div className="flex min-w-0 items-center gap-2">
+                                    <LuCalendar className="h-4 w-4 shrink-0 text-slate-400" aria-hidden />
+                                    <span>
+                                      {!member.email_confirmed_at
+                                        ? "Pending acceptance"
+                                        : `Added ${formatMemberAddedDate(member.created_at)}`}
+                                    </span>
+                                  </div>
+                                  <div className="flex min-w-0 items-center gap-2">
+                                    <LuClock className="h-4 w-4 shrink-0 text-slate-400" aria-hidden />
+                                    <span>0 bookings this week</span>
+                                  </div>
+                                </div>
+
+                                <div className="mt-4 flex flex-wrap gap-2">
+                                  {member.role && (
+                                    <span
+                                      className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${getRolePillClass(member.role)}`}
+                                    >
+                                      {formatRoleLabel(member.role)}
+                                    </span>
+                                  )}
+                                  {member.is_workspace_owner &&
+                                    member.additional_roles
+                                      .filter((r) => r !== member.role)
+                                      .map((r) => (
+                                        <span
+                                          key={r}
+                                          className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${getRolePillClass(r)}`}
+                                        >
+                                          {formatRoleLabel(r)}
+                                        </span>
+                                      ))}
+                                  {member.is_workspace_owner && (
+                                    <span className="inline-flex items-center rounded-full border border-amber-300 bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-800 ring-1 ring-amber-200">
+                                      <LuCrown className="mr-1 h-3.5 w-3.5" aria-hidden />
+                                      Owner
+                                    </span>
+                                  )}
+                                  <span
+                                    className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${getStatusPillClass(ui)}`}
+                                  >
+                                    {getStatusLabel(ui)}
+                                  </span>
+                                </div>
+
+                                {displayDeptIds.length > 0 && (
+                                  <div className="mt-2 flex max-h-48 flex-wrap gap-2 overflow-y-auto pr-1">
+                                    {displayDeptIds.map((deptId) => {
+                                      const name = departments.find(
+                                        (d) => d.id === deptId
+                                      )?.name;
+                                      if (!name) return null;
+                                      return (
+                                        <span
+                                          key={deptId}
+                                          className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-700 ring-1 ring-slate-200"
+                                        >
+                                          {name}
+                                        </span>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+
+                            {canManageMembers && (
+                              <div className="flex flex-wrap items-start justify-end gap-2 xl:min-w-[280px]">
+                                {!showActions ? (
+                                  <span className="inline-flex h-10 items-center rounded-xl border border-slate-200 bg-slate-50 px-4 text-sm font-medium text-slate-500">
+                                    <LuLock className="mr-2 h-4 w-4" aria-hidden />
+                                    Role Locked
+                                  </span>
+                                ) : (
+                                  <>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setOpenActionsId(null);
+                                        handleEditMember(member);
+                                      }}
+                                      disabled={loading || member.deactivated}
+                                      className="inline-flex h-10 items-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-medium text-slate-800 transition hover:bg-slate-50 disabled:opacity-50"
+                                    >
+                                      <LuPencil className="mr-2 h-4 w-4" aria-hidden />
+                                      Edit
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setOpenActionsId(null);
+                                        handleEditMember(member);
+                                      }}
+                                      disabled={loading || member.deactivated}
+                                      className="inline-flex h-10 items-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-medium text-slate-800 transition hover:bg-slate-50 disabled:opacity-50"
+                                    >
+                                      <LuUserCog className="mr-2 h-4 w-4" aria-hidden />
+                                      Role
+                                    </button>
+                                    {canDeactivateThisMember && (
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setOpenActionsId(null);
+                                          if (member.deactivated) {
+                                            handleActivateClick(member.id);
+                                          } else {
+                                            handleDeactivateClick(member.id);
+                                          }
+                                        }}
+                                        disabled={loading}
+                                        className={`inline-flex h-10 items-center rounded-xl px-4 text-sm font-medium transition disabled:opacity-50 ${
+                                          member.deactivated
+                                            ? "bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                                            : "bg-rose-50 text-rose-700 hover:bg-rose-100"
+                                        }`}
+                                      >
+                                        <LuPower className="mr-2 h-4 w-4" aria-hidden />
+                                        {member.deactivated
+                                          ? "Activate"
+                                          : "Deactivate"}
+                                      </button>
+                                    )}
+                                    <div className="relative">
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setOpenActionsId(
+                                            openActionsId === member.id
+                                              ? null
+                                              : member.id
+                                          )
+                                        }
+                                        className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 transition hover:bg-slate-50"
+                                        aria-label="More actions"
+                                        aria-expanded={openActionsId === member.id}
+                                      >
+                                        <LuEllipsis className="h-4 w-4" aria-hidden />
+                                      </button>
+                                      {openActionsId === member.id && (
+                                        <div
+                                          className="absolute right-0 top-12 z-20 w-56 rounded-xl border border-slate-200 bg-white p-1 shadow-xl"
+                                          role="menu"
+                                        >
+                                          <button
+                                            type="button"
+                                            role="menuitem"
+                                            className="flex w-full items-center rounded-lg px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
+                                            onClick={() => {
+                                              setOpenActionsId(null);
+                                              handleEditMember(member);
+                                            }}
+                                          >
+                                            <LuPencil className="mr-2 h-4 w-4" aria-hidden />
+                                            Edit profile
+                                          </button>
+                                          <button
+                                            type="button"
+                                            role="menuitem"
+                                            className="flex w-full items-center rounded-lg px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
+                                            onClick={() => {
+                                              setOpenActionsId(null);
+                                              handleEditMember(member);
+                                            }}
+                                          >
+                                            <LuUserCog className="mr-2 h-4 w-4" aria-hidden />
+                                            Manage role
+                                          </button>
+                                          {canDeactivateThisMember && (
+                                            <button
+                                              type="button"
+                                              role="menuitem"
+                                              className="flex w-full items-center rounded-lg px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
+                                              onClick={() => {
+                                                setOpenActionsId(null);
+                                                if (member.deactivated) {
+                                                  handleActivateClick(member.id);
+                                                } else {
+                                                  handleDeactivateClick(member.id);
+                                                }
+                                              }}
+                                            >
+                                              <LuPower className="mr-2 h-4 w-4" aria-hidden />
+                                              {member.deactivated
+                                                ? "Activate member"
+                                                : "Deactivate member"}
+                                            </button>
+                                          )}
+                                        </div>
+                                      )}
+                                    </div>
+                                  </>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </section>
+        </div>
       )}
 
       {/* Team Member Form Modal */}
@@ -618,32 +1157,92 @@ export default function TeamMembersPage() {
 
                 <div>
                   <label className="block text-sm font-medium mb-2 text-slate-700">
-                    Role <span className="text-red-500">*</span>
+                    {editingMember?.is_workspace_owner ? 'Primary role' : 'Role'} <span className="text-red-500">*</span>
                   </label>
                   <select
                     value={memberFormData.role}
                     onChange={(e) => {
                       const newRole = e.target.value;
-                      // Clear departments if role is not service_provider
+                      // Remove the newly-selected primary from additional_roles to
+                      // avoid duplicates, then clear departments only when
+                      // service_provider is absent from both the primary and the
+                      // remaining additional roles.
+                      const nextAdditional = memberFormData.additional_roles.filter(r => r !== newRole);
+                      const stillServiceProvider =
+                        newRole === ROLE_SERVICE_PROVIDER || nextAdditional.includes(ROLE_SERVICE_PROVIDER);
                       setMemberFormData({
                         ...memberFormData,
                         role: newRole,
-                        departments: newRole === 'service_provider' ? memberFormData.departments : [],
+                        additional_roles: nextAdditional,
+                        departments: stillServiceProvider ? memberFormData.departments : [],
                       });
                     }}
                     className="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition"
                     required
                   >
-                    <option value="workspace_admin">Workspace Admin</option>
-                    <option value="manager">Manager</option>
-                    <option value="service_provider">Service Provider</option>
-                    <option value="customer">Customer</option>
+                    {ASSIGNABLE_ROLES.filter(r =>
+                      editingMember?.is_workspace_owner
+                        ? !OWNER_DISALLOWED_ROLES.includes(r.value)
+                        : true
+                    ).map((r) => (
+                      <option key={r.value} value={r.value}>{r.label}</option>
+                    ))}
                   </select>
-                  <p className="mt-1 text-xs text-slate-500">Select the role for this team member</p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    {editingMember?.is_workspace_owner
+                      ? 'Owner can hold multiple roles. Pick the primary role below, then add any additional roles.'
+                      : 'Select the role for this team member'}
+                  </p>
                 </div>
 
-                {/* Departments Selector - Only show for service_provider role */}
-                {memberFormData.role === 'service_provider' && (
+                {editingMember?.is_workspace_owner && (
+                  <div>
+                    <label className="block text-sm font-medium mb-2 text-slate-700">
+                      Additional roles
+                    </label>
+                    <div className="border border-slate-300 rounded-lg p-3">
+                      <div className="space-y-2">
+                        {ASSIGNABLE_ROLES.filter(r =>
+                          r.value !== memberFormData.role &&
+                          !OWNER_DISALLOWED_ROLES.includes(r.value)
+                        ).map((r) => {
+                          const checked = memberFormData.additional_roles.includes(r.value);
+                          return (
+                            <button
+                              key={r.value}
+                              type="button"
+                              onClick={() => toggleAdditionalRole(r.value)}
+                              className={`w-full text-left px-3 py-2 rounded-md text-sm transition ${
+                                checked
+                                  ? 'bg-indigo-100 text-indigo-700'
+                                  : 'text-slate-700 hover:bg-indigo-50 hover:text-indigo-700'
+                              }`}
+                            >
+                              <div className="flex items-center gap-2">
+                                {checked ? (
+                                  <svg className="w-4 h-4 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                  </svg>
+                                ) : (
+                                  <svg className="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                                  </svg>
+                                )}
+                                {r.label}
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                    <p className="mt-1 text-xs text-slate-500">Owner retains full workspace privileges regardless of these selections.</p>
+                  </div>
+                )}
+
+                {/* Departments Selector - Show when service_provider is the
+                    primary role OR present in additional roles (owner case) */}
+                {(memberFormData.role === ROLE_SERVICE_PROVIDER ||
+                  memberFormData.additional_roles.includes(ROLE_SERVICE_PROVIDER)) && (
                 <div>
                   <label className="block text-sm font-medium mb-2 text-slate-700">
                     Departments
@@ -828,22 +1427,21 @@ export default function TeamMembersPage() {
                         setInviteFormData({
                           ...inviteFormData,
                           role: newRole,
-                          departments: newRole === 'service_provider' ? inviteFormData.departments : [],
+                          departments: newRole === ROLE_SERVICE_PROVIDER ? inviteFormData.departments : [],
                         });
                       }}
                       className="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition"
                       required
                     >
-                      <option value="workspace_admin">Workspace Admin</option>
-                      <option value="manager">Manager</option>
-                      <option value="service_provider">Service Provider</option>
-                      <option value="customer">Customer</option>
+                      {ASSIGNABLE_ROLES.map((r) => (
+                        <option key={r.value} value={r.value}>{r.label}</option>
+                      ))}
                     </select>
                     <p className="mt-1 text-xs text-slate-500">Select the role for this team member</p>
                   </div>
 
                   {/* Departments Selector - Only show for service_provider role */}
-                  {inviteFormData.role === 'service_provider' && (
+                  {inviteFormData.role === ROLE_SERVICE_PROVIDER && (
                   <div>
                     <label className="block text-sm font-medium mb-2 text-slate-700">
                       Departments
@@ -956,7 +1554,7 @@ export default function TeamMembersPage() {
           loading={loading}
         />
       )}
-    </section>
+    </div>
   );
 }
 

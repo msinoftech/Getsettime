@@ -1,6 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { createClient, User } from '@supabase/supabase-js';
 import { user_belongs_to_workspace } from '@/lib/team_members_workspace';
+import { userActsAsServiceProviderFromSupabaseUser } from '@/lib/service_provider_role';
+import { pruneDepartmentsToValidServiceProviders } from '@/lib/department_service_provider_prune';
+import {
+  normalizeDepartmentIdsFromUserMetadata,
+  syncDepartmentServiceProvidersWithTeamDepartments,
+} from '@/lib/sync_department_service_providers_from_team';
+
+/**
+ * Authorized to manage team members if user is a workspace owner (regardless
+ * of primary role — needed because an owner may assign themselves a non-admin
+ * primary role via the multi-role selector), or if their primary role is
+ * workspace_admin or manager.
+ */
+function userCanManageTeam(user: User): boolean {
+  if (user.user_metadata?.is_workspace_owner === true) return true;
+  const role = user.user_metadata?.role;
+  return role === 'workspace_admin' || role === 'manager';
+}
 
 /**
  * Creates an authenticated Supabase client using the anon key (respects RLS)
@@ -71,9 +89,8 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Check if user has permission (workspace_admin or manager)
-    const userRole = user.user_metadata?.role;
-    if (userRole !== 'workspace_admin' && userRole !== 'manager') {
+    // Check if user has permission (owner, workspace_admin, or manager)
+    if (!userCanManageTeam(user)) {
       return NextResponse.json({ error: 'Forbidden: Access denied' }, { status: 403 });
     }
 
@@ -105,11 +122,16 @@ export async function GET(req: NextRequest) {
           typeof phoneRaw === 'string' && phoneRaw.trim() !== ''
             ? phoneRaw
             : null;
+        const additionalRolesRaw = meta?.additional_roles;
+        const additional_roles = Array.isArray(additionalRolesRaw)
+          ? (additionalRolesRaw.filter((r) => typeof r === 'string') as string[])
+          : [];
         return {
           id: u.id,
           email: u.email,
           name: u.user_metadata?.name || u.email?.split('@')[0] || 'Unknown',
           role: u.user_metadata?.role || null,
+          additional_roles,
           departments: u.user_metadata?.departments || [],
           phone,
           created_at: u.created_at,
@@ -142,9 +164,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Check if user has permission (workspace_admin or manager)
-    const userRole = user.user_metadata?.role;
-    if (userRole !== 'workspace_admin' && userRole !== 'manager') {
+    // Check if user has permission (owner, workspace_admin, or manager)
+    if (!userCanManageTeam(user)) {
       return NextResponse.json({ error: 'Forbidden: Access denied' }, { status: 403 });
     }
 
@@ -170,8 +191,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Password must be at least 6 characters' }, { status: 400 });
     }
 
-    if (role && !['workspace_admin', 'manager', 'service_provider', 'customer'].includes(role)) {
-      return NextResponse.json({ error: 'Invalid role. Must be workspace_admin, manager, service_provider, or customer' }, { status: 400 });
+    if (role && !['workspace_admin', 'manager', 'service_provider', 'staff', 'customer'].includes(role)) {
+      return NextResponse.json({ error: 'Invalid role. Must be workspace_admin, manager, service_provider, staff, or customer' }, { status: 400 });
     }
 
     // Use admin client to create user
@@ -213,6 +234,22 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Failed to create user' }, { status: 500 });
     }
 
+    if (userActsAsServiceProviderFromSupabaseUser(newUser.user)) {
+      try {
+        const deptIds = normalizeDepartmentIdsFromUserMetadata(
+          newUser.user.user_metadata?.departments
+        );
+        await syncDepartmentServiceProvidersWithTeamDepartments(
+          adminClient,
+          workspaceId,
+          newUser.user,
+          deptIds
+        );
+      } catch (syncErr) {
+        console.error('syncDepartmentServiceProvidersWithTeamDepartments (POST):', syncErr);
+      }
+    }
+
     const newMeta = newUser.user.user_metadata as Record<string, unknown> | undefined;
     const newPhone =
       typeof newMeta?.phone === 'string' && newMeta.phone.trim() !== ''
@@ -251,9 +288,8 @@ export async function PUT(req: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Check if user has permission (workspace_admin or manager)
-    const userRole = user.user_metadata?.role;
-    if (userRole !== 'workspace_admin' && userRole !== 'manager') {
+    // Check if user has permission (owner, workspace_admin, or manager)
+    if (!userCanManageTeam(user)) {
       return NextResponse.json({ error: 'Forbidden: Access denied' }, { status: 403 });
     }
 
@@ -263,14 +299,32 @@ export async function PUT(req: NextRequest) {
     }
 
     const body = await req.json();
-    const { id, name, email, role, departments, phone } = body;
+    const { id, name, email, role, additional_roles, departments, phone } = body;
 
     if (!id) {
       return NextResponse.json({ error: 'User ID is required' }, { status: 400 });
     }
 
-    if (role && !['workspace_admin', 'manager', 'service_provider', 'customer'].includes(role)) {
-      return NextResponse.json({ error: 'Invalid role. Must be workspace_admin, manager, service_provider, or customer' }, { status: 400 });
+    const VALID_ROLES = ['workspace_admin', 'manager', 'service_provider', 'staff', 'customer'] as const;
+    type ValidRole = typeof VALID_ROLES[number];
+    const isValidRole = (r: unknown): r is ValidRole =>
+      typeof r === 'string' && (VALID_ROLES as readonly string[]).includes(r);
+    // Roles not permitted for a workspace owner's primary or additional roles.
+    const OWNER_DISALLOWED_ROLES: readonly string[] = ['customer', 'staff'];
+
+    if (role && !isValidRole(role)) {
+      return NextResponse.json({ error: 'Invalid role. Must be workspace_admin, manager, service_provider, staff, or customer' }, { status: 400 });
+    }
+
+    let normalizedAdditionalRoles: string[] | undefined;
+    if (additional_roles !== undefined) {
+      if (!Array.isArray(additional_roles) || !additional_roles.every(isValidRole)) {
+        return NextResponse.json({ error: 'Invalid additional_roles. Must be an array of valid role strings.' }, { status: 400 });
+      }
+      // De-duplicate and drop the primary role if present there.
+      normalizedAdditionalRoles = Array.from(
+        new Set(additional_roles.filter((r: string) => r !== (role || undefined)))
+      );
     }
 
     if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
@@ -294,14 +348,34 @@ export async function PUT(req: NextRequest) {
       return NextResponse.json({ error: 'Forbidden: User does not belong to your workspace' }, { status: 403 });
     }
 
-    if (existingUser.user_metadata?.is_workspace_owner === true && role && role !== existingUser.user_metadata?.role) {
-      return NextResponse.json({ error: 'Owner role cannot be changed' }, { status: 403 });
+    // Only a workspace owner may edit another workspace owner (role/additional_roles).
+    const targetIsOwner = existingUser.user_metadata?.is_workspace_owner === true;
+    const requesterIsOwner = user.user_metadata?.is_workspace_owner === true;
+    if (targetIsOwner && !requesterIsOwner) {
+      return NextResponse.json({ error: 'Only a workspace owner can edit another workspace owner' }, { status: 403 });
     }
+
+    // Owners cannot be assigned customer or staff as primary or additional role.
+    if (targetIsOwner && role && OWNER_DISALLOWED_ROLES.includes(role)) {
+      return NextResponse.json({ error: `Owners cannot have ${OWNER_DISALLOWED_ROLES.join(' or ')} as their primary role` }, { status: 400 });
+    }
+    if (
+      targetIsOwner &&
+      normalizedAdditionalRoles &&
+      normalizedAdditionalRoles.some(r => OWNER_DISALLOWED_ROLES.includes(r))
+    ) {
+      return NextResponse.json({ error: `Owners cannot have ${OWNER_DISALLOWED_ROLES.join(' or ')} in additional roles` }, { status: 400 });
+    }
+
+    // additional_roles is only accepted for owners; silently drop it for non-owners
+    // so it never leaks into normal member metadata.
+    const additionalRolesToPersist = targetIsOwner ? normalizedAdditionalRoles : undefined;
 
     const updatedMetadata = {
       ...existingUser.user_metadata,
       ...(name && { name }),
       ...(role && { role }),
+      ...(additionalRolesToPersist !== undefined && { additional_roles: additionalRolesToPersist }),
       ...(departments !== undefined && { departments }),
       ...(phone !== undefined && {
         phone: typeof phone === 'string' ? phone : '',
@@ -309,7 +383,7 @@ export async function PUT(req: NextRequest) {
     };
 
     // Prevent stripping the owner flag via payload manipulation
-    if (existingUser.user_metadata?.is_workspace_owner === true) {
+    if (targetIsOwner) {
       updatedMetadata.is_workspace_owner = true;
     }
 
@@ -333,11 +407,41 @@ export async function PUT(req: NextRequest) {
       return NextResponse.json({ error: 'Failed to update user' }, { status: 500 });
     }
 
+    const wasServiceProvider = userActsAsServiceProviderFromSupabaseUser(existingUser);
+    const isServiceProvider = userActsAsServiceProviderFromSupabaseUser(updatedUser.user);
+    if (wasServiceProvider && !isServiceProvider) {
+      try {
+        await pruneDepartmentsToValidServiceProviders(adminClient, workspaceId);
+      } catch (pruneErr) {
+        console.error('pruneDepartmentsToValidServiceProviders:', pruneErr);
+      }
+    }
+
+    if (isServiceProvider) {
+      try {
+        const deptIds = normalizeDepartmentIdsFromUserMetadata(
+          updatedUser.user.user_metadata?.departments
+        );
+        await syncDepartmentServiceProvidersWithTeamDepartments(
+          adminClient,
+          workspaceId,
+          updatedUser.user,
+          deptIds
+        );
+      } catch (syncErr) {
+        console.error('syncDepartmentServiceProvidersWithTeamDepartments (PUT):', syncErr);
+      }
+    }
+
     const upMeta = updatedUser.user.user_metadata as Record<string, unknown> | undefined;
     const upPhone =
       typeof upMeta?.phone === 'string' && upMeta.phone.trim() !== ''
         ? upMeta.phone
         : null;
+    const upAdditionalRolesRaw = upMeta?.additional_roles;
+    const upAdditionalRoles = Array.isArray(upAdditionalRolesRaw)
+      ? (upAdditionalRolesRaw.filter((r) => typeof r === 'string') as string[])
+      : [];
 
     return NextResponse.json({
       teamMember: {
@@ -345,6 +449,7 @@ export async function PUT(req: NextRequest) {
         email: updatedUser.user.email,
         name: updatedUser.user.user_metadata?.name,
         role: updatedUser.user.user_metadata?.role,
+        additional_roles: upAdditionalRoles,
         departments: updatedUser.user.user_metadata?.departments || [],
         phone: upPhone,
         is_workspace_owner: updatedUser.user.user_metadata?.is_workspace_owner === true,
@@ -372,9 +477,8 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Check if user has permission (workspace_admin or manager)
-    const userRole = user.user_metadata?.role;
-    if (userRole !== 'workspace_admin' && userRole !== 'manager') {
+    // Check if user has permission (owner, workspace_admin, or manager)
+    if (!userCanManageTeam(user)) {
       return NextResponse.json({ error: 'Forbidden: Access denied' }, { status: 403 });
     }
 
@@ -446,9 +550,8 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Check if user has permission (workspace_admin or manager)
-    const userRole = user.user_metadata?.role;
-    if (userRole !== 'workspace_admin' && userRole !== 'manager') {
+    // Check if user has permission (owner, workspace_admin, or manager)
+    if (!userCanManageTeam(user)) {
       return NextResponse.json({ error: 'Forbidden: Access denied' }, { status: 403 });
     }
 

@@ -93,6 +93,12 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
     total: 0,
     totalPages: 0,
   });
+  const [allBookingsStats, setAllBookingsStats] = useState<{
+    total: number;
+    confirmed: number;
+    pending: number;
+    cancelled: number;
+  } | null>(null);
   const initialFetchDone = useRef(false);
 
   const debouncedFilter = useDebouncedValue(filter, 300);
@@ -142,6 +148,32 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
     },
     []
   );
+
+  const fetchWorkspaceBookingStats = useCallback(async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.access_token) return;
+
+    try {
+      const response = await fetch("/api/bookings/stats", {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setAllBookingsStats({
+          total: data.total ?? 0,
+          confirmed: data.confirmed ?? 0,
+          pending: data.pending ?? 0,
+          cancelled: data.cancelled ?? 0,
+        });
+      }
+    } catch (error) {
+      console.error("Error fetching workspace booking stats:", error);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchWorkspaceBookingStats();
+  }, [fetchWorkspaceBookingStats]);
 
   // When filters change, reset to page 1
   useEffect(() => {
@@ -202,6 +234,7 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
             debouncedEventType,
             debouncedSort
           );
+          await fetchWorkspaceBookingStats();
         } else {
           const errorData = await response.json();
           setDeleteConfirmModal(null);
@@ -222,6 +255,7 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
       debouncedEventType,
       debouncedSort,
       fetchBookings,
+      fetchWorkspaceBookingStats,
     ]
   );
 
@@ -289,6 +323,7 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
       debouncedEventType,
       debouncedSort
     );
+    await fetchWorkspaceBookingStats();
     setShowBookingUpdatedSuccess(true);
     window.dispatchEvent(new Event('bookings-viewed-update'));
   }, [
@@ -299,6 +334,7 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
     debouncedEventType,
     debouncedSort,
     fetchBookings,
+    fetchWorkspaceBookingStats,
   ]);
 
   useEffect(() => {
@@ -325,6 +361,7 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
       debouncedEventType,
       debouncedSort
     );
+    await fetchWorkspaceBookingStats();
     window.dispatchEvent(new Event('bookings-viewed-update'));
   }, [
     currentPage,
@@ -334,6 +371,7 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
     debouncedEventType,
     debouncedSort,
     fetchBookings,
+    fetchWorkspaceBookingStats,
   ]);
 
   const handleViewBooking = useCallback((booking: Booking) => {
@@ -396,16 +434,6 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
     [bookings, serviceProviders]
   );
 
-  const stats = useMemo(() => {
-    const normalized = bookings.map((b) => String(b.status ?? "").toLowerCase());
-    return {
-      total: pagination.total || bookings.length,
-      confirmed: normalized.filter((s) => s === "confirmed").length,
-      pending: normalized.filter((s) => s === "pending").length,
-      cancelled: normalized.filter((s) => s === "cancelled").length,
-    };
-  }, [bookings, pagination.total]);
-
   const handlePageChange = useCallback((page: number) => {
     setCurrentPage(page);
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -447,25 +475,25 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
           <div className="grid grid-cols-1 gap-4 px-5 py-5 md:grid-cols-2 md:px-7 xl:grid-cols-4">
             <StatsCard
               title="Total Bookings"
-              value={stats.total}
+              value={allBookingsStats?.total ?? 0}
               icon={<CalendarDays className="h-5 w-5" />}
               iconWrap="bg-indigo-50 text-indigo-600"
             />
             <StatsCard
               title="Confirmed"
-              value={stats.confirmed}
+              value={allBookingsStats?.confirmed ?? 0}
               icon={<CheckCircle2 className="h-5 w-5" />}
               iconWrap="bg-emerald-50 text-emerald-600"
             />
             <StatsCard
               title="Pending"
-              value={stats.pending}
+              value={allBookingsStats?.pending ?? 0}
               icon={<Clock3 className="h-5 w-5" />}
               iconWrap="bg-amber-50 text-amber-600"
             />
             <StatsCard
               title="Cancelled"
-              value={stats.cancelled}
+              value={allBookingsStats?.cancelled ?? 0}
               icon={<RefreshCcw className="h-5 w-5" />}
               iconWrap="bg-rose-50 text-rose-600"
             />
@@ -555,6 +583,7 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
             eventTypeFilter={eventTypeFilter}
             sortFilter={sortFilter}
             eventTypes={eventTypes}
+            resultCount={pagination.total}
             onFilterChange={setFilter}
             onDateFilterChange={setDateFilter}
             onClearDateFilter={() => setDateFilter("")}
