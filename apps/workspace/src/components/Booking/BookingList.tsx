@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import {
   LuCalendarDays as CalendarDays,
@@ -14,20 +15,17 @@ import {
 } from "react-icons/lu";
 import { type Booking } from "@/src/types/booking";
 import { supabase } from "@/lib/supabaseClient";
-import { useWorkspaceSettings } from "@/src/hooks/useWorkspaceSettings";
-import { useEventTypes, useDepartments, useServices, useServiceProviders } from "@/src/hooks/useBookingLookups";
+import { useEventTypes, useServiceProviders } from "@/src/hooks/useBookingLookups";
 import { formatDate, formatTime } from "@/src/utils/date";
 import {
   getServiceProviderName,
   getDisplayName,
   capitalize_booking_display_label,
 } from "@/src/utils/booking";
-import { normalizeIntakeForm } from "@/src/utils/intakeForm";
 import BookingForm from "./BookingForm";
 import MultiStepBookingForm from "./MultiStepBookingForm";
 import { BookingFilters } from "./BookingFilters";
 import { BookingTableRow, type DisplayBooking } from "./BookingTableRow";
-import { BookingDetailsModal } from "./BookingDetailsModal";
 import { StatusBadge } from "./StatusBadge";
 import { Pagination } from "@app/ui";
 import { BookingTableSkeleton } from "./BookingTableSkeleton";
@@ -59,16 +57,8 @@ function useDebouncedValue<T>(value: T, delay: number): T {
 }
 
 const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
-  const { settings } = useWorkspaceSettings();
   const { data: eventTypes } = useEventTypes();
-  const { data: departments } = useDepartments();
   const { data: serviceProviders, workspaceOwner } = useServiceProviders();
-  const { data: services } = useServices();
-
-  const intakeFormSettings = useMemo(
-    () => normalizeIntakeForm(settings?.intake_form),
-    [settings?.intake_form]
-  );
 
   const [bookings, setBookings] = useState<Booking[]>(initialBookings || []);
   const [filter, setFilter] = useState("");
@@ -81,8 +71,6 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
   const [editingBooking, setEditingBooking] = useState<Booking | null>(null);
   const [loading, setLoading] = useState(false);
   const [showMultiStepForm, setShowMultiStepForm] = useState(false);
-  const [selectedBooking, setSelectedBooking] = useState<Booking | null>(null);
-  const [isModalOpen, setIsModalOpen] = useState(false);
   const [deleteConfirmModal, setDeleteConfirmModal] = useState<{ id: string } | null>(null);
   const [alertModal, setAlertModal] = useState<{ message: string } | null>(null);
   const [showBookingUpdatedSuccess, setShowBookingUpdatedSuccess] =
@@ -374,25 +362,17 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
     fetchWorkspaceBookingStats,
   ]);
 
-  const handleViewBooking = useCallback((booking: Booking) => {
-    setSelectedBooking(booking);
-    setIsModalOpen(true);
-  }, []);
-
-  const handleCloseModal = useCallback(() => {
-    const selectedNeedsRescheduleAck =
-      selectedBooking &&
-      selectedBooking.is_reschedule_viewed === false &&
-      String(selectedBooking.status ?? '').toLowerCase() === 'reschedule';
-    if (
-      selectedBooking &&
-      (!selectedBooking.is_viewed || selectedNeedsRescheduleAck)
-    ) {
-      markBookingAsViewed(selectedBooking.id);
-    }
-    setIsModalOpen(false);
-    setSelectedBooking(null);
-  }, [selectedBooking, markBookingAsViewed]);
+  /** When navigating to `/bookings/[id]`, keep the same viewed / reschedule-ack behavior as the old modal close. */
+  const handleBeforeViewBooking = useCallback(
+    (b: Pick<DisplayBooking, "id" | "is_viewed" | "is_reschedule_viewed" | "status">) => {
+      const needsRescheduleAck =
+        b.is_reschedule_viewed === false && b.status.toLowerCase() === "reschedule";
+      if (!b.is_viewed || needsRescheduleAck) {
+        markBookingAsViewed(b.id);
+      }
+    },
+    [markBookingAsViewed]
+  );
 
   const displayBookings = useMemo<DisplayBooking[]>(
     () =>
@@ -698,9 +678,7 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
                         displayBooking={displayBooking}
                         workspace_owner={workspaceOwner}
                         isLast={index === displayBookings.length - 1}
-                        onView={() =>
-                          actualBooking && handleViewBooking(actualBooking)
-                        }
+                        onView={() => handleBeforeViewBooking(displayBooking)}
                         onEdit={() =>
                           actualBooking && handleEdit(actualBooking)
                         }
@@ -799,15 +777,14 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
                   </div>
 
                   <div className="mt-4 flex flex-wrap gap-2">
-                    <button
-                      onClick={() =>
-                        actualBooking && handleViewBooking(actualBooking)
-                      }
+                    <Link
+                      href={`/bookings/${displayBooking.id}`}
+                      onClick={() => handleBeforeViewBooking(displayBooking)}
                       className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-700 transition hover:bg-emerald-100"
                     >
                       <Eye className="h-4 w-4" />
                       View
-                    </button>
+                    </Link>
                     <button
                       onClick={() => actualBooking && handleEdit(actualBooking)}
                       className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm font-medium text-indigo-700 transition hover:bg-indigo-100"
@@ -838,18 +815,6 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
           loading={loading}
           itemLabel="bookings"
         />
-
-        {isModalOpen && selectedBooking && (
-          <BookingDetailsModal
-            booking={selectedBooking}
-            onClose={handleCloseModal}
-            intakeFormSettings={intakeFormSettings}
-            services={services}
-            departments={departments}
-            serviceProviders={serviceProviders}
-            workspace_owner={workspaceOwner}
-          />
-        )}
 
         {deleteConfirmModal && (
           <ConfirmModal
