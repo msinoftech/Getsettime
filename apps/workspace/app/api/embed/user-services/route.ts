@@ -1,21 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createSupabaseServerClient } from '@app/db';
 
-function resolveWorkspaceId(
+async function resolveWorkspaceId(
   supabase: ReturnType<typeof createSupabaseServerClient>,
   workspaceSlug: string | null,
   workspaceId: string | null
 ): Promise<string | null> {
   if (workspaceSlug && !workspaceId) {
-    return supabase
+    const { data } = await supabase
       .from('workspaces')
       .select('id')
       .eq('slug', workspaceSlug)
-      .single()
-      .then(({ data }) => (data?.id != null ? String(data.id) : null));
+      .single();
+    return data?.id != null ? String(data.id) : null;
   }
-  if (workspaceId) return Promise.resolve(workspaceId);
-  return Promise.resolve(null);
+  if (workspaceId) return workspaceId;
+  return null;
 }
 
 export async function GET(req: NextRequest) {
