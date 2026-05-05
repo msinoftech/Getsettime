@@ -50,3 +50,6 @@ export type { SupabaseClient } from '@supabase/supabase-js';
 // Re-export database types
 export * from './types';
 
+// Shared auth / workspace role metadata (user_metadata.role)
+export * from './auth-roles';
+

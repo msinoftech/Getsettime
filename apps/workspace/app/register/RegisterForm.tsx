@@ -591,6 +591,48 @@ export default function RegisterForm() {
         existingNameSet.add(departmentName.toLowerCase());
       }
 
+      // Ensure workspace owner is linked in user_departments for every selected name.
+      // Skipped POSTs (department already existed) and older API bugs could leave rows missing.
+      const finalListRes = await fetch("/api/departments", { headers });
+      const allWorkspaceDepts: { id: number; name: string }[] = finalListRes.ok
+        ? (await finalListRes.json()).departments ?? []
+        : [];
+      await ensureSupabaseSessionOrThrow();
+      const {
+        data: { session: ownerSession },
+      } = await supabase.auth.getSession();
+      const ownerUserId = ownerSession?.user?.id;
+      if (ownerUserId && allWorkspaceDepts.length > 0) {
+        const udRes = await fetch(
+          `/api/user-departments?user_id=${encodeURIComponent(ownerUserId)}`,
+          { headers }
+        );
+        const assignedIds = new Set<number>();
+        if (udRes.ok) {
+          const udJson = await udRes.json();
+          for (const row of (udJson.assignments ?? []) as { department_id?: number }[]) {
+            if (typeof row.department_id === "number") assignedIds.add(row.department_id);
+          }
+        }
+        const linkHeaders = { ...headers, "Content-Type": "application/json" };
+        for (const deptName of uniqueDepartmentNames) {
+          const dept = allWorkspaceDepts.find(
+            (d) => d.name.toLowerCase() === deptName.toLowerCase()
+          );
+          if (!dept || assignedIds.has(dept.id)) continue;
+          const linkRes = await fetch("/api/user-departments", {
+            method: "POST",
+            headers: linkHeaders,
+            body: JSON.stringify({ user_id: ownerUserId, department_id: dept.id }),
+          });
+          if (!linkRes.ok) {
+            const err = await linkRes.json().catch(() => ({}));
+            throw new Error(err.error ?? "Failed to assign departments to your profile");
+          }
+          assignedIds.add(dept.id);
+        }
+      }
+
       setWorkspaceType(professionName);
       await persistOnboardingStep(1);
       return true;

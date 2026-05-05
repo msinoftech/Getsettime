@@ -10,6 +10,7 @@ const PATH_TO_MENU: Record<string, string> = {
   "/": "dashboard",
   "/users": "users",
   "/workspaces": "workspaces",
+  "/integration-requests": "integration-requests",
   "/professions": "professions",
   "/departments": "departments",
   "/services": "services",
@@ -36,6 +37,7 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
   
 
   const [newBookingsCount, setNewBookingsCount] = useState(0);
+  const [newIntegrationRequestsCount, setNewIntegrationRequestsCount] = useState(0);
   const [profileImage, setProfileImage] = useState<string | null>(null);
   const pathname = usePathname();
   const { user } = useAuth();
@@ -54,11 +56,36 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
     }
   }, []);
 
+  const fetchNewIntegrationRequestsCount = useCallback(async () => {
+    try {
+      const res = await fetch('/api/integration-requests/new-count');
+      if (res.ok) {
+        const { count } = await res.json();
+        setNewIntegrationRequestsCount(count ?? 0);
+      }
+    } catch {
+      // silently ignore
+    }
+  }, []);
+
   useEffect(() => {
     fetchNewBookingsCount();
-    const interval = setInterval(fetchNewBookingsCount, 60_000);
-    return () => clearInterval(interval);
-  }, [fetchNewBookingsCount]);
+    fetchNewIntegrationRequestsCount();
+    const interval = setInterval(() => {
+      fetchNewBookingsCount();
+      fetchNewIntegrationRequestsCount();
+    }, 60_000);
+    const onIntegrationRequestsMarkedSeen = () => fetchNewIntegrationRequestsCount();
+    if (typeof window !== 'undefined') {
+      window.addEventListener('integration-requests-marked-seen', onIntegrationRequestsMarkedSeen);
+    }
+    return () => {
+      clearInterval(interval);
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('integration-requests-marked-seen', onIntegrationRequestsMarkedSeen);
+      }
+    };
+  }, [fetchNewBookingsCount, fetchNewIntegrationRequestsCount]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -118,6 +145,16 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-briefcase-business-icon lucide-briefcase-business"><path d="M12 12h.01"/><path d="M16 6V4a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/><path d="M22 13a18.15 18.15 0 0 1-20 0"/><rect width="20" height="14" x="2" y="6" rx="2"/></svg>
             Workspaces
           </Link>        
+
+          <Link href="/integration-requests" className={`flex items-center gap-3 rounded-xl px-4 py-3 text-left text-[14px] font-medium transition-all ${ activeMenu === "integration-requests" ? "bg-indigo-50 text-indigo-700 shadow-sm" : "text-gray-700 hover:bg-gray-50" }`} onClick={handleNavClick}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M6 8h12v4a6 6 0 0 1-12 0Z"/></svg>
+            Integration requests
+            {newIntegrationRequestsCount > 0 && (
+              <span className="ml-auto inline-flex items-center justify-center rounded-full bg-indigo-600 px-2 py-0.5 text-xs font-semibold text-white min-w-[20px]">
+                {newIntegrationRequestsCount}
+              </span>
+            )}
+          </Link>
           
           <Link href="/professions" className={`flex items-center gap-3 rounded-xl px-4 py-3 text-left text-[14px] font-medium transition-all ${ activeMenu === "professions" ? "bg-indigo-50 text-indigo-700 shadow-sm" : "text-gray-700 hover:bg-gray-50" }`} onClick={handleNavClick}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-book-open-check-icon lucide-book-open-check"><path d="M12 21V7"/><path d="m16 12 2 2 4-4"/><path d="M22 6V4a1 1 0 0 0-1-1h-5a4 4 0 0 0-4 4 4 4 0 0 0-4-4H3a1 1 0 0 0-1 1v13a1 1 0 0 0 1 1h6a3 3 0 0 1 3 3 3 3 0 0 1 3-3h6a1 1 0 0 0 1-1v-1.3"/></svg>

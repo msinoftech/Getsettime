@@ -10,6 +10,11 @@ import {
   sole_workspace_department_display_name,
 } from '@/lib/booking_service_provider_phone';
 import { post_booking_whatsapp_notification } from '@/lib/post_booking_whatsapp_notification';
+import {
+  type workspace_notifications_settings,
+  is_whatsapp_admin_enabled,
+  is_whatsapp_user_enabled,
+} from '@/lib/workspace-notification-flags';
 
 type DayName = "Sun" | "Mon" | "Tue" | "Wed" | "Thu" | "Fri" | "Sat";
 
@@ -535,13 +540,16 @@ export async function POST(req: NextRequest) {
     }
 
     // Send WhatsApp notification (best-effort; don't fail booking)
-    // whatsappOptIn controls messages to the user (invitee),
-    // whatsappEnabled (notifications.whatsapp) controls messages to admins.
+    // whatsappOptIn + notifications["whatsapp-user"] control invitee messages;
+    // notifications.whatsapp controls admin messages.
     const whatsappOptIn = Boolean(intake_form && (intake_form as any).whatsapp_opt_in);
-    const whatsappEnabled = configData?.settings?.notifications?.whatsapp === true;
+    const notifications_settings =
+      configData?.settings?.notifications as workspace_notifications_settings | undefined;
+    const whatsapp_admin = is_whatsapp_admin_enabled(notifications_settings);
+    const whatsapp_user = is_whatsapp_user_enabled(notifications_settings);
 
     let admin_whatsapp_phones: string[] = [];
-    if (whatsappEnabled && data?.id) {
+    if (whatsapp_admin && data?.id) {
       try {
         admin_whatsapp_phones = await admin_whatsapp_phones_for_booking(
           supabase,
@@ -557,7 +565,14 @@ export async function POST(req: NextRequest) {
     }
 
     try {
-      if (invitee_phone && invitee_phone.trim() && (whatsappOptIn || whatsappEnabled)) {
+      const invitee_phone_trimmed = invitee_phone?.trim();
+      const wants_whatsapp_admin =
+        whatsapp_admin && admin_whatsapp_phones.length > 0;
+      const wants_whatsapp_user = whatsapp_user && whatsappOptIn;
+      if (
+        invitee_phone_trimmed &&
+        (wants_whatsapp_admin || wants_whatsapp_user)
+      ) {
         const origin = new URL(req.url).origin;
         const whenOpts: Intl.DateTimeFormatOptions = {
           weekday: 'short',
@@ -586,7 +601,7 @@ export async function POST(req: NextRequest) {
         await post_booking_whatsapp_notification(origin, {
           name: invitee_name?.trim() || 'Invitee',
           email: invitee_email?.trim() || null,
-          phone: invitee_phone?.trim() || '',
+          phone: invitee_phone_trimmed || '',
           message,
           service: eventTypeName,
           ...(departmentName?.trim() ? { department: departmentName.trim() } : {}),
@@ -597,8 +612,8 @@ export async function POST(req: NextRequest) {
           arrive_early_min: arriveEarlyMin,
           arrive_early_max: arriveEarlyMax,
           booking_reference: data?.public_code || data?.id || '',
-          send_to_user: whatsappOptIn,
-          send_to_admin: whatsappEnabled,
+          send_to_user: whatsapp_user && whatsappOptIn,
+          send_to_admin: whatsapp_admin,
           admin_phone: admin_whatsapp_phones,
           skip_contact_form_email: true,
         });

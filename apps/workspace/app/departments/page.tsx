@@ -22,7 +22,7 @@ import { supabase } from "@/lib/supabaseClient";
 import { AlertModal } from "@/src/components/ui/AlertModal";
 import { ConfirmModal } from "@/src/components/ui/ConfirmModal";
 import { DepartmentSkeleton } from "@/src/components/ui/DepartmentSkeleton";
-import { useServiceProviders } from "@/src/hooks/useBookingLookups";
+import { useServiceProviders, useUserDepartments } from "@/src/hooks/useBookingLookups";
 import type { ServiceProvider } from "@/src/types/booking-entities";
 
 type DepartmentStatus = "active" | "inactive";
@@ -74,6 +74,8 @@ const SOLE_SP_DEPARTMENT_CHIP_STYLES = [
 
 export default function DepartmentsPage() {
   const { data: serviceProviders, loading: spLoading } = useServiceProviders();
+  const { byUser: deptIdsByProvider, refetch: refetchUserDepartments } =
+    useUserDepartments();
   const showFullDoctorFlow = serviceProviders.length > 1;
 
   const [departments, setDepartments] = useState<Department[]>([]);
@@ -196,17 +198,11 @@ export default function DepartmentsPage() {
 
   const providerAssignments = useMemo(() => {
     const map = new Map<string, number[]>();
-    departments.forEach((d) => {
-      const providers = d.meta_data?.service_providers ?? [];
-      providers.forEach((p) => {
-        const prev = map.get(p.id) ?? [];
-        if (!prev.includes(d.id)) {
-          map.set(p.id, [...prev, d.id]);
-        }
-      });
+    deptIdsByProvider.forEach((deptSet, userId) => {
+      map.set(userId, [...deptSet].sort((a, b) => a - b));
     });
     return map;
-  }, [departments]);
+  }, [deptIdsByProvider]);
 
   type DoctorRow = {
     id: string;
@@ -307,14 +303,14 @@ export default function DepartmentsPage() {
 
   const assignedDepartmentsForSoleProvider = useMemo(() => {
     if (!soleProviderId) return [];
+    const deptIds = deptIdsByProvider.get(soleProviderId) ?? new Set<number>();
     return departments.filter((d) => {
-      const sps = d.meta_data?.service_providers ?? [];
-      if (!sps.some((p) => p.id === soleProviderId)) return false;
+      if (!deptIds.has(d.id)) return false;
       if (departmentFilter === "active") return d.status === "active";
       if (departmentFilter === "inactive") return d.status === "inactive";
       return true;
     });
-  }, [departments, soleProviderId, departmentFilter]);
+  }, [departments, soleProviderId, departmentFilter, deptIdsByProvider]);
 
   const suggestionAlreadyExists = useCallback(
     (name: string) =>
@@ -392,35 +388,36 @@ export default function DepartmentsPage() {
       const data = (await callApi("POST", {
         name,
         status: "active",
-        ...(sole
-          ? {
-              meta_data: {
-                service_providers: [
-                  { id: sole.id, name: serviceProviderDisplayName(sole) },
-                ],
-              },
-            }
-          : {}),
       })) as {
         department?: Department;
         restored?: boolean;
         reused?: boolean;
       } | null;
 
-      if (sole && data?.restored && data.department?.id != null) {
-        const d = data.department;
-        const current = d.meta_data?.service_providers ?? [];
-        if (!current.some((p) => p.id === sole.id)) {
-          await callApi("PUT", {
-            id: d.id,
-            meta_data: {
-              service_providers: [
-                ...current,
-                { id: sole.id, name: serviceProviderDisplayName(sole) },
-              ],
-            },
-          });
+      if (sole && data?.department?.id != null) {
+        const deptId = data.department.id;
+        const alreadyLinked = deptIdsByProvider.get(sole.id)?.has(deptId) ?? false;
+        if (!alreadyLinked) {
+          const token = await getAuthToken();
+          if (token) {
+            const linkRes = await fetch("/api/user-departments", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${token}`,
+              },
+              body: JSON.stringify({
+                user_id: sole.id,
+                department_id: deptId,
+              }),
+            });
+            if (!linkRes.ok) {
+              const err = await linkRes.json().catch(() => null);
+              setAlertMessage(err?.error ?? "Failed to link provider to department");
+            }
+          }
         }
+        await refetchUserDepartments();
       }
 
       setBusyAction(false);
@@ -431,7 +428,7 @@ export default function DepartmentsPage() {
       setDepartmentName("");
       setShowCustomInput(false);
     },
-    [callApi, departments, fetchDepartments, serviceProviders]
+    [callApi, departments, fetchDepartments, serviceProviders, deptIdsByProvider, refetchUserDepartments, getAuthToken]
   );
 
   const handleAddDepartment = () => createDepartment(departmentName);
@@ -527,48 +524,59 @@ export default function DepartmentsPage() {
     if (!selectedDepartment || selectedDepartment.status === "inactive") return;
     if (doctor.assignedDepartmentIds.includes(selectedDepartment.id)) return;
 
-    const current =
-      selectedDepartment.meta_data?.service_providers ?? [];
-    const nextProviders: DepartmentServiceProviderMeta[] = [
-      ...current,
-      { id: doctor.id, name: doctor.name },
-    ];
-
     setBusyAction(true);
-    const data = await callApi("PUT", {
-      id: selectedDepartment.id,
-      meta_data: { service_providers: nextProviders },
-    });
-    setBusyAction(false);
-
-    if (data?.department) {
-      setDepartments((prev) =>
-        prev.map((d) =>
-          d.id === selectedDepartment.id ? { ...d, ...data.department } : d
-        )
-      );
+    try {
+      const token = await getAuthToken();
+      if (!token) {
+        setAlertMessage("Not authenticated");
+        return;
+      }
+      const res = await fetch("/api/user-departments", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          user_id: doctor.id,
+          department_id: selectedDepartment.id,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => null);
+        setAlertMessage(err?.error || `Request failed (${res.status})`);
+        return;
+      }
+      await refetchUserDepartments();
+    } finally {
+      setBusyAction(false);
     }
   };
 
   const unassignDoctor = async (doctor: DoctorRow) => {
     if (!selectedDepartment) return;
-    const current =
-      selectedDepartment.meta_data?.service_providers ?? [];
-    const nextProviders = current.filter((p) => p.id !== doctor.id);
-
     setBusyAction(true);
-    const data = await callApi("PUT", {
-      id: selectedDepartment.id,
-      meta_data: { service_providers: nextProviders },
-    });
-    setBusyAction(false);
-
-    if (data?.department) {
-      setDepartments((prev) =>
-        prev.map((d) =>
-          d.id === selectedDepartment.id ? { ...d, ...data.department } : d
-        )
+    try {
+      const token = await getAuthToken();
+      if (!token) {
+        setAlertMessage("Not authenticated");
+        return;
+      }
+      const res = await fetch(
+        `/api/user-departments?user_id=${encodeURIComponent(doctor.id)}&department_id=${selectedDepartment.id}`,
+        {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${token}` },
+        }
       );
+      if (!res.ok) {
+        const err = await res.json().catch(() => null);
+        setAlertMessage(err?.error || `Request failed (${res.status})`);
+        return;
+      }
+      await refetchUserDepartments();
+    } finally {
+      setBusyAction(false);
     }
   };
 

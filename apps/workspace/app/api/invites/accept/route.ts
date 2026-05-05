@@ -70,6 +70,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'User with this email already exists' }, { status: 409 });
     }
 
+    const deptIds = Array.isArray(invite.departments)
+      ? invite.departments
+          .map((x: unknown) => (typeof x === 'number' ? x : Number(x)))
+          .filter((n: number) => Number.isInteger(n) && n > 0)
+      : [];
+
     // Create user with metadata from invite
     const { data: newUser, error: createError } = await adminClient.auth.admin.createUser({
       email: invite.email,
@@ -79,7 +85,6 @@ export async function POST(req: NextRequest) {
         name,
         role: invite.role,
         workspace_id: invite.workspace_id,
-        departments: invite.departments || [],
         invited_at: new Date().toISOString(),
       },
     });
@@ -91,6 +96,19 @@ export async function POST(req: NextRequest) {
 
     if (!newUser.user) {
       return NextResponse.json({ error: 'Failed to create user' }, { status: 500 });
+    }
+
+    if (deptIds.length > 0) {
+      const ws = Number(invite.workspace_id);
+      const rows = [...new Set(deptIds)].map((department_id) => ({
+        user_id: newUser.user.id,
+        department_id,
+        workspace_id: ws,
+      }));
+      const { error: udErr } = await adminClient.from('user_departments').insert(rows);
+      if (udErr) {
+        console.error('invites accept user_departments:', udErr);
+      }
     }
 
     // Mark invite as used in database

@@ -5,8 +5,8 @@ import { userActsAsServiceProviderFromSupabaseUser } from '@/lib/service_provide
 import { pruneDepartmentsToValidServiceProviders } from '@/lib/department_service_provider_prune';
 import {
   normalizeDepartmentIdsFromUserMetadata,
-  syncDepartmentServiceProvidersWithTeamDepartments,
 } from '@/lib/sync_department_service_providers_from_team';
+import { replaceUserDepartmentsForWorkspaceUser } from '@/lib/user_workspace_assignments';
 
 /**
  * Authorized to manage team members if user is a workspace owner (regardless
@@ -74,6 +74,43 @@ function createAdminClient() {
   });
 }
 
+const MAX_WEEK_RANGE_MS = 10 * 24 * 60 * 60 * 1000;
+
+/**
+ * Week bounds for counting bookings (start inclusive, end exclusive in DB query).
+ * Prefer client query params so "this week" matches the viewer's local Monday–Sunday.
+ */
+function parseWeekRangeFromRequest(req: NextRequest): {
+  startIso: string;
+  endExclusiveIso: string;
+} {
+  const { searchParams } = new URL(req.url);
+  const rawStart = searchParams.get('week_start');
+  const rawEnd = searchParams.get('week_end');
+  if (rawStart && rawEnd) {
+    const s = new Date(rawStart);
+    const e = new Date(rawEnd);
+    if (
+      !Number.isNaN(s.getTime()) &&
+      !Number.isNaN(e.getTime()) &&
+      e.getTime() > s.getTime() &&
+      e.getTime() - s.getTime() <= MAX_WEEK_RANGE_MS
+    ) {
+      return { startIso: s.toISOString(), endExclusiveIso: e.toISOString() };
+    }
+  }
+  const now = new Date();
+  const x = new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())
+  );
+  const dow = x.getUTCDay();
+  const diff = dow === 0 ? -6 : 1 - dow;
+  x.setUTCDate(x.getUTCDate() + diff);
+  const end = new Date(x);
+  end.setUTCDate(end.getUTCDate() + 7);
+  return { startIso: x.toISOString(), endExclusiveIso: end.toISOString() };
+}
+
 // GET: Fetch all team members for the workspace
 export async function GET(req: NextRequest) {
   try {
@@ -113,6 +150,22 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: listError.message }, { status: 500 });
     }
 
+    const wsNum = Number(workspaceId);
+    const { data: udRows, error: udErr } = await adminClient
+      .from('user_departments')
+      .select('user_id, department_id')
+      .eq('workspace_id', wsNum);
+    if (udErr) {
+      console.error('user_departments (GET team-members):', udErr);
+    }
+    const deptByUser = new Map<string, number[]>();
+    for (const r of udRows ?? []) {
+      const uid = r.user_id as string;
+      const did = r.department_id as number;
+      if (!deptByUser.has(uid)) deptByUser.set(uid, []);
+      deptByUser.get(uid)!.push(did);
+    }
+
     const teamMembers = users
       .filter((u) => user_belongs_to_workspace(u, workspaceId))
       .map((u) => {
@@ -126,13 +179,14 @@ export async function GET(req: NextRequest) {
         const additional_roles = Array.isArray(additionalRolesRaw)
           ? (additionalRolesRaw.filter((r) => typeof r === 'string') as string[])
           : [];
+        const deptIds = [...new Set(deptByUser.get(u.id) ?? [])].sort((a, b) => a - b);
         return {
           id: u.id,
           email: u.email,
           name: u.user_metadata?.name || u.email?.split('@')[0] || 'Unknown',
           role: u.user_metadata?.role || null,
           additional_roles,
-          departments: u.user_metadata?.departments || [],
+          departments: deptIds,
           phone,
           created_at: u.created_at,
           email_confirmed_at: u.email_confirmed_at,
@@ -141,7 +195,33 @@ export async function GET(req: NextRequest) {
         };
       });
 
-    return NextResponse.json({ teamMembers });
+    const { startIso, endExclusiveIso } = parseWeekRangeFromRequest(req);
+    const { data: bookingRows, error: bookErr } = await adminClient
+      .from('bookings')
+      .select('service_provider_id, status')
+      .eq('workspace_id', workspaceId)
+      .gte('start_at', startIso)
+      .lt('start_at', endExclusiveIso)
+      .not('service_provider_id', 'is', null);
+
+    if (bookErr) {
+      console.error('bookings (GET team-members weekly counts):', bookErr);
+    }
+
+    const countsByProvider = new Map<string, number>();
+    for (const row of bookingRows ?? []) {
+      const st = row.status as string | null;
+      if (st === 'deleted' || st === 'cancelled') continue;
+      const pid = row.service_provider_id as string;
+      countsByProvider.set(pid, (countsByProvider.get(pid) ?? 0) + 1);
+    }
+
+    const teamMembersWithCounts = teamMembers.map((m) => ({
+      ...m,
+      bookings_this_week: countsByProvider.get(m.id) ?? 0,
+    }));
+
+    return NextResponse.json({ teamMembers: teamMembersWithCounts });
   } catch (err: unknown) {
     const error = err as Error;
     console.error('Error:', error);
@@ -220,7 +300,6 @@ export async function POST(req: NextRequest) {
         name,
         role: role || 'service_provider',
         workspace_id: workspaceId,
-        departments: departments || [],
         ...(phoneStr !== '' ? { phone: phoneStr } : {}),
       },
     });
@@ -234,20 +313,15 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Failed to create user' }, { status: 500 });
     }
 
-    if (userActsAsServiceProviderFromSupabaseUser(newUser.user)) {
-      try {
-        const deptIds = normalizeDepartmentIdsFromUserMetadata(
-          newUser.user.user_metadata?.departments
-        );
-        await syncDepartmentServiceProvidersWithTeamDepartments(
-          adminClient,
-          workspaceId,
-          newUser.user,
-          deptIds
-        );
-      } catch (syncErr) {
-        console.error('syncDepartmentServiceProvidersWithTeamDepartments (POST):', syncErr);
-      }
+    const newDeptIds = normalizeDepartmentIdsFromUserMetadata(departments);
+    const { error: udPostErr } = await replaceUserDepartmentsForWorkspaceUser(
+      adminClient,
+      workspaceId,
+      newUser.user.id,
+      newDeptIds
+    );
+    if (udPostErr) {
+      console.error('replaceUserDepartmentsForWorkspaceUser (POST):', udPostErr);
     }
 
     const newMeta = newUser.user.user_metadata as Record<string, unknown> | undefined;
@@ -262,7 +336,7 @@ export async function POST(req: NextRequest) {
         email: newUser.user.email,
         name: newUser.user.user_metadata?.name,
         role: newUser.user.user_metadata?.role,
-        departments: newUser.user.user_metadata?.departments || [],
+        departments: newDeptIds,
         phone: newPhone,
       },
     }, { status: 201 });
@@ -376,7 +450,6 @@ export async function PUT(req: NextRequest) {
       ...(name && { name }),
       ...(role && { role }),
       ...(additionalRolesToPersist !== undefined && { additional_roles: additionalRolesToPersist }),
-      ...(departments !== undefined && { departments }),
       ...(phone !== undefined && {
         phone: typeof phone === 'string' ? phone : '',
       }),
@@ -417,20 +490,28 @@ export async function PUT(req: NextRequest) {
       }
     }
 
-    if (isServiceProvider) {
-      try {
-        const deptIds = normalizeDepartmentIdsFromUserMetadata(
-          updatedUser.user.user_metadata?.departments
-        );
-        await syncDepartmentServiceProvidersWithTeamDepartments(
-          adminClient,
-          workspaceId,
-          updatedUser.user,
-          deptIds
-        );
-      } catch (syncErr) {
-        console.error('syncDepartmentServiceProvidersWithTeamDepartments (PUT):', syncErr);
+    let returnedDeptIds: number[] = [];
+    if (departments !== undefined) {
+      const deptIds = normalizeDepartmentIdsFromUserMetadata(departments);
+      const { error: udPutErr } = await replaceUserDepartmentsForWorkspaceUser(
+        adminClient,
+        workspaceId,
+        id,
+        deptIds
+      );
+      if (udPutErr) {
+        console.error('replaceUserDepartmentsForWorkspaceUser (PUT):', udPutErr);
       }
+      returnedDeptIds = [...new Set(deptIds)].sort((a, b) => a - b);
+    } else {
+      const { data: udr } = await adminClient
+        .from('user_departments')
+        .select('department_id')
+        .eq('user_id', id)
+        .eq('workspace_id', Number(workspaceId));
+      returnedDeptIds = [...new Set((udr ?? []).map((r) => r.department_id as number))].sort(
+        (a, b) => a - b
+      );
     }
 
     const upMeta = updatedUser.user.user_metadata as Record<string, unknown> | undefined;
@@ -450,7 +531,7 @@ export async function PUT(req: NextRequest) {
         name: updatedUser.user.user_metadata?.name,
         role: updatedUser.user.user_metadata?.role,
         additional_roles: upAdditionalRoles,
-        departments: updatedUser.user.user_metadata?.departments || [],
+        departments: returnedDeptIds,
         phone: upPhone,
         is_workspace_owner: updatedUser.user.user_metadata?.is_workspace_owner === true,
       },

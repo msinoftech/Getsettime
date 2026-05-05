@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 import type {
   EventType,
@@ -10,6 +10,7 @@ import type {
 } from '@/src/types/booking-entities';
 import type { service_provider_display_source } from '@/src/utils/service_provider_display';
 import { userActsAsServiceProviderFromMetadata } from '@/lib/service_provider_role';
+import { normalizeDepartmentIdsFromUserMetadata } from '@/lib/sync_department_service_providers_from_team';
 
 interface TeamMember {
   id: string;
@@ -20,6 +21,7 @@ interface TeamMember {
   phone?: string | null;
   raw_user_meta_data?: { full_name?: string; name?: string; phone?: string };
   is_workspace_owner?: boolean;
+  departments?: unknown;
 }
 
 function memberActsAsServiceProvider(m: TeamMember): boolean {
@@ -131,6 +133,124 @@ export function useServices() {
   return { data, loading };
 }
 
+export type UserServiceAssignmentRow = {
+  id: number;
+  user_id: string;
+  service_id: string;
+  workspace_id: number;
+  created_at: string;
+};
+
+export function useUserServices() {
+  const [rows, setRows] = useState<UserServiceAssignmentRow[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetchRows = useCallback(async () => {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    if (!session?.access_token) {
+      setRows([]);
+      setLoading(false);
+      return;
+    }
+    try {
+      const res = await fetch('/api/user-services', {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+      const json = res.ok ? await res.json() : null;
+      setRows((json?.assignments ?? []) as UserServiceAssignmentRow[]);
+    } catch {
+      setRows([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void fetchRows();
+  }, [fetchRows]);
+
+  const byService = useMemo(() => {
+    const m = new Map<string, Set<string>>();
+    for (const r of rows) {
+      if (!m.has(r.service_id)) m.set(r.service_id, new Set());
+      m.get(r.service_id)!.add(r.user_id);
+    }
+    return m;
+  }, [rows]);
+
+  const byUser = useMemo(() => {
+    const m = new Map<string, Set<string>>();
+    for (const r of rows) {
+      if (!m.has(r.user_id)) m.set(r.user_id, new Set());
+      m.get(r.user_id)!.add(r.service_id);
+    }
+    return m;
+  }, [rows]);
+
+  return { rows, byService, byUser, loading, refetch: fetchRows };
+}
+
+export type UserDepartmentAssignmentRow = {
+  id: number;
+  user_id: string;
+  department_id: number;
+  workspace_id: number;
+  created_at: string;
+};
+
+export function useUserDepartments() {
+  const [rows, setRows] = useState<UserDepartmentAssignmentRow[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetchRows = useCallback(async () => {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    if (!session?.access_token) {
+      setRows([]);
+      setLoading(false);
+      return;
+    }
+    try {
+      const res = await fetch('/api/user-departments', {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+      const json = res.ok ? await res.json() : null;
+      setRows((json?.assignments ?? []) as UserDepartmentAssignmentRow[]);
+    } catch {
+      setRows([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void fetchRows();
+  }, [fetchRows]);
+
+  const byDepartment = useMemo(() => {
+    const m = new Map<number, Set<string>>();
+    for (const r of rows) {
+      if (!m.has(r.department_id)) m.set(r.department_id, new Set());
+      m.get(r.department_id)!.add(r.user_id);
+    }
+    return m;
+  }, [rows]);
+
+  const byUser = useMemo(() => {
+    const m = new Map<string, Set<number>>();
+    for (const r of rows) {
+      if (!m.has(r.user_id)) m.set(r.user_id, new Set());
+      m.get(r.user_id)!.add(r.department_id);
+    }
+    return m;
+  }, [rows]);
+
+  return { rows, byDepartment, byUser, loading, refetch: fetchRows };
+}
+
 function team_member_to_owner_source(
   m: TeamMember
 ): service_provider_display_source {
@@ -155,6 +275,9 @@ export function useServiceProviders() {
   const [data, setData] = useState<ServiceProvider[]>([]);
   const [workspaceOwner, setWorkspaceOwner] =
     useState<service_provider_display_source | null>(null);
+  const [workspaceOwnerUserId, setWorkspaceOwnerUserId] = useState<string | null>(
+    null
+  );
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -179,6 +302,7 @@ export function useServiceProviders() {
           setWorkspaceOwner(
             ownerMember ? team_member_to_owner_source(ownerMember) : null
           );
+          setWorkspaceOwnerUserId(ownerMember?.id ?? null);
         }
         const providers: ServiceProvider[] = members
           .filter(memberActsAsServiceProvider)
@@ -191,9 +315,13 @@ export function useServiceProviders() {
                     phoneFromMeta.trim() !== ''
                   ? phoneFromMeta.trim()
                   : undefined;
+            const departments =
+              normalizeDepartmentIdsFromUserMetadata(m.departments);
             return {
               id: m.id,
               email: m.email ?? '',
+              departments,
+              is_workspace_owner: m.is_workspace_owner === true,
               raw_user_meta_data: {
                 full_name: m.raw_user_meta_data?.full_name,
                 name: m.name,
@@ -206,6 +334,7 @@ export function useServiceProviders() {
         if (!cancelled) {
           setData([]);
           setWorkspaceOwner(null);
+          setWorkspaceOwnerUserId(null);
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -216,5 +345,5 @@ export function useServiceProviders() {
     return () => { cancelled = true; };
   }, []);
 
-  return { data, workspaceOwner, loading };
+  return { data, workspaceOwner, workspaceOwnerUserId, loading };
 }

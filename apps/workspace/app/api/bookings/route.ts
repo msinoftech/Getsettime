@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { findOrCreateContact } from '@/lib/contact-linking';
+import { findOrCreateContact, resolveContactForInviteeUpdate } from '@/lib/contact-linking';
 import { getLocalTimePartsInTimezone } from '@/lib/date-timezone';
 import { appendActivityLog } from '@/lib/activity-log';
 import {
@@ -10,6 +10,11 @@ import {
   sole_workspace_department_display_name,
 } from '@/lib/booking_service_provider_phone';
 import { post_booking_whatsapp_notification } from '@/lib/post_booking_whatsapp_notification';
+import {
+  type workspace_notifications_settings,
+  is_whatsapp_admin_enabled,
+  is_whatsapp_user_enabled,
+} from '@/lib/workspace-notification-flags';
 
 type DayName = "Sun" | "Mon" | "Tue" | "Wed" | "Thu" | "Fri" | "Sat";
 
@@ -78,26 +83,33 @@ export async function GET(req: NextRequest) {
     const offset = (page - 1) * limit;
     
     const now = new Date().toISOString();
-    const orderColumn = sortBy === 'latest' || sortBy === 'new' ? 'created_at' : 'start_at';
-    const ascending = sortBy === 'upcoming';
 
     // Build query with search filter, event_types and contacts join
     let query = supabase
       .from('bookings')
       .select('*, event_types(title, duration_minutes), contacts(name, phone, email)', { count: 'exact' })
-      .eq('workspace_id', workspaceId)
-      .order(orderColumn, { ascending });
+      .eq('workspace_id', workspaceId);
 
-    if (sortBy === 'upcoming') {
-      query = query.gte('start_at', now);
-    }
-    if (sortBy === 'past') {
-      query = query.lt('start_at', now);
-    }
-    if (sortBy === 'new') {
-      query = query.or(
-        'is_viewed.eq.false,and(is_reschedule_viewed.eq.false,status.eq.reschedule)'
-      );
+    if (sortBy === 'service_provider') {
+      query = query
+        .order('service_provider_id', { ascending: true, nullsFirst: false })
+        .order('start_at', { ascending: true });
+    } else {
+      const orderColumn = sortBy === 'latest' || sortBy === 'new' ? 'created_at' : 'start_at';
+      const ascending = sortBy === 'upcoming';
+      query = query.order(orderColumn, { ascending });
+
+      if (sortBy === 'upcoming') {
+        query = query.gte('start_at', now);
+      }
+      if (sortBy === 'past') {
+        query = query.lt('start_at', now);
+      }
+      if (sortBy === 'new') {
+        query = query.or(
+          'is_viewed.eq.false,and(is_reschedule_viewed.eq.false,status.eq.reschedule)'
+        );
+      }
     }
 
     // Apply search filter if provided
@@ -134,9 +146,16 @@ export async function GET(req: NextRequest) {
         .lte('start_at', endOfRange.toISOString());
     }
 
+    // Hide soft-deleted bookings unless explicitly filtering by deleted
+    const statusTrim = status.trim();
+    const showingDeletedOnly = statusTrim.toLowerCase() === 'deleted';
+    if (!showingDeletedOnly) {
+      query = query.neq('status', 'deleted');
+    }
+
     // Apply status filter if provided
-    if (status.trim()) {
-      query = query.eq('status', status.trim());
+    if (statusTrim) {
+      query = query.eq('status', statusTrim);
     }
 
     // Apply event type filter if provided
@@ -642,12 +661,15 @@ export async function POST(req: NextRequest) {
     }
 
     // Send WhatsApp notification (best-effort; don't fail booking)
-    // metadata.whatsapp_opt_in controls messages to the user (invitee),
-    // notifications.whatsapp (whatsappEnabled) controls messages to admins.
-    const whatsappEnabled = configData?.settings?.notifications?.whatsapp === true;
+    // metadata.whatsapp_opt_in + notifications["whatsapp-user"] control invitee messages;
+    // notifications.whatsapp controls admin messages.
+    const notifications_settings =
+      configData?.settings?.notifications as workspace_notifications_settings | undefined;
+    const whatsapp_admin = is_whatsapp_admin_enabled(notifications_settings);
+    const whatsapp_user = is_whatsapp_user_enabled(notifications_settings);
 
     let admin_whatsapp_phones: string[] = [];
-    if (whatsappEnabled && data?.id && workspaceId && notifyAdminClient) {
+    if (whatsapp_admin && data?.id && workspaceId && notifyAdminClient) {
       try {
         admin_whatsapp_phones = await admin_whatsapp_phones_for_booking(
           supabase,
@@ -666,7 +688,15 @@ export async function POST(req: NextRequest) {
     }
 
     try {
-      if (invitee_phone && invitee_phone.trim() && (metadata?.whatsapp_opt_in || whatsappEnabled)) {
+      const invitee_phone_trimmed = invitee_phone?.trim();
+      const wants_whatsapp_admin =
+        whatsapp_admin && admin_whatsapp_phones.length > 0;
+      const wants_whatsapp_user =
+        whatsapp_user && Boolean(metadata?.whatsapp_opt_in);
+      if (
+        invitee_phone_trimmed &&
+        (wants_whatsapp_admin || wants_whatsapp_user)
+      ) {
         const origin = new URL(req.url).origin;
         const whenOpts: Intl.DateTimeFormatOptions = {
           weekday: 'short',
@@ -693,7 +723,7 @@ export async function POST(req: NextRequest) {
         await post_booking_whatsapp_notification(origin, {
           name: invitee_name?.trim() || 'Invitee',
           email: invitee_email?.trim() || null,
-          phone: invitee_phone?.trim() || '',
+          phone: invitee_phone_trimmed || '',
           message,
           service: eventTypeName,
           ...(departmentName?.trim() ? { department: departmentName.trim() } : {}),
@@ -704,8 +734,8 @@ export async function POST(req: NextRequest) {
           arrive_early_min: arriveEarlyMin,
           arrive_early_max: arriveEarlyMax,
           booking_reference: data?.public_code || data?.id || '',
-          send_to_user: Boolean(metadata?.whatsapp_opt_in),
-          send_to_admin: whatsappEnabled,
+          send_to_user: whatsapp_user && Boolean(metadata?.whatsapp_opt_in),
+          send_to_admin: whatsapp_admin,
           admin_phone: admin_whatsapp_phones,
           skip_contact_form_email: true,
         });
@@ -829,7 +859,7 @@ export async function PATCH(req: NextRequest) {
     const { data: existingRow, error: existingError } = await supabase
       .from('bookings')
       .select(
-        'start_at, end_at, status, invitee_name, invitee_email, invitee_phone, event_type_id, service_provider_id, department_id, metadata, public_code'
+        'start_at, end_at, status, invitee_name, invitee_email, invitee_phone, event_type_id, service_provider_id, department_id, metadata, public_code, contact_id'
       )
       .eq('id', id)
       .eq('workspace_id', workspaceId)
@@ -837,6 +867,10 @@ export async function PATCH(req: NextRequest) {
 
     if (existingError || !existingRow) {
       return NextResponse.json({ error: 'Booking not found or access denied' }, { status: 404 });
+    }
+
+    if (String(existingRow.status ?? '').toLowerCase() === 'deleted') {
+      return NextResponse.json({ error: 'Booking no longer exists' }, { status: 404 });
     }
 
     const nextStatusRaw = status !== undefined ? status : existingRow.status;
@@ -872,6 +906,58 @@ export async function PATCH(req: NextRequest) {
       updateData.is_reschedule_viewed = false;
     }
 
+    const next_invitee_name =
+      invitee_name !== undefined ? invitee_name?.trim() || null : existingRow.invitee_name;
+    const next_invitee_email =
+      invitee_email !== undefined ? invitee_email?.trim() || null : existingRow.invitee_email;
+    const next_invitee_phone =
+      invitee_phone !== undefined ? invitee_phone?.trim() || null : existingRow.invitee_phone;
+
+    if (
+      invitee_name !== undefined ||
+      invitee_email !== undefined ||
+      invitee_phone !== undefined
+    ) {
+      try {
+        const resolved = await resolveContactForInviteeUpdate(
+          supabase,
+          workspaceId,
+          {
+            invitee_name: existingRow.invitee_name,
+            invitee_email: existingRow.invitee_email,
+            invitee_phone: existingRow.invitee_phone,
+            contact_id:
+              typeof existingRow.contact_id === 'number'
+                ? existingRow.contact_id
+                : existingRow.contact_id != null
+                  ? Number(existingRow.contact_id)
+                  : null,
+          },
+          {
+            invitee_name: next_invitee_name,
+            invitee_email: next_invitee_email,
+            invitee_phone: next_invitee_phone,
+          }
+        );
+
+        if (resolved.contact_id != null) {
+          updateData.contact_id = resolved.contact_id;
+        }
+        if (resolved.metadata_patch) {
+          const mergedBase = (metadata !== undefined ? metadata : existingRow.metadata) as
+            | Record<string, unknown>
+            | null
+            | undefined;
+          updateData.metadata = {
+            ...(typeof mergedBase === 'object' && mergedBase !== null ? mergedBase : {}),
+            invitee_change: resolved.metadata_patch,
+          };
+        }
+      } catch (e) {
+        console.error('resolveContactForInviteeUpdate:', e);
+      }
+    }
+
     const { data, error } = await supabase
       .from('bookings')
       .update(updateData)
@@ -891,9 +977,9 @@ export async function PATCH(req: NextRequest) {
 
     const finalIsReschedule =
       String(data?.status ?? '').toLowerCase() === 'reschedule';
-    const shouldSendRescheduleEmails = timeChanged && finalIsReschedule;
+    const shouldSendDatetimeChangeNotifications = timeChanged;
 
-    if (shouldSendRescheduleEmails) {
+    if (shouldSendDatetimeChangeNotifications) {
       try {
         let providerEmail: string | undefined;
         let providerName: string | undefined;
@@ -988,13 +1074,21 @@ export async function PATCH(req: NextRequest) {
           .select('settings')
           .eq('workspace_id', workspaceId)
           .single();
-        const rescheduleWhatsappEnabled =
-          (rescheduleConfig?.settings as { notifications?: { whatsapp?: boolean } } | undefined)
-            ?.notifications?.whatsapp === true;
+        const reschedule_notifications =
+          rescheduleConfig?.settings?.notifications as
+            | workspace_notifications_settings
+            | undefined;
+        const reschedule_whatsapp_admin =
+          is_whatsapp_admin_enabled(reschedule_notifications);
+        const reschedule_whatsapp_user =
+          is_whatsapp_user_enabled(reschedule_notifications);
 
-        if (rescheduleWhatsappEnabled && data?.id) {
+        if (
+          (reschedule_whatsapp_admin || reschedule_whatsapp_user) &&
+          data?.id
+        ) {
           let admin_whatsapp_phones: string[] = [];
-          if (patchNotifyAdmin) {
+          if (reschedule_whatsapp_admin && patchNotifyAdmin) {
             try {
               admin_whatsapp_phones = await admin_whatsapp_phones_for_booking(
                 supabase,
@@ -1017,14 +1111,23 @@ export async function PATCH(req: NextRequest) {
             inviteePhoneTrimmed ||
             (admin_whatsapp_phones[0] ? admin_whatsapp_phones[0].trim() : '');
 
-          if (phoneForApi) {
+          const should_send_whatsapp_reschedule =
+            phoneForApi &&
+            (
+              (reschedule_whatsapp_user && Boolean(inviteePhoneTrimmed)) ||
+              (reschedule_whatsapp_admin && admin_whatsapp_phones.length > 0)
+            );
+
+          if (should_send_whatsapp_reschedule) {
             const metaRes = data.metadata as Record<string, unknown> | null | undefined;
             const notesFromMetaRes =
               metaRes && typeof metaRes.notes !== 'undefined'
                 ? String(metaRes.notes ?? '')
                 : '';
             const origin = new URL(req.url).origin;
-            const message = `Booking rescheduled - Event: ${eventTypeName}, Client: ${data.invitee_name || 'Invitee'}`;
+            const message = finalIsReschedule
+              ? `Booking rescheduled - Event: ${eventTypeName}, Client: ${data.invitee_name || 'Invitee'}`
+              : `Booking time updated - Event: ${eventTypeName}, Client: ${data.invitee_name || 'Invitee'}`;
 
             await post_booking_whatsapp_notification(origin, {
               name: data.invitee_name?.trim() || 'Invitee',
@@ -1040,8 +1143,11 @@ export async function PATCH(req: NextRequest) {
               arrive_early_min: arriveEarlyMin,
               arrive_early_max: arriveEarlyMax,
               booking_reference: String(data.public_code || data.id || ''),
-              send_to_user: Boolean(inviteePhoneTrimmed),
-              send_to_admin: admin_whatsapp_phones.length > 0,
+              send_to_user:
+                reschedule_whatsapp_user && Boolean(inviteePhoneTrimmed),
+              send_to_admin:
+                reschedule_whatsapp_admin &&
+                admin_whatsapp_phones.length > 0,
               ...(admin_whatsapp_phones.length > 0
                 ? { admin_phone: admin_whatsapp_phones }
                 : {}),
@@ -1059,9 +1165,18 @@ export async function PATCH(req: NextRequest) {
     const newStatusNorm = String(data.status ?? '').toLowerCase();
     const statusChanged =
       status !== undefined && prevStatusNorm !== newStatusNorm;
-    const skipStatusNotifyBecauseReschedule = shouldSendRescheduleEmails;
+    const skipStatusNotifyBecauseDatetimeChange = shouldSendDatetimeChangeNotifications;
+    /** Admin/dashboard status updates: no outbound email/WhatsApp to invitees */
+    const silentAdminStatusNotify =
+      newStatusNorm === 'completed' ||
+      newStatusNorm === 'no-show' ||
+      newStatusNorm === 'deleted';
 
-    if (statusChanged && !skipStatusNotifyBecauseReschedule) {
+    if (
+      statusChanged &&
+      !skipStatusNotifyBecauseDatetimeChange &&
+      !silentAdminStatusNotify
+    ) {
       try {
         let providerEmail: string | undefined;
         let providerName: string | undefined;
@@ -1200,9 +1315,12 @@ export async function PATCH(req: NextRequest) {
           .eq('workspace_id', workspaceId)
           .single();
 
-        const whatsappEnabled =
-          (configRow?.settings as { notifications?: { whatsapp?: boolean } } | undefined)
-            ?.notifications?.whatsapp === true;
+        const status_notifications =
+          configRow?.settings?.notifications as
+            | workspace_notifications_settings
+            | undefined;
+        const whatsapp_admin = is_whatsapp_admin_enabled(status_notifications);
+        const whatsapp_user = is_whatsapp_user_enabled(status_notifications);
 
         let workspaceSlug = '';
         try {
@@ -1214,9 +1332,9 @@ export async function PATCH(req: NextRequest) {
           workspaceSlug = ws?.slug || '';
         } catch { /* non-blocking */ }
 
-        if (whatsappEnabled && data?.id) {
+        if ((whatsapp_admin || whatsapp_user) && data?.id) {
           let statusChangeAdminPhones: string[] = [];
-          if (patchAdminClient) {
+          if (whatsapp_admin && patchAdminClient) {
             try {
               statusChangeAdminPhones = await admin_whatsapp_phones_for_booking(
                 supabase,
@@ -1236,9 +1354,6 @@ export async function PATCH(req: NextRequest) {
 
           const inviteePhoneStatus = data.invitee_phone?.trim();
           const isCancelled = newStatusNorm === 'cancelled';
-          const phoneForCancelled =
-            inviteePhoneStatus ||
-            (statusChangeAdminPhones[0] ? statusChangeAdminPhones[0].trim() : '');
 
           const origin = new URL(req.url).origin;
           const message =
@@ -1246,11 +1361,11 @@ export async function PATCH(req: NextRequest) {
               ? `Booking cancelled - Event: ${eventTypeName}, Client: ${data.invitee_name || 'Invitee'}`
               : `Booking status updated - Event: ${eventTypeName}, Client: ${data.invitee_name || 'Invitee'}, Status: ${displayPrev} → ${displayNew}`;
 
-          if (isCancelled && phoneForCancelled) {
+          if (isCancelled && whatsapp_user && inviteePhoneStatus) {
             await post_booking_whatsapp_notification(origin, {
               name: data.invitee_name?.trim() || 'Invitee',
               email: data.invitee_email?.trim() || null,
-              phone: phoneForCancelled,
+              phone: inviteePhoneStatus,
               message,
               service: eventTypeName,
               ...(departmentName?.trim() ? { department: departmentName.trim() } : {}),
@@ -1262,15 +1377,16 @@ export async function PATCH(req: NextRequest) {
               arrive_early_max: arriveEarlyMax,
               booking_reference: workspaceSlug,
               cancelled_by: providerName?.trim() || 'Admin',
-              send_to_user: Boolean(inviteePhoneStatus),
-              send_to_admin: false, // old:statusChangeAdminPhones.length > 0
+              send_to_user:
+                whatsapp_user && Boolean(inviteePhoneStatus),
+              send_to_admin: false,
               ...(statusChangeAdminPhones.length > 0
                 ? { admin_phone: statusChangeAdminPhones }
                 : {}),
               skip_contact_form_email: true,
               notification_kind: 'cancel',
             });
-          } else if (!isCancelled && inviteePhoneStatus) {
+          } else if (!isCancelled && inviteePhoneStatus && whatsapp_user) {
             await post_booking_whatsapp_notification(origin, {
               name: data.invitee_name?.trim() || 'Invitee',
               email: data.invitee_email?.trim() || null,
@@ -1302,7 +1418,12 @@ export async function PATCH(req: NextRequest) {
     await appendActivityLog(workspaceId, {
       type: 'booking',
       action: 'updated',
-      title: timeChanged && finalIsReschedule ? 'Booking rescheduled' : 'Booking updated',
+      title:
+        timeChanged && finalIsReschedule
+          ? 'Booking rescheduled'
+          : timeChanged && !finalIsReschedule
+            ? 'Booking time updated'
+            : 'Booking updated',
       description: `${data?.invitee_name || 'Someone'} (${data?.status || 'pending'})`,
     });
 
@@ -1352,25 +1473,28 @@ export async function DELETE(req: NextRequest) {
     if (!workspaceId) {
       return NextResponse.json({ error: 'Workspace ID not found' }, { status: 400 });
     }
-    const { error } = await supabase
+    const { error: updErr } = await supabase
       .from('bookings')
-      .delete()
+      .update({ status: 'deleted' })
       .eq('id', id)
       .eq('workspace_id', workspaceId);
 
-    if (error) {
-      console.error('Error deleting booking:', error);
-      return NextResponse.json({ error: error.message }, { status: 500 });
+    if (updErr) {
+      console.error('Error soft-deleting booking:', updErr);
+      return NextResponse.json({ error: updErr.message }, { status: 500 });
     }
 
     await appendActivityLog(workspaceId, {
       type: 'booking',
       action: 'deleted',
-      title: 'Booking deleted',
-      description: `Booking ID ${id} was removed`,
+      title: 'Booking marked deleted',
+      description: `Booking ID ${id} was hidden from the bookings list but kept for audit (superadmin can restore).`,
     });
 
-    return NextResponse.json({ success: true });
+    return NextResponse.json({
+      success: true,
+      message: 'Booking deleted successfully',
+    });
   } catch (err: unknown) {
     const error = err as Error;
     console.error('Error:', error);

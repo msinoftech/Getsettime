@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getSupabaseServer } from '@/lib/supabaseServer';
+import { isSuperadminCreatableUserRole, SUPERADMIN_CREATABLE_USER_ROLES } from '@app/db';
 
 function normalize_workspace_id(value: unknown): string | null {
   if (value === null || value === undefined || value === '') return null;
@@ -39,10 +40,9 @@ export async function PUT(
     }
 
     // Validate role
-    const validRoles = ['superadmin', 'workspace_admin', 'customer'];
-    if (!validRoles.includes(role)) {
+    if (!isSuperadminCreatableUserRole(role)) {
       return NextResponse.json({ 
-        error: `Role must be one of: ${validRoles.join(', ')}` 
+        error: `Role must be one of: ${SUPERADMIN_CREATABLE_USER_ROLES.join(', ')}` 
       }, { status: 400 });
     }
 

@@ -61,6 +61,10 @@ export async function GET(
       return NextResponse.json({ error: 'Booking not found' }, { status: 404 });
     }
 
+    if (String(booking.status ?? '').toLowerCase() === 'deleted') {
+      return NextResponse.json({ error: 'Booking not found' }, { status: 404 });
+    }
+
     let creator: {
       id: string;
       name: string;

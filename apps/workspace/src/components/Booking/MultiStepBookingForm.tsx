@@ -110,6 +110,10 @@ const MultiStepBookingForm = ({ onSave, onCancel }: MultiStepBookingFormProps) =
     services,
     setServices,
     loadingServices,
+    providerScopedCatalogServices,
+    loadingProviderScopedCatalog,
+    workspaceOwnerUserId,
+    showProviderPicker,
     workspaceName,
     workspaceLogoUrl,
   } = useBookingFormData({
@@ -124,6 +128,8 @@ const MultiStepBookingForm = ({ onSave, onCancel }: MultiStepBookingFormProps) =
 
   const timeslots = useTimeslots(selectedType, selectedDate, availabilitySettings, existingBookings);
 
+  const hideIntakeCatalogServices = providerScopedCatalogServices.length > 0;
+
   const intakeValidation = useIntakeValidation(
     intakeForm,
     name,
@@ -132,7 +138,8 @@ const MultiStepBookingForm = ({ onSave, onCancel }: MultiStepBookingFormProps) =
     customFieldValues,
     selectedServiceIds,
     services,
-    loadingServices
+    loadingServices,
+    hideIntakeCatalogServices && isServicesEnabled(intakeForm)
   );
   const isStep4Valid = Object.keys(intakeValidation).length === 0;
 
@@ -182,10 +189,25 @@ const MultiStepBookingForm = ({ onSave, onCancel }: MultiStepBookingFormProps) =
   }, [loadingSettings, general]);
 
   useEffect(() => {
-    if (intakeForm && !isServicesEnabled(intakeForm)) {
-      setSelectedServiceIds((prev) => prev.filter((id) => services.some((s) => s.id === id)));
+    if (!intakeForm) return;
+    const scoped = providerScopedCatalogServices;
+    const catalogActive = scoped.length > 0;
+    if (!isServicesEnabled(intakeForm)) {
+      setSelectedServiceIds((prev) =>
+        catalogActive ? prev.filter((id) => scoped.some((s) => s.id === id)) : []
+      );
+      return;
     }
-  }, [intakeForm, services]);
+    if (catalogActive) {
+      setSelectedServiceIds((prev) =>
+        prev.filter((id) => scoped.some((s) => s.id === id))
+      );
+    } else {
+      setSelectedServiceIds((prev) =>
+        prev.filter((id) => services.some((s) => s.id === id))
+      );
+    }
+  }, [intakeForm, services, providerScopedCatalogServices]);
 
   const ALLOWED_FILE_TYPES = ['application/pdf', 'image/png', 'image/jpeg', 'image/heic', 'image/heif'];
   const MAX_FILE_SIZE = 2 * 1024 * 1024;
@@ -231,13 +253,15 @@ const MultiStepBookingForm = ({ onSave, onCancel }: MultiStepBookingFormProps) =
       setError(first || 'Please fill in all required fields');
       return;
     }
+    const usesExplicitProviderPicker =
+      departments.length > 0 && selectedDepartment !== null && showProviderPicker;
     if (departments.length > 0) {
-      if (!selectedProvider) {
-        setError('Please select a service provider');
-        return;
-      }
       if (!selectedDepartment) {
         setError('Please select a department');
+        return;
+      }
+      if (usesExplicitProviderPicker && !selectedProvider) {
+        setError('Please select a service provider');
         return;
       }
     }
@@ -297,6 +321,7 @@ const MultiStepBookingForm = ({ onSave, onCancel }: MultiStepBookingFormProps) =
       if (emailEnabled) intakeFormPayload.email = email.trim();
       if (phoneEnabled) intakeFormPayload.phone = phone.trim();
       if (servicesEnabled) intakeFormPayload.services = selectedServiceIds;
+      else if (selectedServiceIds.length > 0) intakeFormPayload.services = selectedServiceIds;
       if (additionalDescriptionEnabled && notes.trim()) intakeFormPayload.additional_description = notes.trim();
       for (const field of intakeForm?.custom_fields || []) {
         const v = (customFieldValues[field.id] || '').trim();
@@ -327,12 +352,19 @@ const MultiStepBookingForm = ({ onSave, onCancel }: MultiStepBookingFormProps) =
 
       const timezone = getDisplayTimezone(general?.timezone);
 
+      const service_provider_id =
+        departments.length === 0
+          ? selectedProvider?.id ?? null
+          : usesExplicitProviderPicker
+            ? selectedProvider!.id
+            : workspaceOwnerUserId ?? null;
+
       const res = await fetch('/api/bookings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
         body: JSON.stringify({
           event_type_id: selectedType.id,
-          service_provider_id: selectedProvider?.id || null,
+          service_provider_id,
           department_id: selectedDepartment?.id ?? null,
           invitee_name: inviteeName,
           invitee_email: emailEnabled ? (email.trim() || null) : null,
@@ -394,6 +426,10 @@ const MultiStepBookingForm = ({ onSave, onCancel }: MultiStepBookingFormProps) =
             phone={phone}
             notes={notes}
             displayTimezone={getDisplayTimezone(general?.timezone)}
+            selectedStep1ServiceIds={selectedServiceIds}
+            step1CatalogServices={providerScopedCatalogServices}
+            intakeForm={intakeForm}
+            customFieldValues={customFieldValues}
           />
           <div className="p-4 sm:p-6 lg:p-8 xl:p-10 bg-white relative">
             <ProgressIndicator step={step} />
@@ -409,11 +445,21 @@ const MultiStepBookingForm = ({ onSave, onCancel }: MultiStepBookingFormProps) =
                   selectedDepartment={selectedDepartment}
                   selectedProvider={selectedProvider}
                   serviceProviders={serviceProviders}
+                  showProviderPicker={showProviderPicker}
                   loadingDepartments={loadingDepartments}
                   loadingProviders={loadingProviders}
+                  providerScopedCatalogServices={providerScopedCatalogServices}
+                  loadingProviderScopedCatalog={loadingProviderScopedCatalog}
+                  selectedOptionalServiceIds={selectedServiceIds}
+                  onToggleOptionalService={(id) =>
+                    setSelectedServiceIds((prev) =>
+                      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+                    )
+                  }
                   onSelectDepartment={(dept) => {
                     setSelectedDepartment(dept);
                     setSelectedProvider(null);
+                    setSelectedServiceIds([]);
                   }}
                   onSelectProvider={setSelectedProvider}
                   onContinue={() => setStep(2)}
@@ -503,6 +549,7 @@ const MultiStepBookingForm = ({ onSave, onCancel }: MultiStepBookingFormProps) =
                   fileError={fileError}
                   onBack={() => setStep(3)}
                   onConfirm={handleConfirm}
+                  hideIntakeCatalogServices={hideIntakeCatalogServices}
                 />
               )}
               {step === 5 && (

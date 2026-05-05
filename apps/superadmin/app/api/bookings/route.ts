@@ -79,19 +79,26 @@ export async function GET(request: NextRequest) {
     
     // Apply sorting
     const now = new Date().toISOString();
-    const orderColumn = sortBy === 'latest' || sortBy === 'new' ? 'created_at' : 'start_at';
-    const ascending = sortBy === 'upcoming';
 
-    query = query.order(orderColumn, { ascending });
+    if (sortBy === 'service_provider') {
+      query = query
+        .order('service_provider_id', { ascending: true, nullsFirst: false })
+        .order('start_at', { ascending: true });
+    } else {
+      const orderColumn = sortBy === 'latest' || sortBy === 'new' ? 'created_at' : 'start_at';
+      const ascending = sortBy === 'upcoming';
 
-    if (sortBy === 'upcoming') {
-      query = query.gte('start_at', now);
-    }
-    if (sortBy === 'past') {
-      query = query.lt('start_at', now);
-    }
-    if (sortBy === 'new') {
-      query = query.eq('is_viewed', false);
+      query = query.order(orderColumn, { ascending });
+
+      if (sortBy === 'upcoming') {
+        query = query.gte('start_at', now);
+      }
+      if (sortBy === 'past') {
+        query = query.lt('start_at', now);
+      }
+      if (sortBy === 'new') {
+        query = query.eq('is_viewed', false);
+      }
     }
     
     // Apply pagination

@@ -8,18 +8,22 @@ import {
   LuRefreshCw,
   LuSearch,
   LuSlidersHorizontal,
+  LuX,
 } from "react-icons/lu";
 import { BOOKING_STATUSES } from "@/src/types/booking";
 import { BOOKING_SORT_OPTIONS } from "@app/db";
-import type { EventType } from "@/src/types/booking-entities";
+import type { EventType, ServiceProvider } from "@/src/types/booking-entities";
+import { capitalize_booking_display_label, getServiceProviderName } from "@/src/utils/booking";
 
 interface BookingFiltersProps {
   filter: string;
   dateFilter: string;
   statusFilter: string;
   eventTypeFilter: string;
+  providerFilter: string;
   sortFilter: string;
   eventTypes: EventType[] | undefined;
+  serviceProviders: ServiceProvider[] | undefined;
   /** Count of rows matching the current query (e.g. pagination total). */
   resultCount: number;
   onFilterChange: (value: string) => void;
@@ -27,6 +31,7 @@ interface BookingFiltersProps {
   onClearDateFilter: () => void;
   onStatusFilterChange: (value: string) => void;
   onEventTypeFilterChange: (value: string) => void;
+  onProviderFilterChange: (value: string) => void;
   onSortFilterChange: (value: string) => void;
   onResetFilters?: () => void;
 }
@@ -39,7 +44,9 @@ const selectClass =
 const BOOKING_SORT_OPTIONS_WORKSPACE = BOOKING_SORT_OPTIONS.map((opt) =>
   opt.value === "new"
     ? { ...opt, label: "New / Reschedule alerts" }
-    : opt
+    : opt.value === "service_provider"
+      ? { ...opt, label: "Service provider (then date)" }
+      : opt
 );
 
 export function BookingFilters({
@@ -47,26 +54,40 @@ export function BookingFilters({
   dateFilter,
   statusFilter,
   eventTypeFilter,
+  providerFilter,
   sortFilter,
   eventTypes,
+  serviceProviders,
   resultCount,
   onFilterChange,
   onDateFilterChange,
   onClearDateFilter,
   onStatusFilterChange,
   onEventTypeFilterChange,
+  onProviderFilterChange,
   onSortFilterChange,
   onResetFilters,
 }: BookingFiltersProps) {
   const [showAdvanced, setShowAdvanced] = useState(false);
   const panelId = useId();
   const eventTypesList = eventTypes ?? [];
+  const providersList = serviceProviders ?? [];
+  const sortedProviders = [...providersList].sort((a, b) =>
+    capitalize_booking_display_label(
+      getServiceProviderName(a.id, providersList)
+    ).localeCompare(
+      capitalize_booking_display_label(getServiceProviderName(b.id, providersList)),
+      undefined,
+      { sensitivity: "base" }
+    )
+  );
 
   const hasActiveFilters =
     filter.trim() !== "" ||
     dateFilter !== "" ||
     statusFilter !== "" ||
     eventTypeFilter !== "" ||
+    providerFilter !== "" ||
     sortFilter !== "start_at";
 
   const handleReset = () => {
@@ -75,6 +96,7 @@ export function BookingFilters({
     onClearDateFilter();
     onStatusFilterChange("");
     onEventTypeFilterChange("");
+    onProviderFilterChange("");
     onSortFilterChange("start_at");
     onResetFilters?.();
   };
@@ -143,12 +165,12 @@ export function BookingFilters({
                 Advanced Filters
               </h3>
               <p className="text-sm text-slate-500">
-                Refine bookings by status, event type, and sorting.
+                Refine bookings by status, event type, service provider, and sorting.
               </p>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4">
             <div className="min-w-0">
               <label
                 htmlFor="status-filter"
@@ -215,6 +237,37 @@ export function BookingFilters({
 
             <div className="min-w-0">
               <label
+                htmlFor="provider-filter"
+                className="mb-1.5 block text-xs font-medium text-slate-500"
+              >
+                Service provider
+              </label>
+              <div className="relative">
+                <select
+                  id="provider-filter"
+                  value={providerFilter}
+                  onChange={(e) => onProviderFilterChange(e.target.value)}
+                  className={selectClass}
+                  aria-label="Filter by service provider"
+                >
+                  <option value="">All service providers</option>
+                  {sortedProviders.map((sp) => (
+                    <option key={sp.id} value={sp.id}>
+                      {capitalize_booking_display_label(
+                        getServiceProviderName(sp.id, providersList)
+                      )}
+                    </option>
+                  ))}
+                </select>
+                <LuChevronDown
+                  className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
+                  aria-hidden
+                />
+              </div>
+            </div>
+
+            <div className="min-w-0">
+              <label
                 htmlFor="sort-filter"
                 className="mb-1.5 block text-xs font-medium text-slate-500"
               >
@@ -240,36 +293,34 @@ export function BookingFilters({
                 />
               </div>
             </div>
-          </div>
 
-          <div className="mt-3 max-w-md">
-            <label
-              htmlFor="date-filter"
-              className="mb-1.5 block text-xs font-medium text-slate-500"
-            >
-              Specific date
-            </label>
-            <div className="relative">
-              <input
-                id="date-filter"
-                type="date"
-                value={dateFilter}
-                onChange={(e) => onDateFilterChange(e.target.value)}
-                className="w-full min-w-0 rounded-xl border border-slate-200 bg-white py-2.5 pl-3 pr-9 text-sm text-slate-900 focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-200"
-                aria-label="Filter by a specific date"
-              />
-              {dateFilter && (
-                <button
-                  type="button"
-                  onClick={onClearDateFilter}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
-                  aria-label="Clear date filter"
-                >
-                  <span className="text-lg leading-none" aria-hidden>
-                    ×
-                  </span>
-                </button>
-              )}
+            <div className="relative z-[1] min-w-0">
+              <label
+                htmlFor="date-filter"
+                className="mb-1.5 block text-xs font-medium text-slate-500"
+              >
+                Specific date
+              </label>
+              <div className="grid w-full min-w-0 grid-cols-[1fr_auto] items-center gap-2">
+                <input
+                  id="date-filter"
+                  type="date"
+                  value={dateFilter}
+                  onChange={(e) => onDateFilterChange(e.target.value)}
+                  className="box-border h-11 min-h-11 w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 [color-scheme:light] focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-200 [&::-webkit-datetime-edit-fields-wrapper]:p-0 [&::-webkit-datetime-edit-text]:p-0 [&::-webkit-datetime-edit]:m-0 [&::-webkit-datetime-edit]:p-0"
+                  aria-label="Filter by a specific date"
+                />
+                {dateFilter ? (
+                  <button
+                    type="button"
+                    onClick={onClearDateFilter}
+                    className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-50 hover:text-slate-700 focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-200"
+                    aria-label="Clear date filter"
+                  >
+                    <LuX className="h-4 w-4" aria-hidden />
+                  </button>
+                ) : null}
+              </div>
             </div>
           </div>
 

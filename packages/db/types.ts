@@ -17,6 +17,8 @@ export const BOOKING_STATUSES = [
   { value: 'completed', label: 'Completed' },
   { value: 'emergency', label: 'Emergency' },
   { value: 'reschedule', label: 'Reschedule' },
+  { value: 'no-show', label: 'No-show' },
+  { value: 'deleted', label: 'Deleted' },
 ] as const;
 
 export type BookingStatus = (typeof BOOKING_STATUSES)[number]['value'];
@@ -27,6 +29,7 @@ export const BOOKING_SORT_OPTIONS = [
   { value: 'upcoming', label: 'Upcoming' },
   { value: 'past', label: 'Past' },
   { value: 'new', label: 'New' },
+  { value: 'service_provider', label: 'Service provider' },
 ] as const;
 
 export type BookingSortOption = (typeof BOOKING_SORT_OPTIONS)[number]['value'];

@@ -1,7 +1,13 @@
 "use client";
 import React, { useState, useEffect } from 'react';
 import { Pagination, usePagination } from '@app/ui';
-import type { Workspace } from '@app/db';
+import {
+  type SuperadminCreatableUserRole,
+  type Workspace,
+  USER_METADATA_ROLE_FILTER_OPTIONS,
+  SUPERADMIN_CREATABLE_USER_ROLES,
+  formatRoleLabel,
+} from '@app/db';
 import { UserTableSkeleton } from '@/src/components/Users/UserTableSkeleton';
 
 interface User {
@@ -29,7 +35,7 @@ const UsersPage: React.FC = () => {
     email: '',
     password: '',
     name: '',
-    role: 'customer' as 'superadmin' | 'workspace_admin' | 'customer',
+    role: 'customer' as SuperadminCreatableUserRole,
     workspace_id: '',
   });
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
@@ -111,7 +117,7 @@ const UsersPage: React.FC = () => {
       email: user.email,
       password: '', // Don't pre-fill password
       name: user.name || '',
-      role: (user.role as 'superadmin' | 'workspace_admin' | 'customer') || 'customer',
+      role: (user.role as SuperadminCreatableUserRole) || 'customer',
       workspace_id: user.workspace_id || '',
     });
     setFormErrors({});
@@ -278,14 +284,9 @@ const UsersPage: React.FC = () => {
     return `${namePart} (id: ${workspaceId})`;
   };
 
-  // Format role for display
-  const formatRole = (role: string | null): string => {
-    if (!role) return '-';
-    return role
-      .split('_')
-      .map(word => word.charAt(0).toUpperCase() + word.slice(1))
-      .join(' ');
-  };
+  // Format role for display (labels aligned with workspace app / @app/db)
+  const formatRole = (role: string | null): string =>
+    role ? formatRoleLabel(role) : '-';
 
   // Filter users based on filter criteria
   const filteredUsers = users.filter((user) => {
@@ -382,9 +383,11 @@ const UsersPage: React.FC = () => {
                 className="w-full h-9 rounded-md border border-slate-200 bg-white px-3 text-xs sm:text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
               >
                 <option value="">All Roles</option>
-                <option value="superadmin">Superadmin</option>
-                <option value="workspace_admin">Workspace Admin</option>
-                <option value="customer">Customer</option>
+                {USER_METADATA_ROLE_FILTER_OPTIONS.map(({ value, label }) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
               </select>
             </div>
 
@@ -637,21 +640,25 @@ const UsersPage: React.FC = () => {
                   <select
                     value={formData.role}
                     onChange={(e) => {
-                      const newRole = e.target.value as 'superadmin' | 'workspace_admin' | 'customer';
-                      setFormData({ 
-                        ...formData, 
+                      const newRole = e.target.value as SuperadminCreatableUserRole;
+                      setFormData({
+                        ...formData,
                         role: newRole,
-                        // Clear workspace_id only if role is superadmin
-                        workspace_id: (newRole === 'customer' || newRole === 'workspace_admin') ? formData.workspace_id : ''
+                        workspace_id:
+                          newRole === 'customer' || newRole === 'workspace_admin'
+                            ? formData.workspace_id
+                            : '',
                       });
                     }}
                     className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 ${
                       formErrors.role ? 'border-red-500' : 'border-slate-300'
                     }`}
                   >
-                    <option value="superadmin">Superadmin</option>
-                    <option value="workspace_admin">Workspace Admin</option>
-                    <option value="customer">Customer</option>
+                    {SUPERADMIN_CREATABLE_USER_ROLES.map((value) => (
+                      <option key={value} value={value}>
+                        {formatRoleLabel(value)}
+                      </option>
+                    ))}
                   </select>
                   {formErrors.role && (
                     <p className="mt-1 text-sm text-red-600">{formErrors.role}</p>

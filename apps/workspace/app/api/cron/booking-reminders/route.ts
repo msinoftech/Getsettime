@@ -4,6 +4,10 @@ import { isValidPhone, toE164, sendSMS } from '@/lib/twilio-sms';
 import { sendReminderEmail, sendFollowUpEmail } from '@/lib/email-service';
 import { getServerAppOrigin } from '@/lib/request-site-origin';
 import { post_booking_whatsapp_notification } from '@/lib/post_booking_whatsapp_notification';
+import {
+  type workspace_notifications_settings,
+  is_whatsapp_user_enabled,
+} from '@/lib/workspace-notification-flags';
 
 const BATCH_WINDOW_MINUTES = 15;
 const SMS_REMINDER_MINUTES = 60;
@@ -14,7 +18,7 @@ interface NotificationSettings {
   'sms-reminder'?: boolean;
   'post-meeting-follow-up'?: boolean;
   'auto-confirm-booking'?: boolean;
-  /** Workspace Settings → Notifications → WhatsApp */
+  /** Workspace Settings → Notifications → WhatsApp to user (1h reminders) */
   'whatsapp-notifications'?: boolean;
 }
 
@@ -104,15 +108,17 @@ async function getWorkspaceNotificationSettings(
     .eq('workspace_id', workspaceId)
     .single();
 
-  const notifications = (data?.settings as Record<string, unknown>)?.notifications as
-    | (NotificationSettings & { whatsapp?: boolean })
-    | undefined;
+  const notifications = (data?.settings as Record<string, unknown>)
+    ?.notifications as Record<string, unknown> | undefined;
 
   return {
-    'email-reminder': notifications?.['email-reminder'] ?? true,
-    'sms-reminder': notifications?.['sms-reminder'] ?? true,
-    'post-meeting-follow-up': notifications?.['post-meeting-follow-up'] ?? true,
-    'whatsapp-notifications': notifications?.whatsapp === true,
+    'email-reminder': (notifications?.['email-reminder'] as boolean | undefined) ?? true,
+    'sms-reminder': (notifications?.['sms-reminder'] as boolean | undefined) ?? true,
+    'post-meeting-follow-up':
+      (notifications?.['post-meeting-follow-up'] as boolean | undefined) ?? true,
+    'whatsapp-notifications': is_whatsapp_user_enabled(
+      notifications as workspace_notifications_settings | undefined,
+    ),
   };
 }
 

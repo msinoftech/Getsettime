@@ -6,6 +6,10 @@ import {
   resolve_provider_notification_contact,
 } from '@/lib/booking_service_provider_phone';
 import { post_booking_whatsapp_notification } from '@/lib/post_booking_whatsapp_notification';
+import {
+  is_whatsapp_admin_enabled,
+  type workspace_notifications_settings,
+} from '@/lib/workspace-notification-flags';
 
 const NON_CANCELLABLE_STATUSES = ['cancelled', 'completed'];
 
@@ -132,7 +136,11 @@ export async function POST(
         .eq('workspace_id', booking.workspace_id)
         .single();
 
-      const whatsappEnabled = configData?.settings?.notifications?.whatsapp === true;
+      const notifications_settings =
+        configData?.settings?.notifications as
+          | workspace_notifications_settings
+          | undefined;
+      const whatsapp_admin = is_whatsapp_admin_enabled(notifications_settings);
 
       let workspaceSlug = '';
       try {
@@ -144,7 +152,7 @@ export async function POST(
         workspaceSlug = ws?.slug || '';
       } catch { /* non-blocking */ }
 
-      if (booking.invitee_phone && whatsappEnabled) {
+      if (booking.invitee_phone && whatsapp_admin) {
         let admin_whatsapp_phones: string[] = [];
         try {
           admin_whatsapp_phones = await admin_whatsapp_phones_for_booking(

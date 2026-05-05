@@ -1,15 +1,7 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { AlertModal } from "@/src/components/ui/AlertModal";
-import { ConfirmModal } from "@/src/components/ui/ConfirmModal";
-
-interface Rule {
-  id: number;
-  condition: string;
-  timezone: string;
-  target: string;
-}
 
 /*
 TEMP DISABLED: Services intake support
@@ -33,22 +25,75 @@ interface CustomField {
   placeholder?: string;
 }
 
+type DefaultIntakeFieldKey = "name" | "email" | "phone" | "file_upload" | "additional_description";
+type FieldIcon = "user" | "mail" | "phone" | "upload" | "message" | "file";
+
+const DEFAULT_INTAKE_FIELD_META: Array<{
+  key: DefaultIntakeFieldKey;
+  label: string;
+  description: string;
+  icon: FieldIcon;
+}> = [
+  { key: "name", label: "Name", description: "Collect invitee's full name", icon: "user" },
+  { key: "email", label: "Email", description: "Collect invitee's email address", icon: "mail" },
+  { key: "phone", label: "Phone", description: "Collect invitee's phone number", icon: "phone" },
+  { key: "file_upload", label: "File Upload", description: "Allow invitees to upload a file, PDF, or image", icon: "upload" },
+  { key: "additional_description", label: "Additional Description", description: "Collect notes, symptoms, requests, or extra details", icon: "message" },
+];
+
+type IconName = FieldIcon | "search" | "plus" | "save" | "trash" | "edit" | "sparkles" | "grip" | "clipboard";
+
+function Icon({ name, className = "h-5 w-5" }: { name: IconName; className?: string }) {
+  const common = {
+    className,
+    viewBox: "0 0 24 24" as const,
+    fill: "none" as const,
+    stroke: "currentColor",
+    strokeWidth: 2,
+    strokeLinecap: "round" as const,
+    strokeLinejoin: "round" as const,
+  };
+
+  if (name === "search") return <svg {...common}><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>;
+  if (name === "plus") return <svg {...common}><path d="M12 5v14" /><path d="M5 12h14" /></svg>;
+  if (name === "mail") return <svg {...common}><path d="M4 6h16v12H4z" /><path d="m4 7 8 6 8-6" /></svg>;
+  if (name === "phone") return <svg {...common}><path d="M22 16.92v3a2 2 0 0 1-2.18 2A19.7 19.7 0 0 1 3.1 5.18 2 2 0 0 1 5.1 3h3a2 2 0 0 1 2 1.72c.12.9.32 1.77.6 2.6a2 2 0 0 1-.45 2.11L9 10.7a16 16 0 0 0 4.3 4.3l1.27-1.25a2 2 0 0 1 2.11-.45c.83.28 1.7.48 2.6.6A2 2 0 0 1 22 16.92Z" /></svg>;
+  if (name === "upload") return <svg {...common}><path d="M12 15V3" /><path d="m7 8 5-5 5 5" /><path d="M20 16.5V19a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-2.5" /></svg>;
+  if (name === "message") return <svg {...common}><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4Z" /><path d="M8 9h8" /><path d="M8 13h5" /></svg>;
+  if (name === "file") return <svg {...common}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" /><path d="M14 2v6h6" /><path d="M8 13h8" /><path d="M8 17h5" /></svg>;
+  if (name === "save") return <svg {...common}><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z" /><path d="M17 21v-8H7v8" /><path d="M7 3v5h8" /></svg>;
+  if (name === "trash") return <svg {...common}><path d="M3 6h18" /><path d="M8 6V4h8v2" /><path d="M19 6l-1 14H6L5 6" /></svg>;
+  if (name === "edit") return <svg {...common}><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5Z" /></svg>;
+  if (name === "sparkles") return <svg {...common}><path d="M12 3l1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5L12 3Z" /><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8L19 15Z" /></svg>;
+  if (name === "grip") return <svg {...common}><path d="M9 6h.01" /><path d="M15 6h.01" /><path d="M9 12h.01" /><path d="M15 12h.01" /><path d="M9 18h.01" /><path d="M15 18h.01" /></svg>;
+  if (name === "clipboard") return <svg {...common}><path d="M9 4h6a2 2 0 0 1 2 2v1H7V6a2 2 0 0 1 2-2Z" /><path d="M7 6H5a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-2" /><path d="M8 13h8" /><path d="M8 17h5" /></svg>;
+
+  return <svg {...common}><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /></svg>;
+}
+
+function fieldTypeLabel(fieldType: CustomField["field_type"]): string {
+  const labels: Record<CustomField["field_type"], string> = {
+    text: "Text",
+    textarea: "Text area",
+    number: "Number",
+    email: "Email",
+    tel: "Phone",
+    url: "URL",
+  };
+  return labels[fieldType];
+}
+
+const CUSTOM_FIELD_TYPE_OPTIONS: Array<{ value: CustomField["field_type"]; label: string }> = [
+  { value: "text", label: "Text (Single Line)" },
+  { value: "textarea", label: "Text Area (Multiple Lines)" },
+  { value: "number", label: "Number" },
+  { value: "email", label: "Email" },
+  { value: "tel", label: "Phone" },
+  { value: "url", label: "URL" },
+];
+
 export default function RoutingForm({ dark = false }) {
-  const [rules, setRules] = useState<Rule[]>([
-    { id: 1, condition: "Consultation", timezone: "IST", target: "Deep/Consult" },
-    { id: 2, condition: "Demo Call", timezone: "PST", target: "John/Demo" },
-    { id: 3, condition: "Follow-up", timezone: "EST", target: "Amy/FollowUp" },
-  ]);
-
-  const [showRuleForm, setShowRuleForm] = useState(false);
-  const [editingRule, setEditingRule] = useState<Rule | null>(null);
-  const [ruleFormData, setRuleFormData] = useState({
-    condition: "",
-    timezone: "",
-    target: "",
-  });
-
-  const [showIntakeForm, setShowIntakeForm] = useState(false);
+  const [fieldSearch, setFieldSearch] = useState("");
   const [intakeFormSettings, setIntakeFormSettings] = useState({
     name: true,
     email: true,
@@ -75,9 +120,11 @@ export default function RoutingForm({ dark = false }) {
     placeholder: '',
   });
 
+  const [newCustomLabel, setNewCustomLabel] = useState("");
+  const [newCustomFieldType, setNewCustomFieldType] = useState<CustomField["field_type"]>("text");
+
   const [loading, setLoading] = useState(false);
   const [alertMessage, setAlertMessage] = useState<string | null>(null);
-  const [deleteRuleId, setDeleteRuleId] = useState<number | null>(null);
 
   // Fetch settings on mount
   useEffect(() => {
@@ -146,56 +193,6 @@ export default function RoutingForm({ dark = false }) {
     }
   };
 
-  const handleNewRule = () => {
-    setEditingRule(null);
-    setRuleFormData({ condition: "", timezone: "", target: "" });
-    setShowRuleForm(true);
-  };
-
-  const handleEditRule = (rule: Rule) => {
-    setEditingRule(rule);
-    setRuleFormData({
-      condition: rule.condition,
-      timezone: rule.timezone,
-      target: rule.target,
-    });
-    setShowRuleForm(true);
-  };
-
-  const handleRuleFormCancel = () => {
-    setShowRuleForm(false);
-    setEditingRule(null);
-    setRuleFormData({ condition: "", timezone: "", target: "" });
-  };
-
-  const handleRuleFormSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (editingRule) {
-      // Update existing rule
-      setRules(rules.map((rule) => 
-        rule.id === editingRule.id 
-          ? { ...editingRule, ...ruleFormData }
-          : rule
-      ));
-    } else {
-      // Create new rule
-      const newRule: Rule = {
-        id: Math.max(...rules.map(r => r.id), 0) + 1,
-        ...ruleFormData,
-      };
-      setRules([...rules, newRule]);
-    }
-    handleRuleFormCancel();
-  };
-
-  const handleOpenIntakeForm = () => {
-    setShowIntakeForm(true);
-  };
-
-  const handleIntakeFormCancel = () => {
-    setShowIntakeForm(false);
-  };
-
   const handleIntakeFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -222,7 +219,6 @@ export default function RoutingForm({ dark = false }) {
 
       if (response.ok) {
         setAlertMessage('Intake form settings saved successfully!');
-        handleIntakeFormCancel();
       } else {
         const errorData = await response.json();
         setAlertMessage(`Error: ${errorData.error || 'Failed to save settings'}`);
@@ -253,27 +249,6 @@ export default function RoutingForm({ dark = false }) {
   };
   */
 
-  const handleDeleteRuleClick = (id: number) => setDeleteRuleId(id);
-
-  const handleDeleteRuleConfirm = () => {
-    if (deleteRuleId !== null) {
-      setRules(rules.filter((rule) => rule.id !== deleteRuleId));
-      setDeleteRuleId(null);
-    }
-  };
-
-  const handleOpenCustomFieldForm = () => {
-    setEditingCustomField(null);
-    setCustomFieldFormData({
-      id: '',
-      label: '',
-      field_type: 'text',
-      required: false,
-      placeholder: '',
-    });
-    setShowCustomFieldForm(true);
-  };
-
   const handleEditCustomField = (field: CustomField) => {
     setEditingCustomField(field);
     setCustomFieldFormData({
@@ -300,31 +275,46 @@ export default function RoutingForm({ dark = false }) {
 
   const handleCustomFieldFormSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (editingCustomField) {
-      // Update existing field - sync type for consumers that use field.type
-      const updated: CustomField = {
-        ...customFieldFormData,
-        type: customFieldFormData.field_type,
-      };
-      setIntakeFormSettings({
-        ...intakeFormSettings,
-        custom_fields: intakeFormSettings.custom_fields.map((field) =>
-          field.id === editingCustomField.id ? updated : field
-        ),
-      });
-    } else {
-      // Create new field - sync type so getCustomFieldType(field) finds it
-      const newField: CustomField = {
-        ...customFieldFormData,
-        id: Date.now().toString(),
-        type: customFieldFormData.field_type,
-      };
-      setIntakeFormSettings({
-        ...intakeFormSettings,
-        custom_fields: [...intakeFormSettings.custom_fields, newField],
-      });
-    }
+    if (!editingCustomField) return;
+    const updated: CustomField = {
+      ...customFieldFormData,
+      type: customFieldFormData.field_type,
+    };
+    setIntakeFormSettings((prev) => ({
+      ...prev,
+      custom_fields: prev.custom_fields.map((field) =>
+        field.id === editingCustomField.id ? updated : field
+      ),
+    }));
     handleCustomFieldFormCancel();
+  };
+
+  const addCustomFieldInline = () => {
+    const label = newCustomLabel.trim();
+    if (!label) return;
+    const newField: CustomField = {
+      id: Date.now().toString(),
+      label,
+      field_type: newCustomFieldType,
+      type: newCustomFieldType,
+      required: false,
+      placeholder: "",
+    };
+    setIntakeFormSettings((prev) => ({
+      ...prev,
+      custom_fields: [...prev.custom_fields, newField],
+    }));
+    setNewCustomLabel("");
+    setNewCustomFieldType("text");
+  };
+
+  const toggleCustomFieldRequired = (id: string) => {
+    setIntakeFormSettings((prev) => ({
+      ...prev,
+      custom_fields: prev.custom_fields.map((field) =>
+        field.id === id ? { ...field, required: !field.required } : field
+      ),
+    }));
   };
 
   const handleRemoveCustomField = (id: string) => {
@@ -334,429 +324,336 @@ export default function RoutingForm({ dark = false }) {
     });
   };
 
+  const filteredDefaultFieldMeta = useMemo(() => {
+    const keyword = fieldSearch.trim().toLowerCase();
+    if (!keyword) return DEFAULT_INTAKE_FIELD_META;
+    return DEFAULT_INTAKE_FIELD_META.filter(
+      (row) =>
+        row.label.toLowerCase().includes(keyword) ||
+        row.description.toLowerCase().includes(keyword)
+    );
+  }, [fieldSearch]);
+
+  const enabledDefaultCount = useMemo(
+    () =>
+      [
+        intakeFormSettings.name,
+        intakeFormSettings.email,
+        intakeFormSettings.phone,
+        intakeFormSettings.file_upload,
+        intakeFormSettings.additional_description,
+      ].filter(Boolean).length,
+    [
+      intakeFormSettings.name,
+      intakeFormSettings.email,
+      intakeFormSettings.phone,
+      intakeFormSettings.file_upload,
+      intakeFormSettings.additional_description,
+    ]
+  );
+
+  const enabledFieldsCount = enabledDefaultCount + intakeFormSettings.custom_fields.length;
+  const requiredFieldsCount = useMemo(
+    () => intakeFormSettings.custom_fields.filter((f) => f.required).length,
+    [intakeFormSettings.custom_fields]
+  );
+
+  const toggleDefaultIntakeField = (key: DefaultIntakeFieldKey) => {
+    setIntakeFormSettings((prev) => {
+      switch (key) {
+        case "name":
+          return { ...prev, name: !prev.name };
+        case "email":
+          return { ...prev, email: !prev.email };
+        case "phone":
+          return { ...prev, phone: !prev.phone };
+        case "file_upload":
+          return { ...prev, file_upload: !prev.file_upload };
+        case "additional_description":
+          return { ...prev, additional_description: !prev.additional_description };
+        default:
+          return prev;
+      }
+    });
+  };
+
+  const defaultFieldEnabled = (key: DefaultIntakeFieldKey): boolean => {
+    switch (key) {
+      case "name":
+        return intakeFormSettings.name;
+      case "email":
+        return intakeFormSettings.email;
+      case "phone":
+        return intakeFormSettings.phone;
+      case "file_upload":
+        return intakeFormSettings.file_upload;
+      case "additional_description":
+        return intakeFormSettings.additional_description;
+      default:
+        return false;
+    }
+  };
+
   return (
-    <section className="space-y-6 rounded-xl mr-auto">
-      <header className="flex flex-wrap justify-between relative gap-3">
-        <div className="text-sm text-slate-500">
-          <h3 className="text-xl font-semibold text-slate-800">Routing & Forms</h3>
-          <p className="text-xs text-slate-500">Configure intake form for your booking events.</p>
-        </div>
-        <button onClick={handleNewRule} className="cursor-pointer text-sm font-bold text-indigo-600 transition">+ New Rule</button>
-      </header>
-
-      {/* Rule Form Modal */}
-      {showRuleForm && (
-        <div className={`fixed inset-0 z-40 flex m-0 justify-end transition-opacity duration-200 ${showRuleForm ? 'pointer-events-auto opacity-100' : 'pointer-events-none opacity-0'}`}>
-          <div className={`absolute inset-0 bg-black/40 transition-opacity duration-300 ${showRuleForm ? 'opacity-100' : 'opacity-0'}`}  aria-hidden="true"  onClick={handleRuleFormCancel}/>
-          <section className={`relative h-full w-full max-w-xl transform bg-white shadow-2xl transition-transform duration-300 ${showRuleForm ? 'translate-x-0' : 'translate-x-full'}`}>
-            <div className={`flex items-center justify-between border-b border-gray-200 px-6 py-4`}>
+    <div className="min-h-screen bg-slate-50 px-4 py-6 text-slate-900 sm:px-6 lg:px-8">
+      <div className="mx-auto max-w-7xl space-y-6">
+        <div className="overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-sm">
+          <div className="relative p-6 sm:p-7">
+            <div className="absolute right-0 top-0 h-36 w-36 rounded-bl-full bg-blue-50" />
+            <div className="relative flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
               <div>
-                <h2 className={`text-lg font-semibold text-gray-800`}>{editingRule ? "Edit Rule" : "Create New Rule"}</h2>
-              </div>
-              <button className={`rounded-full p-2 text-gray-500 hover:bg-gray-100 transition`} aria-label="Close form" onClick={handleRuleFormCancel}>
-                <svg className="h-5 w-5" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" viewBox="0 0 24 24">
-                  <path d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-            <div className="h-[calc(100%-4rem)] overflow-y-auto p-6">
-              <form onSubmit={handleRuleFormSubmit} className="space-y-4 p-5 rounded-xl border border-slate-200 bg-gray-50/70">
-                <div className={`grid md:grid-cols-2 gap-3`}>
-                  <div>
-                    <label className={`block text-sm font-medium mb-2 text-slate-700`}>Condition <span className="text-red-500">*</span></label>
-                    <input
-                      type="text"
-                      value={ruleFormData.condition}
-                      onChange={(e) => setRuleFormData({ ...ruleFormData, condition: e.target.value })}
-                      placeholder="e.g., Consultation, Demo Call"
-                      className={`w-full px-4 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-indigo-500 outline-none`}
-                      required
-                    />
-                  </div>
-
-                  <div>
-                    <label className={`block text-sm font-medium mb-2 text-slate-700`}>Timezone <span className="text-red-500">*</span></label>
-                    <input
-                      type="text"
-                      value={ruleFormData.timezone}
-                      onChange={(e) => setRuleFormData({ ...ruleFormData, timezone: e.target.value })}
-                      placeholder="e.g., IST, PST, EST"
-                      className={`w-full px-4 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-indigo-500 outline-none`}
-                      required
-                    />
-                  </div>
-
-                  <div className="md:col-span-2">
-                    <label className={`block text-sm font-medium mb-2 text-slate-700`}>Target <span className="text-red-500">*</span></label>
-                    <input
-                      type="text"
-                      value={ruleFormData.target}
-                      onChange={(e) => setRuleFormData({ ...ruleFormData, target: e.target.value })}
-                      placeholder="e.g., Deep/Consult, John/Demo"
-                      className={`w-full px-4 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-indigo-500 outline-none`}
-                      required
-                    />
-                  </div>
+                <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-blue-100 bg-blue-50 px-3 py-1 text-xs font-bold text-blue-700">
+                  <Icon name="sparkles" className="h-3.5 w-3.5" />
+                  Booking Flow Setup
                 </div>
-
-                <div className="flex gap-3 justify-end">
-                  <button type="submit" className="px-4 py-2 rounded-xl text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700 transition">{editingRule ? "Update Rule" : "Create Rule"}</button>
-                </div>
-              </form>
-            </div>
-          </section>
-        </div>
-      )}
-
-      {/* Intake Form Section */}
-      <div className="rounded-2xl rounded-xl bg-white shadow-md p-6">
-        <div className="space-y-4">
-          <div className="font-medium text-base">Intake Form Settings</div>
-          <p className={`text-sm ${dark ? "text-white/70" : "text-slate-600"}`}>Configure which fields to show in your booking intake form.</p>
-          <button onClick={handleOpenIntakeForm} className="px-4 py-2 rounded-xl text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700 transition">Configure Intake Form</button>
-        </div>
-      </div>
-
-      {/* Intake Form Modal */}
-      {showIntakeForm && (
-        <div className={`fixed inset-0 z-40 flex m-0 justify-end transition-opacity duration-200 ${showIntakeForm ? 'pointer-events-auto opacity-100' : 'pointer-events-none opacity-0'}`}>
-          <div className={`absolute inset-0 bg-black/40 transition-opacity duration-300 ${showIntakeForm ? 'opacity-100' : 'opacity-0'}`}  aria-hidden="true"  onClick={handleIntakeFormCancel}/>
-          <section className={`relative h-full w-full max-w-xl transform bg-white shadow-2xl transition-transform duration-300 ${showIntakeForm ? 'translate-x-0' : 'translate-x-full'}`}>
-            <div className={`flex items-center justify-between border-b border-gray-200 px-6 py-4`}>
-              <div>
-                <h2 className={`text-lg font-semibold text-gray-800`}>Intake Form Settings</h2>
-                <p className="text-xs text-slate-500 mt-1">Configure which fields to collect from invitees</p>
+                <h1 className="text-2xl font-black tracking-tight text-slate-950 sm:text-3xl">
+                  Routing & Forms
+                </h1>
+                <p
+                  className={`mt-2 max-w-2xl text-sm leading-6 ${dark ? "text-white/70" : "text-slate-500"}`}
+                >
+                  Configure intake questions, file collection, required fields, and booking form visibility for your workspace.
+                </p>
               </div>
-              <button className={`rounded-full p-2 text-gray-500 hover:bg-gray-100 transition`} aria-label="Close form" onClick={handleIntakeFormCancel}>
-                <svg className="h-5 w-5" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" viewBox="0 0 24 24">
-                  <path d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
+
+              <div className="relative w-full lg:w-80">
+                <Icon name="search" className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                <input
+                  value={fieldSearch}
+                  onChange={(event) => setFieldSearch(event.target.value)}
+                  placeholder="Search fields..."
+                  className="h-12 w-full rounded-2xl border border-slate-200 bg-slate-50 pl-11 pr-4 text-sm outline-none transition focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100"
+                  type="search"
+                  autoComplete="off"
+                />
+              </div>
             </div>
-            <div className="h-[calc(100%-4rem)] overflow-y-auto p-6">
-              <form onSubmit={handleIntakeFormSubmit} className="space-y-4 p-5 rounded-xl border border-slate-200 bg-gray-50/70">
-                <div className="space-y-3">
-                  {/* Name Field Toggle */}
-                  <div className="flex items-center justify-between p-3 rounded-lg border border-slate-200 bg-white">
-                    <div>
-                      <label className="text-sm font-medium text-slate-700">Name</label>
-                      <p className="text-xs text-slate-500">Collect invitee's full name</p>
-                    </div>
-                    <label className="relative inline-flex items-center cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={intakeFormSettings.name}
-                        onChange={(e) => setIntakeFormSettings({ ...intakeFormSettings, name: e.target.checked })}
-                        className="sr-only peer"
-                      />
-                      <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-300 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
-                    </label>
-                  </div>
+          </div>
+        </div>
 
-                  {/* Email Field Toggle */}
-                  <div className="flex items-center justify-between p-3 rounded-lg border border-slate-200 bg-white">
-                    <div>
-                      <label className="text-sm font-medium text-slate-700">Email</label>
-                      <p className="text-xs text-slate-500">Collect invitee's email address</p>
-                    </div>
-                    <label className="relative inline-flex items-center cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={intakeFormSettings.email}
-                        onChange={(e) => setIntakeFormSettings({ ...intakeFormSettings, email: e.target.checked })}
-                        className="sr-only peer"
-                      />
-                      <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-300 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
-                    </label>
-                  </div>
+        <div className="grid gap-4 md:grid-cols-3">
+          <div className="rounded-3xl border border-blue-100 bg-blue-50 p-5">
+            <p className="text-sm font-bold text-blue-700">Active Fields</p>
+            <p className="mt-2 text-3xl font-black text-blue-950">{enabledFieldsCount}</p>
+          </div>
+          <div className="rounded-3xl border border-emerald-100 bg-emerald-50 p-5">
+            <p className="text-sm font-bold text-emerald-700">Required Fields</p>
+            <p className="mt-2 text-3xl font-black text-emerald-950">{requiredFieldsCount}</p>
+          </div>
+          <div className="rounded-3xl border border-violet-100 bg-violet-50 p-5">
+            <p className="text-sm font-bold text-violet-700">Custom Fields</p>
+            <p className="mt-2 text-3xl font-black text-violet-950">{intakeFormSettings.custom_fields.length}</p>
+          </div>
+        </div>
 
-                  {/* Phone Field Toggle */}
-                  <div className="flex items-center justify-between p-3 rounded-lg border border-slate-200 bg-white">
-                    <div>
-                      <label className="text-sm font-medium text-slate-700">Phone</label>
-                      <p className="text-xs text-slate-500">Collect invitee's phone number</p>
-                    </div>
-                    <label className="relative inline-flex items-center cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={intakeFormSettings.phone}
-                        onChange={(e) => setIntakeFormSettings({ ...intakeFormSettings, phone: e.target.checked })}
-                        className="sr-only peer"
-                      />
-                      <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-300 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
-                    </label>
-                  </div>
+        <div className="grid gap-6 lg:grid-cols-[1.15fr_0.85fr]">
+          <form onSubmit={handleIntakeFormSubmit} className="space-y-6">
+            <div className="rounded-[32px] border border-slate-200 bg-white p-6 shadow-sm sm:p-7">
+              <div className="flex items-start gap-4">
+                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-600 text-white shadow-lg shadow-blue-200">
+                  <Icon name="clipboard" className="h-6 w-6" />
+                </div>
+                <div>
+                  <h2 className="text-xl font-black text-slate-950">Default Intake Fields</h2>
+                  <p className="mt-1 text-sm leading-6 text-slate-500">
+                    Enable or disable the default fields shown during appointment booking.
+                  </p>
+                </div>
+              </div>
 
-                  {/* File Upload Field Toggle */}
-                  <div className="flex items-center justify-between p-3 rounded-lg border border-slate-200 bg-white">
-                    <div>
-                      <label className="text-sm font-medium text-slate-700">File Upload</label>
-                      <p className="text-xs text-slate-500">Allow invitees to upload a file (PDF, image)</p>
-                    </div>
-                    <label className="relative inline-flex items-center cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={intakeFormSettings.file_upload}
-                        onChange={(e) => setIntakeFormSettings({ ...intakeFormSettings, file_upload: e.target.checked })}
-                        className="sr-only peer"
-                      />
-                      <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-300 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
-                    </label>
-                  </div>
-
-                  {/*
-                  TEMP DISABLED: Services Field Toggle
-                  <div className="p-3 rounded-lg border border-slate-200 bg-white">
-                    <div className="flex items-center justify-between mb-3">
-                      <div>
-                        <label className="text-sm font-medium text-slate-700">Services</label>
-                        <p className="text-xs text-slate-500">Allow invitees to select services</p>
+              <div className="mt-7 space-y-3">
+                {filteredDefaultFieldMeta.map((field) => {
+                  const enabled = defaultFieldEnabled(field.key);
+                  return (
+                    <div
+                      key={field.key}
+                      className="flex items-center gap-4 rounded-3xl border border-slate-200 bg-slate-50 p-4"
+                    >
+                      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-white text-blue-600 shadow-sm">
+                        <Icon name={field.icon} className="h-5 w-5" />
                       </div>
-                      <label className="relative inline-flex items-center cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={intakeFormSettings.services.enabled}
-                          onChange={(e) => setIntakeFormSettings({
-                            ...intakeFormSettings,
-                            services: { ...intakeFormSettings.services, enabled: e.target.checked }
-                          })}
-                          className="sr-only peer"
-                        />
-                        <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-300 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
-                      </label>
-                    </div>
-
-                    {intakeFormSettings.services.enabled && (
-                      <div className="mt-3 space-y-3">
-                        {services.length === 0 ? (
-                          <p className="text-xs text-slate-500 italic">No services available. Create services first.</p>
-                        ) : (
-                          <>
-                            <div className="space-y-2">
-                              <div className="flex items-center justify-between">
-                                <p className="text-xs font-medium text-slate-700">
-                                  Selected Services ({intakeFormSettings.services.allowed_service_ids.length})
-                                </p>
-                                <button
-                                  type="button"
-                                  onClick={() => setIntakeFormSettings({
-                                    ...intakeFormSettings,
-                                    services: {
-                                      ...intakeFormSettings.services,
-                                      allowed_service_ids: []
-                                    }
-                                  })}
-                                  className="text-xs text-red-600 hover:text-red-800 font-medium"
-                                >
-                                  Clear All
-                                </button>
-                              </div>
-                              <div className="flex flex-wrap gap-2">
-                                {services
-                                  .filter(service => intakeFormSettings.services.allowed_service_ids.includes(service.id))
-                                  .map((service) => (
-                                    <div
-                                      key={service.id}
-                                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-indigo-100 text-indigo-700 border border-indigo-300"
-                                    >
-                                      <span className="text-xs font-medium">{service.name}</span>
-                                      <button
-                                        type="button"
-                                        onClick={() => handleToggleService(service.id)}
-                                        className="hover:bg-indigo-200 rounded-full p-0.5 transition"
-                                        title="Remove service"
-                                      >
-                                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
-                                        </svg>
-                                      </button>
-                                    </div>
-                                  ))}
-                              </div>
-                            </div>
-
-                            <div className="space-y-2">
-                              <p className="text-xs font-medium text-slate-700">Add Services</p>
-                              <div className="relative">
-                                <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                                </svg>
-                                <input
-                                  type="text"
-                                  value={serviceSearch}
-                                  onChange={(e) => setServiceSearch(e.target.value)}
-                                  placeholder="Search services..."
-                                  className="w-full pl-9 pr-4 py-2 text-sm rounded-lg border border-slate-300 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none"
-                                />
-                                {serviceSearch && (
-                                  <button
-                                    type="button"
-                                    onClick={() => setServiceSearch("")}
-                                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-                                  >
-                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
-                                    </svg>
-                                  </button>
-                                )}
-                              </div>
-
-                              <div className="flex flex-wrap gap-2 min-h-[40px] p-2 rounded-lg border border-slate-200 bg-slate-50">
-                                {services
-                                  .filter(service =>
-                                    !intakeFormSettings.services.allowed_service_ids.includes(service.id) &&
-                                    (serviceSearch === "" || service.name.toLowerCase().includes(serviceSearch.toLowerCase()))
-                                  )
-                                  .map((service) => (
-                                    <button
-                                      key={service.id}
-                                      type="button"
-                                      onClick={() => handleToggleService(service.id)}
-                                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white text-slate-700 border border-slate-300 hover:border-indigo-400 hover:bg-indigo-50 hover:text-indigo-700 transition"
-                                      title={service.description || undefined}
-                                    >
-                                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" />
-                                      </svg>
-                                      <span className="text-xs font-medium">{service.name}</span>
-                                    </button>
-                                  ))}
-                                {services.filter(service =>
-                                  !intakeFormSettings.services.allowed_service_ids.includes(service.id) &&
-                                  (serviceSearch === "" || service.name.toLowerCase().includes(serviceSearch.toLowerCase()))
-                                ).length === 0 && (
-                                  <p className="text-xs text-slate-500 italic py-1">
-                                    {serviceSearch ? 'No services found' : 'All services added'}
-                                  </p>
-                                )}
-                              </div>
-                            </div>
-                          </>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                  */}
-
-                  {/* Additional Description Field Toggle */}
-                  <div className="flex flex-wrap gap-3 items-center justify-between p-3 rounded-lg border border-slate-200 bg-white">
-                    <div>
-                      <label className="text-sm font-medium text-slate-700">Additional Description</label>
-                      <p className="text-xs text-slate-500">Collect additional notes from invitees</p>
-                    </div>
-                    <label className="relative inline-flex items-center cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={intakeFormSettings.additional_description}
-                        onChange={(e) => setIntakeFormSettings({ ...intakeFormSettings, additional_description: e.target.checked })}
-                        className="sr-only peer"
-                      />
-                      <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-300 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
-                    </label>
-                  </div>
-
-                  {/* Custom Fields Section */}
-                  <div className="p-3 rounded-lg border border-slate-200 bg-white">
-                    <div className="flex flex-wrap gap-3 items-center justify-between mb-3">
-                      <div>
-                        <label className="text-sm font-medium text-slate-700">Custom Fields</label>
-                        <p className="text-xs text-slate-500">Add custom fields to collect additional information</p>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h3 className="font-black text-slate-800">{field.label}</h3>
+                        </div>
+                        <p className="mt-1 text-sm text-slate-500">{field.description}</p>
                       </div>
                       <button
                         type="button"
-                        onClick={handleOpenCustomFieldForm}
-                        className="px-3 py-1.5 rounded-lg text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-700 transition"
+                        onClick={() => toggleDefaultIntakeField(field.key)}
+                        aria-label={`Toggle ${field.label}`}
+                        aria-pressed={enabled}
+                        className={`relative h-8 w-14 shrink-0 rounded-full transition ${enabled ? "bg-blue-600" : "bg-slate-300"}`}
                       >
-                        + Add Field
+                        <span
+                          className={`absolute top-1 h-6 w-6 rounded-full bg-white shadow transition ${enabled ? "left-7" : "left-1"}`}
+                        />
                       </button>
                     </div>
+                  );
+                })}
+              </div>
+            </div>
 
-                    {intakeFormSettings.custom_fields.length > 0 && (
-                      <div className="mt-3 space-y-2">
-                        {intakeFormSettings.custom_fields.map((field) => (
-                          <div
-                            key={field.id}
-                            className="flex items-start justify-between p-3 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 transition"
-                          >
-                            <div className="flex-1">
-                              <div className="flex items-center gap-2">
-                                <span className="text-sm font-medium text-slate-700">{field.label}</span>
-                                {field.required && (
-                                  <span className="text-xs px-2 py-0.5 rounded-full bg-red-100 text-red-700">Required</span>
-                                )}
-                              </div>
-                              <div className="flex items-center gap-2 mt-1">
-                                <span className="text-xs text-slate-500">Type: {field.field_type}</span>
-                                {field.placeholder && (
-                                  <span className="text-xs text-slate-400">• Placeholder: {field.placeholder}</span>
-                                )}
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-1">
-                              <button
-                                type="button"
-                                onClick={() => handleEditCustomField(field)}
-                                className="ml-3 p-1.5 rounded-full text-indigo-600 hover:bg-indigo-100 transition"
-                                title="Edit field"
-                              >
-                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                                </svg>
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleRemoveCustomField(field.id)}
-                                className="p-1.5 rounded-full text-red-600 hover:bg-red-100 transition"
-                                title="Remove field"
-                              >
-                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                                </svg>
-                              </button>
-                            </div>
-                          </div>
-                        ))}
+            <div className="rounded-[32px] border border-slate-200 bg-white p-6 shadow-sm sm:p-7">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <h2 className="text-xl font-black text-slate-950">Custom Fields</h2>
+                  <p className="mt-1 text-sm leading-6 text-slate-500">
+                    Add extra questions such as patient ID, service notes, source, or preferred consultant.
+                  </p>
+                </div>
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="inline-flex h-11 items-center justify-center gap-2 rounded-2xl bg-blue-600 px-4 text-sm font-bold text-white shadow-lg shadow-blue-200 transition hover:bg-blue-700 disabled:opacity-50"
+                >
+                  <Icon name="save" className="h-4 w-4" />
+                  {loading ? "Saving..." : "Save Changes"}
+                </button>
+              </div>
+
+              <div className="mt-6 grid grid-cols-1 gap-3 md:grid-cols-[1fr_minmax(0,200px)_auto]">
+                <input
+                  type="text"
+                  value={newCustomLabel}
+                  onChange={(e) => setNewCustomLabel(e.target.value)}
+                  placeholder="Field name e.g. Patient ID"
+                  className="h-12 rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm outline-none transition focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100"
+                />
+                <select
+                  value={newCustomFieldType}
+                  onChange={(e) => setNewCustomFieldType(e.target.value as CustomField["field_type"])}
+                  className="h-12 min-w-0 rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm outline-none transition focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100"
+                >
+                  {CUSTOM_FIELD_TYPE_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={addCustomFieldInline}
+                  className="inline-flex h-12 items-center justify-center gap-2 rounded-2xl bg-blue-600 px-5 text-sm font-bold text-white shadow-lg shadow-blue-200 transition hover:bg-blue-700"
+                >
+                  <Icon name="plus" className="h-4 w-4" />
+                  Add Field
+                </button>
+              </div>
+
+              <div className="mt-6 space-y-3">
+                {intakeFormSettings.custom_fields.length === 0 ? (
+                  <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-8 text-center">
+                    <p className="text-sm font-semibold italic text-slate-500">No custom fields added yet</p>
+                  </div>
+                ) : (
+                  intakeFormSettings.custom_fields.map((field) => (
+                    <div
+                      key={field.id}
+                      className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4"
+                    >
+                      <Icon name="grip" className="h-4 w-4 shrink-0 text-slate-400" aria-hidden />
+                      <div className="min-w-0 flex-1">
+                        <h4 className="font-bold text-slate-800">{field.label}</h4>
+                        <p className="text-xs text-slate-500">{fieldTypeLabel(field.field_type)} field</p>
                       </div>
-                    )}
+                      <button
+                        type="button"
+                        onClick={() => toggleCustomFieldRequired(field.id)}
+                        className={`shrink-0 rounded-full px-3 py-1 text-xs font-bold transition ${field.required ? "bg-blue-100 text-blue-700" : "bg-slate-200 text-slate-600"}`}
+                        aria-label={
+                          field.required ? "Mark optional" : "Mark required"
+                        }
+                      >
+                        {field.required ? "Required" : "Optional"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleEditCustomField(field)}
+                        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-500 transition hover:text-blue-600"
+                        title="Edit field"
+                        aria-label="Edit custom field"
+                      >
+                        <Icon name="edit" className="h-4 w-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveCustomField(field.id)}
+                        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-red-100 bg-red-50 text-red-500 transition hover:bg-red-100"
+                        title="Remove field"
+                        aria-label="Delete custom field"
+                      >
+                        <Icon name="trash" className="h-4 w-4" />
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </form>
 
-                    {intakeFormSettings.custom_fields.length === 0 && (
-                      <p className="text-xs text-slate-500 italic text-center py-3">No custom fields added yet</p>
+          <div className="rounded-[32px] border border-slate-200 bg-white p-6 shadow-sm sm:p-7 lg:sticky lg:top-6 lg:self-start">
+            <div className="flex items-center gap-3">
+              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100 text-slate-700">
+                <Icon name="file" className="h-5 w-5" />
+              </div>
+              <div>
+                <h3 className="font-black text-slate-950">Live Form Preview</h3>
+                <p className="text-sm text-slate-500">Customer-visible fields</p>
+              </div>
+            </div>
+
+            <div className="mt-6 space-y-3">
+              {DEFAULT_INTAKE_FIELD_META.filter((row) => defaultFieldEnabled(row.key)).map((field) => (
+                <div
+                  key={field.key}
+                  className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4"
+                >
+                  <Icon name={field.icon} className="h-4 w-4 shrink-0 text-blue-600" />
+                  <span className="text-sm font-bold text-slate-700">{field.label}</span>
+                </div>
+              ))}
+
+              {intakeFormSettings.custom_fields.map((field) => (
+                <div
+                  key={field.id}
+                  className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4"
+                >
+                  <Icon name="file" className="h-4 w-4 shrink-0 text-violet-600" />
+                  <span className="text-sm font-bold text-slate-700">{field.label}</span>
+                  <div className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-2">
+                    {field.required && (
+                      <span className="rounded-full bg-blue-100 px-2 py-1 text-xs font-bold text-blue-700">
+                        Required
+                      </span>
                     )}
+                    <span className="rounded-full bg-slate-200 px-2 py-1 text-xs font-bold text-slate-600">
+                      {fieldTypeLabel(field.field_type)}
+                    </span>
                   </div>
                 </div>
-
-                <div className="flex gap-3 justify-end pt-4">
-                  <button
-                    type="button"
-                    onClick={handleIntakeFormCancel}
-                    className="px-4 py-2 rounded-xl text-sm font-medium bg-slate-200 text-slate-700 hover:bg-slate-300 transition"
-                    disabled={loading}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    className="px-4 py-2 rounded-xl text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700 transition disabled:opacity-50"
-                    disabled={loading}
-                  >
-                    {loading ? 'Saving...' : 'Save Settings'}
-                  </button>
-                </div>
-              </form>
+              ))}
             </div>
-          </section>
-        </div>
-      )}
 
-      {/* Custom Field Form Modal */}
-      {showCustomFieldForm && (
-        <div className={`fixed inset-0 z-50 flex items-center justify-center transition-opacity duration-200 ${showCustomFieldForm ? 'pointer-events-auto opacity-100' : 'pointer-events-none opacity-0'}`}>
+            <div className="mt-6 rounded-3xl border border-blue-100 bg-blue-50 p-5">
+              <p className="text-sm font-black text-blue-950">Booking form is ready</p>
+              <p className="mt-1 text-sm leading-6 text-blue-700">
+                These fields will appear before appointment confirmation and can be saved to booking details.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Edit Custom Field Modal */}
+        {showCustomFieldForm && editingCustomField && (
+        <div className={`fixed inset-0 z-50 flex items-center justify-center px-4 py-6 transition-opacity duration-200 ${showCustomFieldForm ? 'pointer-events-auto opacity-100' : 'pointer-events-none opacity-0'}`}>
           <div className={`absolute inset-0 bg-black/40 transition-opacity duration-300 ${showCustomFieldForm ? 'opacity-100' : 'opacity-0'}`} aria-hidden="true" onClick={handleCustomFieldFormCancel}/>
-          <section className={`relative max-w-7xl mx-auto transform bg-white rounded-2xl shadow-2xl transition-all duration-300 ${showCustomFieldForm ? 'scale-100 opacity-100' : 'scale-95 opacity-0'}`}>
+          <section className={`relative w-full max-w-3xl transform bg-white rounded-2xl shadow-2xl transition-all duration-300 ${showCustomFieldForm ? 'scale-100 opacity-100' : 'scale-95 opacity-0'}`}>
             <div className={`flex items-center justify-between border-b border-gray-200 px-6 py-4`}>
               <div>
-                <h2 className={`text-lg font-semibold text-gray-800`}>{editingCustomField ? "Edit Custom Field" : "Add Custom Field"}</h2>
-                <p className="text-xs text-slate-500 mt-1">{editingCustomField ? "Update field details" : "Create a new field to collect from invitees"}</p>
+                <h2 className={`text-lg font-semibold text-gray-800`}>Edit Custom Field</h2>
+                <p className="text-xs text-slate-500 mt-1">Update field details</p>
               </div>
               <button className={`rounded-full p-2 text-gray-500 hover:bg-gray-100 transition`} aria-label="Close form" onClick={handleCustomFieldFormCancel}>
                 <svg className="h-5 w-5" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" viewBox="0 0 24 24">
@@ -786,12 +683,11 @@ export default function RoutingForm({ dark = false }) {
                     className={`w-full px-4 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-indigo-500 outline-none`}
                     required
                   >
-                    <option value="text">Text (Single Line)</option>
-                    <option value="textarea">Text Area (Multiple Lines)</option>
-                    <option value="number">Number</option>
-                    <option value="email">Email</option>
-                    <option value="tel">Phone</option>
-                    <option value="url">URL</option>
+                    {CUSTOM_FIELD_TYPE_OPTIONS.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </option>
+                    ))}
                   </select>
                 </div>
 
@@ -831,7 +727,7 @@ export default function RoutingForm({ dark = false }) {
                     type="submit"
                     className="px-4 py-2 rounded-xl text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700 transition"
                   >
-                    {editingCustomField ? "Update Field" : "Add Field"}
+                    Update Field
                   </button>
                 </div>
               </form>
@@ -840,20 +736,10 @@ export default function RoutingForm({ dark = false }) {
         </div>
       )}
 
-      {deleteRuleId !== null && (
-        <ConfirmModal
-          title="Delete Rule"
-          message="Are you sure you want to delete this rule?"
-          confirmLabel="Delete"
-          variant="danger"
-          onConfirm={handleDeleteRuleConfirm}
-          onCancel={() => setDeleteRuleId(null)}
-        />
-      )}
-
       {alertMessage && (
         <AlertModal message={alertMessage} onClose={() => setAlertMessage(null)} />
       )}
-    </section>
+      </div>
+    </div>
   );
 }

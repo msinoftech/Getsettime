@@ -7,6 +7,8 @@ const STATUS_STYLES: Record<string, string> = {
   completed: 'bg-blue-100 text-blue-700',
   emergency: 'bg-orange-100 text-orange-700',
   reschedule: 'bg-red-100 text-red-700',
+  'no-show': 'bg-amber-100 text-amber-800',
+  deleted: 'bg-zinc-200 text-zinc-600',
 };
 
 const DEFAULT_STYLE = 'bg-red-100 text-red-700';

@@ -1,4 +1,5 @@
 import { SupabaseClient } from '@supabase/supabase-js';
+import { ROLE_SERVICE_PROVIDER } from '@/src/constants/roles';
 
 export function getDefaultConfigurationSettings(workspaceName: string) {
   return {
@@ -155,7 +156,9 @@ export async function updateUserWorkspaceMetadata(
         ...additionalMetadata,
         workspace_id: workspaceId,
         role: 'workspace_admin',
-        ...(isNewWorkspace ? { is_workspace_owner: true } : {}),
+        ...(isNewWorkspace
+          ? { is_workspace_owner: true, additional_roles: [ROLE_SERVICE_PROVIDER] }
+          : {}),
       },
     });
 

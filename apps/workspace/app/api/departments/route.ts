@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { appendActivityLog } from '@/lib/activity-log';
 
 /**
@@ -35,6 +35,66 @@ function createAuthenticatedClient(req: NextRequest) {
   });
 
   return { supabase, token };
+}
+
+async function linkWorkspaceOwnerToDepartment(
+  supabase: SupabaseClient,
+  workspaceId: number | string,
+  departmentId: number
+): Promise<void> {
+  const ws = Number(workspaceId);
+  const { data: wsRow, error: wsErr } = await supabase
+    .from('workspaces')
+    .select('user_id')
+    .eq('id', ws)
+    .maybeSingle();
+  if (wsErr || !wsRow?.user_id) {
+    if (wsErr) {
+      console.error('linkWorkspaceOwnerToDepartment: workspaces lookup', wsErr);
+    }
+    return;
+  }
+
+  const { data: existing } = await supabase
+    .from('user_departments')
+    .select('id')
+    .eq('workspace_id', ws)
+    .eq('user_id', wsRow.user_id)
+    .eq('department_id', departmentId)
+    .limit(1)
+    .maybeSingle();
+  if (existing) return;
+
+  const { error: insErr } = await supabase.from('user_departments').insert({
+    user_id: wsRow.user_id,
+    department_id: departmentId,
+    workspace_id: ws,
+  });
+  if (insErr) {
+    console.error('linkWorkspaceOwnerToDepartment: user_departments insert', insErr);
+  }
+}
+
+function normalizeDepartmentMeta(meta_data: unknown): Record<string, unknown> {
+  if (meta_data) {
+    if (typeof meta_data === 'string') {
+      try {
+        const parsed = JSON.parse(meta_data) as Record<string, unknown>;
+        const services = Array.isArray(parsed.services) ? parsed.services : [];
+        const { service_providers: _s, ...rest } = parsed;
+        return { ...rest, services };
+      } catch {
+        return { services: [] };
+      }
+    }
+    if (typeof meta_data === 'object' && meta_data !== null && !Array.isArray(meta_data)) {
+      const o = meta_data as Record<string, unknown>;
+      const services = Array.isArray(o.services) ? o.services : [];
+      const { service_providers: _s, ...rest } = o;
+      return { ...rest, services };
+    }
+  }
+  return { services: [] };
 }
 
 // GET: Fetch all departments for the workspace
@@ -134,58 +194,16 @@ export async function POST(req: NextRequest) {
           return NextResponse.json({ error: restoreErr.message }, { status: 500 });
         }
 
+        await linkWorkspaceOwnerToDepartment(supabase, workspaceId, restored.id as number);
+
         return NextResponse.json({ department: restored, reused: true, restored: true });
       }
+      await linkWorkspaceOwnerToDepartment(supabase, workspaceId, departmentReuse.id as number);
       return NextResponse.json({ department: departmentReuse, reused: true });
     }
 
-    // RLS validates workspace_id matches JWT; we provide it for INSERT WITH CHECK policy
-    // Prepare meta_data - ensure it's a plain object, not a string
-    let finalMetaData: Record<string, unknown> | null = null;
-    
-    if (meta_data) {
-      if (typeof meta_data === 'string') {
-        // If it's a string, try to parse it
-        try {
-          const parsed = JSON.parse(meta_data) as Record<string, unknown>;
-          finalMetaData = {
-            ...parsed,
-            services: Array.isArray(parsed.services) ? parsed.services : [],
-            service_providers: Array.isArray(parsed.service_providers)
-              ? parsed.service_providers
-              : [],
-          };
-        } catch {
-          finalMetaData = { services: [], service_providers: [] };
-        }
-      } else if (typeof meta_data === 'object' && meta_data !== null && !Array.isArray(meta_data)) {
-        const o = meta_data as Record<string, unknown>;
-        finalMetaData = {
-          ...o,
-          services: Array.isArray(o.services) ? o.services : [],
-          service_providers: Array.isArray(o.service_providers)
-            ? o.service_providers
-            : [],
-        };
-      } else {
-        finalMetaData = { services: [], service_providers: [] };
-      }
-    } else {
-      finalMetaData = { services: [], service_providers: [] };
-    }
-    
-    console.log('=== CREATE DEPARTMENT DEBUG ===');
-    console.log('Raw body received:', JSON.stringify(body));
-    console.log('Raw meta_data received:', meta_data);
-    console.log('meta_data type:', typeof meta_data);
-    console.log('meta_data is string?', typeof meta_data === 'string');
-    console.log('meta_data is object?', typeof meta_data === 'object' && meta_data !== null);
-    console.log('finalMetaData:', finalMetaData);
-    console.log('finalMetaData type:', typeof finalMetaData);
-    console.log('finalMetaData stringified:', JSON.stringify(finalMetaData));
+    const finalMetaData = normalizeDepartmentMeta(meta_data);
 
-    // Supabase jsonb columns expect a JavaScript object/array, not a JSON string
-    // Create the insert payload
     const insertPayload = {
       workspace_id: workspaceId,
       name: trimmedName,
@@ -193,28 +211,20 @@ export async function POST(req: NextRequest) {
       meta_data: finalMetaData,
       status: normalizedStatus,
     };
-    
-    console.log('Insert payload:', JSON.stringify(insertPayload, null, 2));
-    console.log('Insert payload.meta_data type:', typeof insertPayload.meta_data);
-    
+
     const { data, error } = await supabase
       .from('departments')
       .insert(insertPayload)
       .select()
       .single();
-    
-    if (error) {
-      console.error('Supabase insert error:', error);
-      console.error('Error details:', JSON.stringify(error, null, 2));
-    } else {
-      console.log('Successfully created department:', data);
-      console.log('Created department meta_data:', data.meta_data);
-      console.log('Created department meta_data type:', typeof data.meta_data);
-    }
 
     if (error) {
       console.error('Error creating department:', error);
       return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    if (data?.id !== undefined) {
+      await linkWorkspaceOwnerToDepartment(supabase, workspaceId, data.id as number);
     }
 
     await appendActivityLog(workspaceId, {
@@ -315,18 +325,12 @@ export async function PUT(req: NextRequest) {
       // Merge meta_data: preserve existing keys; update services / service_providers when sent
       const existingMetaData = (existing.meta_data as Record<string, unknown>) || {};
       const mergedMetaData: Record<string, unknown> = { ...existingMetaData };
+      delete mergedMetaData.service_providers;
 
       if (parsedMetaData) {
         if ('services' in parsedMetaData) {
           mergedMetaData.services = Array.isArray(parsedMetaData.services)
             ? parsedMetaData.services
-            : [];
-        }
-        if ('service_providers' in parsedMetaData) {
-          mergedMetaData.service_providers = Array.isArray(
-            parsedMetaData.service_providers
-          )
-            ? parsedMetaData.service_providers
             : [];
         }
       }
@@ -395,9 +399,7 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ error: 'Department ID is required' }, { status: 400 });
     }
 
-    // Soft delete: set flag=false so the row disappears from the workspace UI but
-    // preserves meta_data.service_providers so it can be restored later by re-adding
-    // the same name. RLS automatically filters by workspace_id from JWT.
+    // Soft delete: set flag=false. Provider links live in user_departments.
     const { error } = await supabase
       .from('departments')
       .update({ flag: false })

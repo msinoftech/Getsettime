@@ -44,6 +44,8 @@ interface Step4IntakeFormProps {
   fileError: string;
   onBack: () => void;
   onConfirm: () => void;
+  /** Hide intake services multi-select when catalog was offered on step 1 */
+  hideIntakeCatalogServices?: boolean;
 }
 
 export function Step4IntakeForm({
@@ -78,6 +80,7 @@ export function Step4IntakeForm({
   fileError,
   onBack,
   onConfirm,
+  hideIntakeCatalogServices = false,
 }: Step4IntakeFormProps) {
   const [attemptedConfirm, setAttemptedConfirm] = useState(false);
   const [acceptTerms, setAcceptTerms] = useState(false);
@@ -170,7 +173,7 @@ export function Step4IntakeForm({
           </div>
         )}
 
-        {isServicesEnabled(intakeForm) && (
+        {isServicesEnabled(intakeForm) && !hideIntakeCatalogServices && (
           <div className="group">
             <div className="text-sm font-semibold text-gray-700">
               Services{showFieldError('services') ? <span className="text-red-500"> *</span> : null}

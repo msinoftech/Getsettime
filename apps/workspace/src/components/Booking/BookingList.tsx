@@ -65,6 +65,7 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
   const [dateFilter, setDateFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [eventTypeFilter, setEventTypeFilter] = useState("");
+  const [providerFilter, setProviderFilter] = useState("");
   const [sortFilter, setSortFilter] = useState("start_at");
   const [currentPage, setCurrentPage] = useState(1);
   const [showForm, setShowForm] = useState(false);
@@ -93,6 +94,7 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
   const debouncedDate = useDebouncedValue(dateFilter, 300);
   const debouncedStatus = useDebouncedValue(statusFilter, 300);
   const debouncedEventType = useDebouncedValue(eventTypeFilter, 300);
+  const debouncedProvider = useDebouncedValue(providerFilter, 300);
   const debouncedSort = useDebouncedValue(sortFilter, 300);
 
   const fetchBookings = useCallback(
@@ -102,6 +104,7 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
       date: string,
       status: string,
       eventTypeId: string,
+      serviceProviderId: string,
       sort: string
     ) => {
       const { data: { session } } = await supabase.auth.getSession();
@@ -115,6 +118,7 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
       if (date.trim()) params.append("date", date.trim());
       if (status.trim()) params.append("status", status.trim());
       if (eventTypeId.trim()) params.append("event_type_id", eventTypeId.trim());
+      if (serviceProviderId.trim()) params.append("service_provider_id", serviceProviderId.trim());
       if (sort.trim()) params.append("sort", sort.trim());
 
       try {
@@ -167,7 +171,7 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
   useEffect(() => {
     if (!initialFetchDone.current) return;
     setCurrentPage(1);
-  }, [debouncedFilter, debouncedDate, debouncedStatus, debouncedEventType, debouncedSort]);
+  }, [debouncedFilter, debouncedDate, debouncedStatus, debouncedEventType, debouncedProvider, debouncedSort]);
 
   // Fetch when page or filters change
   useEffect(() => {
@@ -177,6 +181,7 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
       debouncedDate,
       debouncedStatus,
       debouncedEventType,
+      debouncedProvider,
       debouncedSort
     );
     initialFetchDone.current = true;
@@ -186,6 +191,7 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
     debouncedDate,
     debouncedStatus,
     debouncedEventType,
+    debouncedProvider,
     debouncedSort,
     fetchBookings,
   ]);
@@ -220,6 +226,7 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
             debouncedDate,
             debouncedStatus,
             debouncedEventType,
+            debouncedProvider,
             debouncedSort
           );
           await fetchWorkspaceBookingStats();
@@ -241,6 +248,7 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
       debouncedDate,
       debouncedStatus,
       debouncedEventType,
+      debouncedProvider,
       debouncedSort,
       fetchBookings,
       fetchWorkspaceBookingStats,
@@ -309,6 +317,7 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
       debouncedDate,
       debouncedStatus,
       debouncedEventType,
+      debouncedProvider,
       debouncedSort
     );
     await fetchWorkspaceBookingStats();
@@ -320,6 +329,7 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
     debouncedDate,
     debouncedStatus,
     debouncedEventType,
+    debouncedProvider,
     debouncedSort,
     fetchBookings,
     fetchWorkspaceBookingStats,
@@ -347,6 +357,7 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
       debouncedDate,
       debouncedStatus,
       debouncedEventType,
+      debouncedProvider,
       debouncedSort
     );
     await fetchWorkspaceBookingStats();
@@ -357,6 +368,7 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
     debouncedDate,
     debouncedStatus,
     debouncedEventType,
+    debouncedProvider,
     debouncedSort,
     fetchBookings,
     fetchWorkspaceBookingStats,
@@ -561,14 +573,17 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
             dateFilter={dateFilter}
             statusFilter={statusFilter}
             eventTypeFilter={eventTypeFilter}
+            providerFilter={providerFilter}
             sortFilter={sortFilter}
             eventTypes={eventTypes}
+            serviceProviders={serviceProviders}
             resultCount={pagination.total}
             onFilterChange={setFilter}
             onDateFilterChange={setDateFilter}
             onClearDateFilter={() => setDateFilter("")}
             onStatusFilterChange={setStatusFilter}
             onEventTypeFilterChange={setEventTypeFilter}
+            onProviderFilterChange={setProviderFilter}
             onSortFilterChange={setSortFilter}
             onResetFilters={handleResetFilters}
           />

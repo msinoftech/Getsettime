@@ -99,6 +99,7 @@ export async function GET(req: NextRequest) {
     for (const b of bookingsRes.data || []) {
       const time = b.updated_at || b.created_at;
       if (!time) continue;
+      if (String(b.status ?? "").toLowerCase() === "deleted") continue;
       const updated = isUpdated(b.created_at, b.updated_at);
       activity.push({
         id: `booking-${b.id}-${time}`,

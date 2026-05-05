@@ -18,7 +18,7 @@ import { supabase } from "@/lib/supabaseClient";
 import { AlertModal } from "@/src/components/ui/AlertModal";
 import { ConfirmModal } from "@/src/components/ui/ConfirmModal";
 import { ServiceSkeleton } from "@/src/components/ui/ServiceSkeleton";
-import { useServiceProviders } from "@/src/hooks/useBookingLookups";
+import { useServiceProviders, useUserDepartments } from "@/src/hooks/useBookingLookups";
 import type { ServiceProvider } from "@/src/types/booking-entities";
 
 type ServiceStatus = "active" | "inactive";
@@ -112,6 +112,8 @@ function parsePriceInput(raw: string): number | null {
 
 export default function ServicesPage() {
   const { data: serviceProviders } = useServiceProviders();
+  const { byDepartment: providersByDepartmentId, refetch: refetchUserDepartments } =
+    useUserDepartments();
 
   const [departments, setDepartments] = useState<Department[]>([]);
   const [services, setServices] = useState<Service[]>([]);
@@ -232,6 +234,12 @@ export default function ServicesPage() {
     [getAuthToken]
   );
 
+  const refreshServiceAssignments = useCallback(async () => {
+    await refetchUserDepartments();
+    const svcs = await fetchServices();
+    setServices(svcs);
+  }, [fetchServices, refetchUserDepartments]);
+
   const selectedDepartment = useMemo(
     () => departments.find((d) => d.id === selectedDepartmentId) ?? null,
     [departments, selectedDepartmentId]
@@ -253,8 +261,7 @@ export default function ServicesPage() {
   const doctorsForDepartment = useCallback(
     (department: Department | null): DoctorRow[] => {
       if (!department) return [];
-      const assigned = department.meta_data?.service_providers ?? [];
-      const assignedIds = new Set(assigned.map((p) => p.id));
+      const assignedIds = providersByDepartmentId.get(department.id) ?? new Set();
       return serviceProviders
         .filter((sp) => assignedIds.has(sp.id))
         .map((sp) => {
@@ -267,7 +274,7 @@ export default function ServicesPage() {
           };
         });
     },
-    [serviceProviders]
+    [serviceProviders, providersByDepartmentId]
   );
 
   const departmentDoctors = useMemo(
@@ -455,33 +462,49 @@ export default function ServicesPage() {
 
     const current = service.meta_data?.service_providers ?? [];
     const exists = current.some((p) => p.id === doctor.id);
-    const nextProviders: ServiceProviderMeta[] = exists
-      ? current.filter((p) => p.id !== doctor.id)
-      : [...current, { id: doctor.id, name: doctor.name }];
 
     setBusyAction(true);
-    const data = await callServicesApi("PUT", {
-      id: service.id,
-      meta_data: { service_providers: nextProviders },
-    });
-    setBusyAction(false);
-
-    if (data?.service) {
-      setServices((prev) =>
-        prev.map((s) => (s.id === service.id ? (data.service as Service) : s))
-      );
+    try {
+      const token = await getAuthToken();
+      if (!token) {
+        setAlertMessage("Not authenticated");
+        return;
+      }
+      if (exists) {
+        const del = await fetch(
+          `/api/user-services?user_id=${encodeURIComponent(doctor.id)}&service_id=${encodeURIComponent(service.id)}`,
+          {
+            method: "DELETE",
+            headers: { Authorization: `Bearer ${token}` },
+          }
+        );
+        if (!del.ok) {
+          const err = await del.json().catch(() => null);
+          setAlertMessage(err?.error || `Request failed (${del.status})`);
+          return;
+        }
+      } else {
+        const post = await fetch("/api/user-services", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            user_id: doctor.id,
+            service_id: service.id,
+          }),
+        });
+        if (!post.ok) {
+          const err = await post.json().catch(() => null);
+          setAlertMessage(err?.error || `Request failed (${post.status})`);
+          return;
+        }
+      }
+      await refreshServiceAssignments();
+    } finally {
+      setBusyAction(false);
     }
-  };
-
-  const persistServiceProviders = async (
-    service: Service,
-    nextProviders: ServiceProviderMeta[]
-  ): Promise<Service | null> => {
-    const data = await callServicesApi("PUT", {
-      id: service.id,
-      meta_data: { service_providers: nextProviders },
-    });
-    return (data?.service as Service) ?? null;
   };
 
   const handleAssignAllForDoctor = async (doctor: DoctorRow) => {
@@ -494,21 +517,33 @@ export default function ServicesPage() {
     if (targets.length === 0) return;
 
     setBusyAction(true);
-    const updated: Service[] = [];
-    for (const service of targets) {
-      const current = service.meta_data?.service_providers ?? [];
-      const next: ServiceProviderMeta[] = [
-        ...current,
-        { id: doctor.id, name: doctor.name },
-      ];
-      const saved = await persistServiceProviders(service, next);
-      if (saved) updated.push(saved);
-    }
-    setBusyAction(false);
-
-    if (updated.length > 0) {
-      const byId = new Map(updated.map((s) => [s.id, s]));
-      setServices((prev) => prev.map((s) => byId.get(s.id) ?? s));
+    try {
+      const token = await getAuthToken();
+      if (!token) {
+        setAlertMessage("Not authenticated");
+        return;
+      }
+      for (const service of targets) {
+        const post = await fetch("/api/user-services", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            user_id: doctor.id,
+            service_id: service.id,
+          }),
+        });
+        if (!post.ok) {
+          const err = await post.json().catch(() => null);
+          setAlertMessage(err?.error || `Request failed (${post.status})`);
+          return;
+        }
+      }
+      await refreshServiceAssignments();
+    } finally {
+      setBusyAction(false);
     }
   };
 
@@ -520,18 +555,29 @@ export default function ServicesPage() {
     if (targets.length === 0) return;
 
     setBusyAction(true);
-    const updated: Service[] = [];
-    for (const service of targets) {
-      const current = service.meta_data?.service_providers ?? [];
-      const next = current.filter((p) => p.id !== doctor.id);
-      const saved = await persistServiceProviders(service, next);
-      if (saved) updated.push(saved);
-    }
-    setBusyAction(false);
-
-    if (updated.length > 0) {
-      const byId = new Map(updated.map((s) => [s.id, s]));
-      setServices((prev) => prev.map((s) => byId.get(s.id) ?? s));
+    try {
+      const token = await getAuthToken();
+      if (!token) {
+        setAlertMessage("Not authenticated");
+        return;
+      }
+      for (const service of targets) {
+        const del = await fetch(
+          `/api/user-services?user_id=${encodeURIComponent(doctor.id)}&service_id=${encodeURIComponent(service.id)}`,
+          {
+            method: "DELETE",
+            headers: { Authorization: `Bearer ${token}` },
+          }
+        );
+        if (!del.ok) {
+          const err = await del.json().catch(() => null);
+          setAlertMessage(err?.error || `Request failed (${del.status})`);
+          return;
+        }
+      }
+      await refreshServiceAssignments();
+    } finally {
+      setBusyAction(false);
     }
   };
 

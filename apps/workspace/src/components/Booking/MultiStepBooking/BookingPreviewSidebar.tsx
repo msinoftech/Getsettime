@@ -1,9 +1,15 @@
 'use client';
 
 import React from 'react';
-import type { Department, EventType, ServiceProvider } from '@/src/types/bookingForm';
+import type { Department, EventType, Service, ServiceProvider } from '@/src/types/bookingForm';
+import type { IntakeFormSettings } from '@/src/types/workspace';
 import { BOOKING_EMPTY_MESSAGES, DEFAULT_ACCENT_COLOR, DEFAULT_PRIMARY_COLOR } from '@/src/constants/booking';
 import { formatDateWithTimezone, formatTimeWithTimezone } from '@/src/utils/bookingTime';
+import {
+  intakeCustomFieldHasDisplayValue,
+  formatIntakeFieldValueForDisplay,
+  displayLabelForIntakeField,
+} from '@/src/utils/intakeForm';
 
 interface BookingPreviewSidebarProps {
   workspaceName: string;
@@ -24,6 +30,13 @@ interface BookingPreviewSidebarProps {
   notes: string;
   /** IANA timezone for time display (workspace or browser); fixes Android 4pm→4am bug */
   displayTimezone?: string | null;
+  /** Step 1 optional catalog selections (user_services–scoped), shown after department name */
+  selectedStep1ServiceIds?: string[];
+  step1CatalogServices?: Service[];
+  /** Intake form config (custom field labels); same source as step 4 */
+  intakeForm?: IntakeFormSettings | null;
+  /** Values keyed by custom field id */
+  customFieldValues?: Record<string, string>;
 }
 
 export function BookingPreviewSidebar({
@@ -44,12 +57,33 @@ export function BookingPreviewSidebar({
   phone,
   notes,
   displayTimezone,
+  selectedStep1ServiceIds = [],
+  step1CatalogServices = [],
+  intakeForm,
+  customFieldValues = {},
 }: BookingPreviewSidebarProps) {
+  const departmentWithStep1Services = (deptName: string) => {
+    if (!selectedStep1ServiceIds.length || !step1CatalogServices.length) return deptName;
+    const byId = new Map(step1CatalogServices.map((s) => [s.id, s.name] as const));
+    const names = selectedStep1ServiceIds
+      .map((id) => byId.get(id))
+      .filter((n): n is string => Boolean(n?.trim()));
+    if (!names.length) return deptName;
+    return `${deptName} (${names.join(', ')})`;
+  };
+
   const primary = workspacePrimaryColor || DEFAULT_PRIMARY_COLOR;
   const accent = workspaceAccentColor || workspacePrimaryColor || DEFAULT_ACCENT_COLOR;
   const isExternalLogoUrl = workspaceLogoUrl?.startsWith('http://') || workspaceLogoUrl?.startsWith('https://');
   const hasSelection = selectedDepartment || selectedProvider || selectedType;
   const showIntakeInPreview = step === 4 || step === 5;
+  const customFieldRows =
+    (intakeForm?.custom_fields ?? []).filter((field) =>
+      intakeCustomFieldHasDisplayValue(customFieldValues[field.id])
+    );
+  const hasAdditionalInfo =
+    showIntakeInPreview &&
+    (customFieldRows.length > 0 || notes.trim().length > 0);
 
   return (
     <div
@@ -122,7 +156,9 @@ export function BookingPreviewSidebar({
                       </svg>
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="font-bold text-gray-900 text-base sm:text-lg mb-1 truncate">{selectedDepartment.name}</div>
+                      <div className="font-bold text-gray-900 text-base sm:text-lg mb-1 break-words">
+                        {departmentWithStep1Services(selectedDepartment.name)}
+                      </div>
                       <div className="text-xs sm:text-sm text-gray-600">Selected department</div>
                     </div>
                   </div>
@@ -138,7 +174,9 @@ export function BookingPreviewSidebar({
                       </svg>
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="font-bold text-gray-900 text-base sm:text-lg mb-1 truncate">{selectedDepartment.name}</div>
+                      <div className="font-bold text-gray-900 text-base sm:text-lg mb-1 break-words">
+                        {departmentWithStep1Services(selectedDepartment.name)}
+                      </div>
                       <div className="text-xs sm:text-sm text-gray-600 flex items-center gap-1.5 lowercase">
                         <svg className="w-3.5 h-3.5 text-teal-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5.121 17.804A13.937 13.937 0 0112 16c2.5 0 4.847.655 6.879 1.804M15 10a3 3 0 11-6 0 3 3 0 016 0zm6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -232,11 +270,36 @@ export function BookingPreviewSidebar({
                         <span className="truncate">{phone}</span>
                       </div>
                     )}
-                    {notes && (
-                      <div className="text-xs sm:text-sm text-gray-600 flex items-center gap-2 truncate">
-                        <span className="truncate">{notes}</span>
+                  </div>
+                </div>
+              )}
+
+              {hasAdditionalInfo && (
+                <div className="details-box">
+                  <div className="flex items-center gap-2 sm:gap-3 mb-3">
+                    <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-gradient-to-br from-slate-100 to-slate-200 flex items-center justify-center flex-shrink-0">
+                      <svg className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h7" />
+                      </svg>
+                    </div>
+                    <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                      Additional information
+                    </div>
+                  </div>
+                  <div className="space-y-3 pl-9 sm:pl-11">
+                    {notes.trim().length > 0 && (
+                      <div className="text-sm text-gray-800 whitespace-pre-wrap break-words">
+                        {notes}
                       </div>
                     )}
+                    {customFieldRows.map((field) => (
+                      <div key={field.id} className="text-sm text-gray-800 break-words">
+                        <span className="font-semibold text-gray-800">
+                          {displayLabelForIntakeField(field.id, field.label)}:
+                        </span>{' '}
+                        {formatIntakeFieldValueForDisplay(customFieldValues[field.id])}
+                      </div>
+                    ))}
                   </div>
                 </div>
               )}

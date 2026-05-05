@@ -1,10 +1,6 @@
 import { useMemo } from 'react';
 import type { IntakeFormSettings } from '@/src/types/workspace';
-import {
-  getAllowedServiceIds,
-  getCustomFieldType,
-  isServicesEnabled,
-} from '@/src/utils/intakeForm';
+import { getCustomFieldType, isServicesEnabled } from '@/src/utils/intakeForm';
 import { isNonEmptyString, isValidDate, isValidEmail, isValidPhone, isValidUrl } from '@/src/utils/validation';
 
 export function useIntakeValidation(
@@ -15,7 +11,9 @@ export function useIntakeValidation(
   customFieldValues: Record<string, string>,
   selectedServiceIds: string[],
   services: { id: string }[],
-  loadingServices: boolean
+  loadingServices: boolean,
+  /** When true (e.g. step-1 optional catalog is shown), do not require intake services. */
+  skipIntakeServicesValidation?: boolean
 ): Record<string, string> {
   return useMemo(() => {
     const errors: Record<string, string> = {};
@@ -33,7 +31,7 @@ export function useIntakeValidation(
       if (!isNonEmptyString(phone)) errors.phone = 'Phone is required';
       else if (!isValidPhone(phone)) errors.phone = 'Enter a valid phone number';
     }
-    if (servicesEnabled) {
+    if (servicesEnabled && !skipIntakeServicesValidation) {
       if (loadingServices) errors.services = 'Loading services…';
       else if (services.length === 0) errors.services = 'No services available';
       else if (selectedServiceIds.length === 0) errors.services = 'Please select at least one service';
@@ -90,5 +88,6 @@ export function useIntakeValidation(
     phone,
     selectedServiceIds.length,
     services.length,
+    skipIntakeServicesValidation,
   ]);
 }

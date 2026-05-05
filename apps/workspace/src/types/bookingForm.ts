@@ -23,6 +23,9 @@ export interface ServiceProvider {
   departments: number[];
   admin_notice?: string | null;
   is_workspace_owner?: boolean;
+  /** Matches auth metadata; used with userActsAsServiceProviderFromMetadata */
+  additional_roles?: string[];
+  role?: string | null;
 }
 
 export interface BreakTime {
@@ -55,6 +58,9 @@ export interface Service {
   name: string;
   description: string | null;
   price: number | null;
+  department_id?: number | null;
+  status?: string;
+  meta_data?: Record<string, unknown> | null;
 }
 
 export interface Timeslot {

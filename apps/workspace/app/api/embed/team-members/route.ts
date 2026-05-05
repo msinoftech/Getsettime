@@ -78,6 +78,19 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: listError.message }, { status: 500 });
     }
 
+    const wsResolved = Number(workspaceIdResolved);
+    const { data: udRows } = await supabase
+      .from('user_departments')
+      .select('user_id, department_id')
+      .eq('workspace_id', wsResolved);
+    const deptByUser = new Map<string, number[]>();
+    for (const r of udRows ?? []) {
+      const uid = r.user_id as string;
+      const did = r.department_id as number;
+      if (!deptByUser.has(uid)) deptByUser.set(uid, []);
+      deptByUser.get(uid)!.push(did);
+    }
+
     // Filter users by workspace_id in user_metadata
     // Handle both string and number comparisons
     const teamMembers = users
@@ -108,12 +121,19 @@ export async function GET(req: NextRequest) {
             ? adminNoticeRaw
             : null;
 
+        const additionalRolesRaw = meta?.additional_roles;
+        const additional_roles = Array.isArray(additionalRolesRaw)
+          ? (additionalRolesRaw.filter((r) => typeof r === 'string') as string[])
+          : [];
+
+        const deptIds = [...new Set(deptByUser.get(u.id) ?? [])].sort((a, b) => a - b);
         return {
           id: u.id,
           email: u.email,
           name: u.user_metadata?.name || u.email?.split('@')[0] || 'Unknown',
           role: u.user_metadata?.role || null,
-          departments: u.user_metadata?.departments || [],
+          additional_roles,
+          departments: deptIds,
           phone,
           created_at: u.created_at,
           email_confirmed_at: u.email_confirmed_at,

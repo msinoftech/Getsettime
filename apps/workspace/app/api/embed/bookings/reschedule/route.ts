@@ -7,6 +7,10 @@ import {
   resolve_provider_notification_contact,
 } from '@/lib/booking_service_provider_phone';
 import { post_booking_whatsapp_notification } from '@/lib/post_booking_whatsapp_notification';
+import {
+  is_whatsapp_admin_enabled,
+  type workspace_notifications_settings,
+} from '@/lib/workspace-notification-flags';
 
 type DayName = 'Sun' | 'Mon' | 'Tue' | 'Wed' | 'Thu' | 'Fri' | 'Sat';
 
@@ -264,8 +268,12 @@ export async function POST(req: NextRequest) {
 
     // WhatsApp notification
     try {
-      const whatsappEnabled = configData?.settings?.notifications?.whatsapp === true;
-      if (booking.invitee_phone && whatsappEnabled) {
+      const notifications_settings =
+        configData?.settings?.notifications as
+          | workspace_notifications_settings
+          | undefined;
+      const whatsapp_admin = is_whatsapp_admin_enabled(notifications_settings);
+      if (booking.invitee_phone && whatsapp_admin) {
         let admin_whatsapp_phones: string[] = [];
         try {
           admin_whatsapp_phones = await admin_whatsapp_phones_for_booking(

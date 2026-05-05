@@ -76,6 +76,7 @@ export async function GET(req: NextRequest) {
         .from('bookings')
         .select('*', { count: 'exact', head: true })
         .eq('workspace_id', workspaceId)
+        .neq('status', 'deleted')
         .gte('start_at', start)
         .lt('start_at', end);
     });
@@ -104,13 +105,15 @@ export async function GET(req: NextRequest) {
     const totalPromise = supabase
       .from('bookings')
       .select('*', { count: 'exact', head: true })
-      .eq('workspace_id', workspaceId);
+      .eq('workspace_id', workspaceId)
+      .neq('status', 'deleted');
 
     const nowIso = new Date().toISOString();
     const upcomingPromise = supabase
       .from('bookings')
       .select('*', { count: 'exact', head: true })
       .eq('workspace_id', workspaceId)
+      .neq('status', 'deleted')
       .gt('start_at', nowIso);
 
     const servicesPromise = supabase

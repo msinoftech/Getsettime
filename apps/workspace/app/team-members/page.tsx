@@ -53,6 +53,8 @@ interface TeamMember {
   email_confirmed_at: string | null;
   deactivated: boolean;
   is_workspace_owner: boolean;
+  /** Assignments where this user is service_provider_id, Mon–Sun local week */
+  bookings_this_week?: number;
 }
 
 function teamMemberActsAsServiceProvider(m: TeamMember): boolean {
@@ -63,45 +65,11 @@ function teamMemberActsAsServiceProvider(m: TeamMember): boolean {
   });
 }
 
-/**
- * Department IDs where this user appears in `departments.meta_data.service_providers`
- * (same source as the Departments page assignments).
- */
-function getDepartmentIdsFromDepartmentsTable(
-  userId: string,
-  depts: Department[]
-): number[] {
-  const ids: number[] = [];
-  for (const d of depts) {
-    const sps = d.meta_data?.service_providers;
-    if (!Array.isArray(sps)) continue;
-    if (sps.some((p) => p.id === userId)) ids.push(d.id);
-  }
-  return ids;
-}
-
-/**
- * Department ids shown in the Team UI and edit form.
- * For service providers, use only `departments.meta_data.service_providers` — the
- * same source as the Departments page. `user_metadata.departments` is updated
- * when saving on Team but can stay stale after changes on the Departments
- * page, so we must not merge it in for SPs.
- */
-function getEffectiveDepartmentIdsForMember(
-  m: TeamMember,
-  depts: Department[]
-): number[] {
-  if (teamMemberActsAsServiceProvider(m)) {
-    return getDepartmentIdsFromDepartmentsTable(m.id, depts);
-  }
-  return [...new Set(m.departments ?? [])];
-}
-
 function getSortedDepartmentIdsForDisplay(
   m: TeamMember,
   depts: Department[]
 ): number[] {
-  const ids = getEffectiveDepartmentIdsForMember(m, depts);
+  const ids = [...new Set(m.departments ?? [])];
   return [...ids].sort((a, b) => {
     const na = depts.find((d) => d.id === a)?.name ?? "";
     const nb = depts.find((d) => d.id === b)?.name ?? "";
@@ -190,6 +158,26 @@ function formatMemberAddedDate(createdAt: string): string {
     month: "short",
     year: "numeric",
   });
+}
+
+function formatWeeklyBookingsLabel(count: number): string {
+  return count === 1 ? "1 booking this week" : `${count} bookings this week`;
+}
+
+/** Local Monday 00:00 → next Monday 00:00 (ISO), for “bookings this week” on the team list. */
+function getLocalWeekRangeQueryParams(): { week_start: string; week_end: string } {
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const day = start.getDay();
+  const mondayOffset = day === 0 ? -6 : 1 - day;
+  start.setDate(start.getDate() + mondayOffset);
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 7);
+  return {
+    week_start: start.toISOString(),
+    week_end: end.toISOString(),
+  };
 }
 
 export default function TeamMembersPage() {
@@ -378,7 +366,7 @@ export default function TeamMembersPage() {
       password: "", // Don't show password for editing
       role: member.role || ROLE_SERVICE_PROVIDER,
       additional_roles: member.additional_roles ?? [],
-      departments: getEffectiveDepartmentIdsForMember(member, departments),
+      departments: [...new Set(member.departments ?? [])],
     });
     setError(null);
     setSuccess(null);
@@ -875,7 +863,7 @@ export default function TeamMembersPage() {
                                   </div>
                                   <div className="flex min-w-0 items-center gap-2">
                                     <LuClock className="h-4 w-4 shrink-0 text-slate-400" aria-hidden />
-                                    <span>0 bookings this week</span>
+                                    <span>{formatWeeklyBookingsLabel(member.bookings_this_week ?? 0)}</span>
                                   </div>
                                 </div>
 

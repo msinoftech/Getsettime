@@ -44,11 +44,11 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    // Fetch all departments for the workspace
     const { data, error } = await supabase
       .from('departments')
       .select('id, name, description')
       .eq('workspace_id', workspaceIdResolved)
+      .eq('flag', true)
       .order('created_at', { ascending: false });
 
     if (error) {

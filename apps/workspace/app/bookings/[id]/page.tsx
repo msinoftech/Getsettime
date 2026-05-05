@@ -11,7 +11,7 @@ import {
   useServiceProviders,
 } from '@/src/hooks/useBookingLookups';
 import { normalizeIntakeForm } from '@/src/utils/intakeForm';
-import { BookingDetailsCard } from '@/src/components/Booking/BookingDetailsCard';
+import { BookingDetailsWithActions } from '@/src/components/Booking/BookingDetailsWithActions';
 import type { Booking } from '@/src/types/booking';
 
 type FetchState =
@@ -28,7 +28,11 @@ export default function BookingDetailsPage() {
 
   const { settings } = useWorkspaceSettings();
   const { data: departments } = useDepartments();
-  const { data: serviceProviders, workspaceOwner } = useServiceProviders();
+  const {
+    data: serviceProviders,
+    workspaceOwner,
+    workspaceOwnerUserId,
+  } = useServiceProviders();
   const { data: services } = useServices();
 
   const intakeFormSettings = useMemo(
@@ -160,14 +164,17 @@ export default function BookingDetailsPage() {
         )}
 
         {fetch_state.status === 'ready' && (
-          <BookingDetailsCard
+          <BookingDetailsWithActions
             booking={fetch_state.booking}
-            variant="page"
             intakeFormSettings={intakeFormSettings}
             services={services}
             departments={departments}
             serviceProviders={serviceProviders}
             workspace_owner={workspaceOwner}
+            workspace_owner_user_id={workspaceOwnerUserId}
+            onBookingUpdated={(booking) =>
+              set_fetch_state({ status: 'ready', booking })
+            }
           />
         )}
       </div>

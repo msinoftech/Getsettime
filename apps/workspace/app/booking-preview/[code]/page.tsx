@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { formatDate, formatTime } from '@/src/utils/date';
 import { StatusBadge } from '@/src/components/Booking/StatusBadge';
 import type { NormalizedIntakeForm } from '@/src/utils/intakeForm';
-import { normalizeIntakeForm } from '@/src/utils/intakeForm';
+import { normalizeIntakeForm, buildIntakeCustomFieldsForPreviewDisplay } from '@/src/utils/intakeForm';
 import type { Service, Department, ServiceProvider } from '@/src/types/booking-entities';
 import type { Booking } from '@/src/types/booking';
 import {
@@ -243,6 +243,7 @@ export default function BookingPreviewPage() {
             workspaceOwner={workspaceOwner}
             services={services}
             intakeFormSettings={intakeForm}
+            intakeFormRaw={intakeFormSettings}
             showActions={!!showActions}
             onCancel={() => setShowCancelDialog(true)}
             onReschedule={handleReschedule}
@@ -289,6 +290,7 @@ function BookingPreviewContent({
   workspaceOwner,
   services,
   intakeFormSettings,
+  intakeFormRaw,
   showActions,
   onCancel,
   onReschedule,
@@ -299,23 +301,30 @@ function BookingPreviewContent({
   workspaceOwner: ServiceProvider | null;
   services: Service[];
   intakeFormSettings: NormalizedIntakeForm | null;
+  intakeFormRaw: Record<string, unknown> | null;
   showActions: boolean;
   onCancel: () => void;
   onReschedule: () => void;
 }) {
   const intakeFormData = booking.metadata?.intake_form as Record<string, unknown> | undefined;
 
-  const selectedServiceIds = (intakeFormData?.services as string[]) || [];
-  const selectedServiceNames = selectedServiceIds
+  const rawServices = intakeFormData?.services;
+  const selectedServiceNames = (
+    Array.isArray(rawServices)
+      ? rawServices.filter((x): x is string => typeof x === 'string')
+      : []
+  )
     .map((id) => services.find((s) => s.id === id)?.name)
     .filter(Boolean) as string[];
+  const intakeServicesDisplay =
+    selectedServiceNames.length > 0 ? selectedServiceNames.join(', ') : '—';
 
-  const customFieldValues = intakeFormData || {};
-  const fieldsToShow =
-    intakeFormSettings?.custom_fields?.filter((field) => {
-      const value = customFieldValues[field.id];
-      return value !== undefined && value !== null && value !== '';
-    }) ?? [];
+  const intakePayload = intakeFormData ?? {};
+  const intakeCustomFieldRows = buildIntakeCustomFieldsForPreviewDisplay(
+    intakePayload,
+    intakeFormRaw,
+    intakeFormSettings?.custom_fields ?? null
+  );
 
   const notes = intakeFormData?.additional_description as string | undefined;
   const legacyNotes = booking.metadata?.notes as string | undefined;
@@ -325,8 +334,13 @@ function BookingPreviewContent({
   const fileUploadUrl = intakeFormData?.file_upload_url as string | undefined;
   const fileUploadName = fileUploadUrl ? decodeURIComponent(fileUploadUrl.split('/').pop() || 'file') : '';
 
-  const showAdditionalInfo =
-    intakeFormSettings?.additional_description === true || intakeFormSettings === null;
+  const showNotesInAdditional =
+    (intakeFormSettings?.additional_description === true || intakeFormSettings === null) &&
+    Boolean(displayNotes.trim()) &&
+    displayNotes !== 'N/A';
+
+  const showAdditionalInformationSection =
+    intakeCustomFieldRows.length > 0 || !!fileUploadUrl || showNotesInAdditional;
 
   const displayName =
     booking.invitee_name?.trim() || booking.contacts?.name?.trim() || 'N/A';
@@ -341,6 +355,10 @@ function BookingPreviewContent({
   const departmentName = has_department
     ? capitalize_booking_display_label(department?.name?.trim() ?? '')
     : '';
+  const departmentWithIntakeServices =
+    has_department && selectedServiceNames.length > 0
+      ? `${departmentName} (${selectedServiceNames.join(', ')})`
+      : departmentName;
   const providerDisplayName = get_service_provider_display_name(
     serviceProvider,
     workspaceOwner
@@ -415,73 +433,63 @@ function BookingPreviewContent({
                 <StatusBadge status={booking.status || 'Pending'} className="inline-flex px-3 py-1 rounded-full" />
               }
             />
-            {has_department && <PreviewRow label="Department" value={departmentName} />}
+            {has_department && (
+              <PreviewRow label="Department" value={departmentWithIntakeServices} />
+            )}
+            {(!has_department || selectedServiceNames.length === 0) &&
+              intakeServicesDisplay !== '—' && (
+                <PreviewRow label="Services" value={intakeServicesDisplay} />
+              )}
             <PreviewRow label="Service Provider" value={providerDisplayName} />
           </PreviewSection>
 
-          {intakeFormSettings?.services?.enabled && selectedServiceNames.length > 0 && (
-            <PreviewSection title="Services">
-              <div className="flex flex-wrap gap-2">
-                {selectedServiceNames.map((name, index) => (
-                  <span
-                    key={index}
-                    className="inline-flex items-center rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-sm font-medium text-indigo-800"
-                  >
-                    {name}
-                  </span>
-                ))}
-              </div>
-            </PreviewSection>
-          )}
-
-          {fieldsToShow.length > 0 && (
-            <PreviewSection title="Custom Fields">
-              {fieldsToShow.map((field) => {
-                const value = customFieldValues[field.id];
-                const text =
-                  typeof value === 'string' || typeof value === 'number'
-                    ? String(value)
-                    : Array.isArray(value)
-                      ? value.join(', ')
-                      : 'N/A';
-                return <PreviewRow key={field.id} label={field.label} value={text} />;
-              })}
-            </PreviewSection>
-          )}
-
-          {fileUploadUrl && (
-            <PreviewSection title="Uploaded File">
-              <a
-                href={fileUploadUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-2 rounded-2xl border border-violet-200 bg-violet-50 px-4 py-3 text-sm font-semibold text-violet-800 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
-              >
-                <svg className="h-5 w-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-                  />
-                </svg>
-                <span className="truncate max-w-xs">{fileUploadName}</span>
-                <svg className="h-4 w-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"
-                  />
-                </svg>
-              </a>
-            </PreviewSection>
-          )}
-
-          {showAdditionalInfo && (
+          {showAdditionalInformationSection && (
             <PreviewSection title="Additional Information">
-              <div className="rounded-3xl border border-slate-100 bg-slate-50/80 p-5 text-slate-700">
-                <p className="whitespace-pre-wrap text-[15px] leading-7">{displayNotes}</p>
+              <div className="space-y-4">
+                {showNotesInAdditional && (
+                  <p className="text-sm font-normal text-slate-800 whitespace-pre-wrap break-words leading-7">
+                    {displayNotes}
+                  </p>
+                )}
+                {intakeCustomFieldRows.length > 0 && (
+                  <div className="space-y-2 text-sm leading-7 text-slate-800">
+                    {intakeCustomFieldRows.map((row) => (
+                      <p key={row.id} className="break-words">
+                        <span className="font-bold text-slate-900">{row.label}:</span>{' '}
+                        <span className="font-normal">{row.value}</span>
+                      </p>
+                    ))}
+                  </div>
+                )}
+                {fileUploadUrl && (
+                  <div>
+                    <div className="text-sm font-medium text-slate-500 mb-2">Uploaded file</div>
+                    <a
+                      href={fileUploadUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-2 rounded-2xl border border-violet-200 bg-violet-50 px-4 py-3 text-sm font-semibold text-violet-800 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+                    >
+                      <svg className="h-5 w-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                        />
+                      </svg>
+                      <span className="truncate max-w-xs">{fileUploadName}</span>
+                      <svg className="h-4 w-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"
+                        />
+                      </svg>
+                    </a>
+                  </div>
+                )}
               </div>
             </PreviewSection>
           )}
@@ -516,8 +524,16 @@ function BookingPreviewContent({
                 <div className="text-xs uppercase tracking-[0.2em] text-slate-300">Assigned Provider</div>
                 <div className="mt-2 text-lg font-semibold break-words">{providerDisplayName}</div>
                 {has_department && (
-                  <div className="mt-1 text-sm text-slate-300">Department: {departmentName}</div>
+                  <div className="mt-1 text-sm text-slate-300 break-words">
+                    Department: {departmentWithIntakeServices}
+                  </div>
                 )}
+                {(!has_department || selectedServiceNames.length === 0) &&
+                  intakeServicesDisplay !== '—' && (
+                    <div className="mt-1 text-sm text-slate-300 break-words">
+                      Services: {intakeServicesDisplay}
+                    </div>
+                  )}
               </div>
             </div>
           </div>

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { appendActivityLog } from '@/lib/activity-log';
+import { enrichServicesWithUserServiceProviders } from '@/lib/enrich_services_user_services';
 
 async function resolveDepartmentIdForWorkspace(
   supabase: SupabaseClient,
@@ -64,20 +65,13 @@ function createAuthenticatedClient(req: NextRequest) {
   return { supabase, token };
 }
 
-type ServiceProviderMeta = { id: string; name: string };
-
-function normalizeServiceProviders(value: unknown): ServiceProviderMeta[] {
-  if (!Array.isArray(value)) return [];
-  return value
-    .map((entry) => {
-      if (!entry || typeof entry !== 'object') return null;
-      const e = entry as Record<string, unknown>;
-      const id = typeof e.id === 'string' ? e.id : null;
-      const name = typeof e.name === 'string' ? e.name : '';
-      if (!id) return null;
-      return { id, name };
-    })
-    .filter((e): e is ServiceProviderMeta => e !== null);
+function createAdminClient() {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!supabaseUrl || !supabaseServiceRoleKey) return null;
+  return createClient(supabaseUrl, supabaseServiceRoleKey, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
 }
 
 function parseMetaData(raw: unknown): Record<string, unknown> | null {
@@ -128,7 +122,20 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    return NextResponse.json({ services: data || [] });
+    const workspaceId = user.user_metadata?.workspace_id;
+    const adminClient = createAdminClient();
+    const rawRows = (data || []) as Record<string, unknown>[];
+    const enriched =
+      workspaceId && adminClient
+        ? await enrichServicesWithUserServiceProviders(
+            adminClient,
+            supabase,
+            workspaceId,
+            rawRows
+          )
+        : rawRows;
+
+    return NextResponse.json({ services: enriched });
   } catch (err: unknown) {
     const error = err as Error;
     console.error('Error:', error);
@@ -188,16 +195,11 @@ export async function POST(req: NextRequest) {
       Number.isFinite(parsedDuration) && parsedDuration > 0 ? parsedDuration : 30;
 
     const incomingMeta = parseMetaData(meta_data);
-    const finalMetaData: Record<string, unknown> = {
-      service_providers: normalizeServiceProviders(incomingMeta?.service_providers),
-    };
-
-    // If the caller sent other top-level meta_data keys, preserve them.
+    const finalMetaData: Record<string, unknown> = {};
     if (incomingMeta) {
       for (const [k, v] of Object.entries(incomingMeta)) {
-        if (k !== 'service_providers' && !(k in finalMetaData)) {
-          finalMetaData[k] = v;
-        }
+        if (k === 'service_providers') continue;
+        finalMetaData[k] = v;
       }
     }
 
@@ -230,7 +232,20 @@ export async function POST(req: NextRequest) {
       description: data?.name || name.trim(),
     });
 
-    return NextResponse.json({ service: data });
+    const adminClient = createAdminClient();
+    const enriched =
+      data && adminClient
+        ? (
+            await enrichServicesWithUserServiceProviders(
+              adminClient,
+              supabase,
+              workspaceId,
+              [data as Record<string, unknown>]
+            )
+          )[0]
+        : data;
+
+    return NextResponse.json({ service: enriched });
   } catch (err: unknown) {
     const error = err as Error;
     console.error('Error:', error);
@@ -351,18 +366,12 @@ export async function PUT(req: NextRequest) {
       const existingMetaData =
         (existing.meta_data as Record<string, unknown> | null) ?? {};
       const mergedMetaData: Record<string, unknown> = { ...existingMetaData };
+      delete mergedMetaData.service_providers;
 
       if (parsedMetaData) {
-        if ('service_providers' in parsedMetaData) {
-          mergedMetaData.service_providers = normalizeServiceProviders(
-            parsedMetaData.service_providers
-          );
-        }
-        // Preserve any other top-level keys the caller sent.
         for (const [k, v] of Object.entries(parsedMetaData)) {
-          if (k !== 'service_providers') {
-            mergedMetaData[k] = v;
-          }
+          if (k === 'service_providers') continue;
+          mergedMetaData[k] = v;
         }
       }
 
@@ -397,7 +406,20 @@ export async function PUT(req: NextRequest) {
       description: data?.name || (typeof name === 'string' ? name.trim() : ''),
     });
 
-    return NextResponse.json({ service: data });
+    const adminClient = createAdminClient();
+    const enriched =
+      data && adminClient
+        ? (
+            await enrichServicesWithUserServiceProviders(
+              adminClient,
+              supabase,
+              workspaceId,
+              [data as Record<string, unknown>]
+            )
+          )[0]
+        : data;
+
+    return NextResponse.json({ service: enriched });
   } catch (err: unknown) {
     const error = err as Error;
     console.error('Error:', error);
@@ -427,9 +449,7 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ error: 'Service ID is required' }, { status: 400 });
     }
 
-    // Soft delete: set flag=false so the row disappears from the workspace UI
-    // but preserves meta_data.service_providers so doctors stay mapped if the
-    // service is restored later. RLS enforces workspace isolation.
+    // Soft delete: set flag=false. Provider links live in user_services.
     const { error } = await supabase
       .from('services')
       .update({ flag: false })
