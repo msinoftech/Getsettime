@@ -2,6 +2,12 @@ import { useMemo } from 'react';
 import type { IntakeFormSettings } from '@/src/types/workspace';
 import { getCustomFieldType, isServicesEnabled } from '@/src/utils/intakeForm';
 import { isNonEmptyString, isValidDate, isValidEmail, isValidPhone, isValidUrl } from '@/src/utils/validation';
+import type { meeting_option_key } from '@/src/utils/meeting_options';
+
+export type intake_meeting_options_validation = {
+  enabledKeys: meeting_option_key[];
+  selectedKey: string;
+};
 
 export function useIntakeValidation(
   intakeForm: IntakeFormSettings | undefined,
@@ -13,7 +19,8 @@ export function useIntakeValidation(
   services: { id: string }[],
   loadingServices: boolean,
   /** When true (e.g. step-1 optional catalog is shown), do not require intake services. */
-  skipIntakeServicesValidation?: boolean
+  skipIntakeServicesValidation?: boolean,
+  meetingOptions?: intake_meeting_options_validation | null
 ): Record<string, string> {
   return useMemo(() => {
     const errors: Record<string, string> = {};
@@ -35,6 +42,15 @@ export function useIntakeValidation(
       if (loadingServices) errors.services = 'Loading services…';
       else if (services.length === 0) errors.services = 'No services available';
       else if (selectedServiceIds.length === 0) errors.services = 'Please select at least one service';
+    }
+
+    if (meetingOptions && meetingOptions.enabledKeys.length > 1) {
+      const sel = meetingOptions.selectedKey.trim();
+      if (!isNonEmptyString(sel)) {
+        errors.meeting_option = 'Please select how you would like to meet';
+      } else if (!meetingOptions.enabledKeys.includes(sel as meeting_option_key)) {
+        errors.meeting_option = 'Please select a valid meeting option';
+      }
     }
 
     const customFields = intakeForm?.custom_fields || [];
@@ -84,6 +100,7 @@ export function useIntakeValidation(
     email,
     intakeForm,
     loadingServices,
+    meetingOptions,
     name,
     phone,
     selectedServiceIds.length,

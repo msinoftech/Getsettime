@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback, lazy, Suspense } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, lazy, Suspense } from 'react';
 import type { Workspace } from '@app/db';
 import type { Department, EventType, IntakeValues, ServiceProvider } from '@/src/types/bookingForm';
 import { useEmbedBookingFormData } from '@/src/hooks/useEmbedBookingFormData';
@@ -17,6 +17,12 @@ import {
   getSortedFilteredEventTypes,
   parseEventTypeDurationParam,
 } from '@/src/utils/bookingFormUtils';
+import {
+  effective_meeting_option_key,
+  label_for_meeting_option_key,
+  list_enabled_meeting_option_keys,
+  type meeting_option_key,
+} from '@/src/utils/meeting_options';
 import { BookingPreviewSidebar } from './MultiStepBooking/BookingPreviewSidebar';
 import { ProgressIndicator } from './MultiStepBooking/ProgressIndicator';
 import { Step1DepartmentProvider } from './MultiStepBooking/Step1DepartmentProvider';
@@ -75,6 +81,7 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
   const [error, setError] = useState<string | null>(null);
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [showCalendar, setShowCalendar] = useState(false);
+  const [selectedMeetingOption, setSelectedMeetingOption] = useState('');
 
   const targetDuration = parseEventTypeDurationParam(eventType);
   const [days, setDays] = useState<Date[]>(() =>
@@ -110,6 +117,7 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
     intakeForm,
     generalSettings,
     workspaceOwnerAdminNotice,
+    meetingOptions,
   } = useEmbedBookingFormData({
     workspace,
     selectedDepartment,
@@ -129,6 +137,24 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
 
   const hideIntakeCatalogServices = providerScopedCatalogServices.length > 0;
 
+  const enabledMeetingOptionKeys = useMemo(
+    () => list_enabled_meeting_option_keys(meetingOptions),
+    [meetingOptions]
+  );
+
+  const intakeMeetingValidation = useMemo(
+    () =>
+      enabledMeetingOptionKeys.length > 1
+        ? { enabledKeys: enabledMeetingOptionKeys, selectedKey: selectedMeetingOption }
+        : null,
+    [enabledMeetingOptionKeys, selectedMeetingOption]
+  );
+
+  const meetingChoiceLabel = useMemo(() => {
+    const k = effective_meeting_option_key(enabledMeetingOptionKeys, selectedMeetingOption);
+    return k ? label_for_meeting_option_key(k) : '';
+  }, [enabledMeetingOptionKeys, selectedMeetingOption]);
+
   const intakeValidation = useIntakeValidation(
     intakeForm,
     name,
@@ -138,7 +164,8 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
     selectedServiceIds,
     services,
     loadingServices,
-    hideIntakeCatalogServices && isServicesEnabled(intakeForm)
+    hideIntakeCatalogServices && isServicesEnabled(intakeForm),
+    intakeMeetingValidation
   );
   const isStep4Valid = Object.keys(intakeValidation).length === 0;
 
@@ -197,6 +224,13 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
       setTouchedCustomFields({});
     }
   }, [step]);
+
+  useEffect(() => {
+    setSelectedMeetingOption((prev) => {
+      if (!prev.trim()) return '';
+      return enabledMeetingOptionKeys.includes(prev as meeting_option_key) ? prev : '';
+    });
+  }, [enabledMeetingOptionKeys]);
 
   useEffect(() => {
     if (!intakeForm) return;
@@ -354,7 +388,8 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
         intakeValidation.name ||
         intakeValidation.email ||
         intakeValidation.phone ||
-        intakeValidation.services;
+        intakeValidation.services ||
+        intakeValidation.meeting_option;
       setError(first || 'Please fill in all required fields');
       return;
     }
@@ -422,6 +457,14 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
       }
       if (sendWhatsapp) intakeFormPayload.whatsapp_opt_in = 'true';
 
+      const meetingKey = effective_meeting_option_key(
+        enabledMeetingOptionKeys,
+        selectedMeetingOption
+      );
+      if (meetingKey) {
+        intakeFormPayload.meeting_option = meetingKey;
+      }
+
       if (file && intakeForm?.file_upload === true) {
         if (!validateFile(file)) {
           setLoading(false);
@@ -461,6 +504,7 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
           start_at: startDate.toISOString(),
           end_at: endDate.toISOString(),
           intake_form: Object.keys(intakeFormPayload).length > 0 ? intakeFormPayload : null,
+          ...(meetingKey ? { location: { meeting_option: meetingKey } } : {}),
           ...(timezone ? { timezone } : {}),
         }),
       });
@@ -531,6 +575,7 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
             step1CatalogServices={providerScopedCatalogServices}
             intakeForm={intakeForm}
             customFieldValues={customFieldValues}
+            meetingChoiceLabel={meetingChoiceLabel.trim() || undefined}
           />
           <div className="p-4 sm:p-6 lg:p-8 xl:p-10 bg-white relative">
             <ProgressIndicator step={step} />
@@ -658,6 +703,9 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
                   onBack={() => setStep(3)}
                   onConfirm={handleConfirm}
                   hideIntakeCatalogServices={hideIntakeCatalogServices}
+                  enabledMeetingOptionKeys={enabledMeetingOptionKeys}
+                  selectedMeetingOption={selectedMeetingOption}
+                  onMeetingOptionChange={setSelectedMeetingOption}
                 />
               )}
               {step === 5 && (

@@ -32,6 +32,7 @@ import {
   total_duration_minutes,
   type event_type_form_state,
 } from "@/src/features/event-types/EventTypeFormLayout";
+import { workspace_meeting_options_to_location } from "@/src/utils/meeting_options";
 
 interface EventType {
   id: number;
@@ -111,21 +112,6 @@ function normalize_event_settings(
     default_location: location,
     admin_notice: notice,
   };
-}
-
-/**
- * Pick a default location from workspace `meeting_options`. Order matters:
- * in_person → phone_call → google_meet. First true wins. WhatsApp is ignored.
- */
-function workspace_meeting_options_to_location(
-  meeting_options: unknown
-): event_type_location | null {
-  if (!meeting_options || typeof meeting_options !== "object") return null;
-  const opts = meeting_options as Record<string, unknown>;
-  if (opts.in_person === true) return "in_person";
-  if (opts.phone_call === true) return "phone";
-  if (opts.google_meet === true) return "video";
-  return null;
 }
 
 function cn(...classes: (string | false | null | undefined)[]) {

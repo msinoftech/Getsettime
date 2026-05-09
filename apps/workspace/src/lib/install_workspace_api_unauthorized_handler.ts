@@ -1,4 +1,5 @@
 import { supabase } from "@/lib/supabaseClient";
+import { logAuthActivityFromSession } from "@/src/lib/auth_activity_log_client";
 
 const INSTALL_FLAG = "__getsettimeWorkspaceApi401Handler";
 
@@ -95,6 +96,11 @@ export function installWorkspaceApiUnauthorizedHandler(): void {
     if (!session?.user) return response;
 
     redirectInProgress = true;
+    try {
+      await logAuthActivityFromSession("logout", { reason: "api_unauthorized" });
+    } catch {
+      /* still sign out */
+    }
     try {
       await supabase.auth.signOut({ scope: "local" });
     } catch {

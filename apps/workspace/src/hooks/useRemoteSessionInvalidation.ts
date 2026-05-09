@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabaseClient';
+import { logAuthActivityFromSession } from '@/src/lib/auth_activity_log_client';
 
 /** How often to ask Supabase Auth if this JWT is still valid (detect login elsewhere / revoked refresh). */
 const POLL_INTERVAL_MS = 20_000;
@@ -65,6 +66,11 @@ export function useRemoteSessionInvalidation(enabled: boolean, pathname: string)
 
       console.warn('[useRemoteSessionInvalidation] getUser failed repeatedly; signing out', lastError);
 
+      try {
+        await logAuthActivityFromSession('logout', { reason: 'remote_invalidation' });
+      } catch {
+        /* ignore */
+      }
       try {
         await supabase.auth.signOut({ scope: 'local' });
       } catch {

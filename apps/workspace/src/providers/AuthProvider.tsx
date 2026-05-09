@@ -1,6 +1,6 @@
 'use client' // if using App Router
 
-import { createContext, useContext, useCallback, useEffect, useMemo, useState, ReactNode } from 'react'
+import { createContext, useContext, useCallback, useEffect, useMemo, useRef, useState, ReactNode } from 'react'
 import { supabase } from '@/lib/supabaseClient'
 import { installWorkspaceApiUnauthorizedHandler } from '@/src/lib/install_workspace_api_unauthorized_handler'
 import { IdleSessionWarningModal } from '@/src/components/ui/IdleSessionWarningModal'
@@ -14,6 +14,7 @@ import {
   isAllowedPathDuringWorkspaceOnboarding,
   workspaceOnboardingRegisterUrl,
 } from '@/lib/auth_onboarding'
+import { logAuthActivityFromSession, logAuthActivityLoginDeduped, signOutWithAuthLog } from '@/src/lib/auth_activity_log_client'
 
 type User = any
 
@@ -75,7 +76,10 @@ function sleep(ms: number): Promise<void> {
   })
 }
 
-async function signOutLocalBounded(): Promise<void> {
+async function signOutLocalBounded(logout_reason?: string): Promise<void> {
+  if (logout_reason) {
+    await logAuthActivityFromSession('logout', { reason: logout_reason })
+  }
   try {
     await Promise.race([
       supabase.auth.signOut({ scope: 'local' }),
@@ -143,12 +147,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [loading, setLoading] = useState(true)
   const router = useRouter()
+  const router_ref = useRef(router)
+  router_ref.current = router
   const pathname = usePathname()
+  const pathname_ref = useRef(pathname)
+  pathname_ref.current = pathname
   const idleDurations = useMemo(() => getWorkspaceIdleLogoutDurations(), [])
 
   const handleIdleLogout = useCallback(async () => {
     try {
-      await supabase.auth.signOut()
+      await signOutWithAuthLog('idle')
     } catch (err) {
       console.error(err)
     }
@@ -170,10 +178,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const clearInvalidSession = async () => {
-      await signOutLocalBounded()
+      await signOutLocalBounded('session_invalid')
       setUser(null)
-      if (!isPublicPath(pathname)) {
-        router.push('/login?reason=session_invalid')
+      if (!isPublicPath(pathname_ref.current)) {
+        router_ref.current.push('/login?reason=session_invalid')
       }
     }
 
@@ -183,13 +191,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     ) => {
       if (!session?.user) {
         setUser(null)
-        if (!isPublicPath(pathname)) {
-          router.push('/login')
+        if (!isPublicPath(pathname_ref.current)) {
+          router_ref.current.push('/login')
         }
         return
       }
 
-      const isAuthCallback = pathname === '/auth/callback'
+      const isAuthCallback = pathname_ref.current === '/auth/callback'
 
       // OAuth callback sets the session client-side; Supabase /auth/v1/user can briefly return 403
       // while the access token propagates. Verifying here would sign the user out (clearInvalidSession)
@@ -220,33 +228,37 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const isDeactivated = currentUser.user_metadata?.deactivated === true
 
       if (isDeactivated) {
-        await supabase.auth.signOut()
+        await signOutWithAuthLog('deactivated')
         setUser(null)
-        if (!isPublicPath(pathname)) {
-          router.push('/login')
+        if (!isPublicPath(pathname_ref.current)) {
+          router_ref.current.push('/login')
         }
         return
       }
 
       if (!isAuthCallback && (!userRole || !ALLOWED_ROLES.includes(userRole))) {
-        await supabase.auth.signOut()
+        await signOutWithAuthLog('invalid_role')
         setUser(null)
-        if (!isPublicPath(pathname)) {
-          router.push('/login')
+        if (!isPublicPath(pathname_ref.current)) {
+          router_ref.current.push('/login')
         }
         return
       }
 
-      if (userRole === 'customer' && !pathname.startsWith('/my-bookings') && !isPublicPath(pathname)) {
-        router.push('/my-bookings')
+      if (
+        userRole === 'customer' &&
+        !pathname_ref.current.startsWith('/my-bookings') &&
+        !isPublicPath(pathname_ref.current)
+      ) {
+        router_ref.current.push('/my-bookings')
         setUser(currentUser)
         return
       }
 
       if (
         userRole === 'workspace_admin' &&
-        !isPublicPath(pathname) &&
-        !isAllowedPathDuringWorkspaceOnboarding(pathname)
+        !isPublicPath(pathname_ref.current) &&
+        !isAllowedPathDuringWorkspaceOnboarding(pathname_ref.current)
       ) {
         let incomplete: boolean
         try {
@@ -261,7 +273,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
         if (incomplete) {
           const meta = currentUser.user_metadata as Record<string, unknown> | undefined
-          router.push(workspaceOnboardingRegisterUrl(meta ?? {}))
+          router_ref.current.push(workspaceOnboardingRegisterUrl(meta ?? {}))
           setUser(currentUser)
           return
         }
@@ -297,16 +309,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const handleAuthSyncFailure = async (err: unknown) => {
       console.error(err)
       if (err instanceof AuthSyncTimeoutError) {
-        await signOutLocalBounded()
+        await signOutLocalBounded('auth_timeout')
         setUser(null)
-        if (!isPublicPath(pathname)) {
-          router.push('/login?reason=auth_timeout')
+        if (!isPublicPath(pathname_ref.current)) {
+          router_ref.current.push('/login?reason=auth_timeout')
         }
         return
       }
       setUser(null)
-      if (!isPublicPath(pathname)) {
-        router.push('/login')
+      if (!isPublicPath(pathname_ref.current)) {
+        router_ref.current.push('/login')
       }
     }
 
@@ -316,8 +328,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (error) {
           console.error(error)
           setUser(null)
-          if (!isPublicPath(pathname)) {
-            router.push('/login')
+          if (!isPublicPath(pathname_ref.current)) {
+            router_ref.current.push('/login')
           }
           return
         }
@@ -331,6 +343,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     void runInitial()
 
+    // Stable subscription: pathname/router via refs; effect deps [] so navigation or router identity
+    // changes do not re-subscribe (avoids duplicate SIGNED_IN / duplicate login audit rows).
+
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event, session) => {
@@ -339,6 +354,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         void (async () => {
           try {
             await syncAuthFromSessionWithRetry(session, event)
+            if (event === 'SIGNED_IN' && session?.access_token && session.user?.id) {
+              await logAuthActivityLoginDeduped(session.access_token, session.user.id, event)
+            }
           } catch (err) {
             void handleAuthSyncFailure(err)
           } finally {
@@ -351,7 +369,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       subscription.unsubscribe()
     }
-  }, [router, pathname])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- single auth subscription; router/pathname via refs
+  }, [])
 
   return (
     <AuthContext.Provider value={{ user, loading }}>

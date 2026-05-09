@@ -15,8 +15,28 @@ import {
   is_whatsapp_admin_enabled,
   is_whatsapp_user_enabled,
 } from '@/lib/workspace-notification-flags';
+import {
+  list_enabled_meeting_option_keys,
+  type meeting_option_key,
+} from '@/src/utils/meeting_options';
 
 type DayName = "Sun" | "Mon" | "Tue" | "Wed" | "Thu" | "Fri" | "Sat";
+
+const MEETING_OPTION_BODY_KEYS = new Set<meeting_option_key>([
+  'google_meet',
+  'in_person',
+  'phone_call',
+  'whatsapp',
+]);
+
+function parse_location_meeting_option(location: unknown): meeting_option_key | null {
+  if (!location || typeof location !== 'object') return null;
+  const raw = (location as Record<string, unknown>).meeting_option;
+  if (typeof raw !== 'string' || !raw.trim()) return null;
+  const key = raw.trim() as meeting_option_key;
+  if (!MEETING_OPTION_BODY_KEYS.has(key)) return null;
+  return key;
+}
 
 interface BreakTime {
   id: string;
@@ -162,6 +182,7 @@ export async function POST(req: NextRequest) {
       verified_identifier,
       intake_form,
       timezone: clientTimezone,
+      location,
     } = body;
 
     // Validate required fields
@@ -401,6 +422,22 @@ export async function POST(req: NextRequest) {
 
     const publicCode = crypto.randomUUID();
 
+    let locationForInsert: Record<string, unknown> | null = null;
+    if (location !== undefined && location !== null) {
+      const mo = parse_location_meeting_option(location);
+      if (mo === null) {
+        return NextResponse.json({ error: 'Invalid location' }, { status: 400 });
+      }
+      const allowed = list_enabled_meeting_option_keys(configData?.settings?.meeting_options);
+      if (!allowed.includes(mo)) {
+        return NextResponse.json(
+          { error: 'Meeting option is not available for this workspace' },
+          { status: 400 }
+        );
+      }
+      locationForInsert = { meeting_option: mo };
+    }
+
     // Create booking with embed source
     const { data, error } = await supabase
       .from('bookings')
@@ -417,7 +454,7 @@ export async function POST(req: NextRequest) {
         start_at,
         end_at: end_at || null,
         status: bookingStatus,
-        location: null,
+        location: locationForInsert,
         payment_id: null,
         metadata: metadataPayload,
         public_code: publicCode,

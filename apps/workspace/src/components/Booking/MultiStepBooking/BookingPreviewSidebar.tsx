@@ -3,7 +3,12 @@
 import React from 'react';
 import type { Department, EventType, Service, ServiceProvider } from '@/src/types/bookingForm';
 import type { IntakeFormSettings } from '@/src/types/workspace';
-import { BOOKING_EMPTY_MESSAGES, DEFAULT_ACCENT_COLOR, DEFAULT_PRIMARY_COLOR } from '@/src/constants/booking';
+import {
+  BOOKING_EMPTY_MESSAGES,
+  DEFAULT_ACCENT_COLOR,
+  DEFAULT_PRIMARY_COLOR,
+  GETSETTIME_BOOKING_BRAND_LOGO_SRC,
+} from '@/src/constants/booking';
 import { formatDateWithTimezone, formatTimeWithTimezone } from '@/src/utils/bookingTime';
 import {
   intakeCustomFieldHasDisplayValue,
@@ -37,6 +42,8 @@ interface BookingPreviewSidebarProps {
   intakeForm?: IntakeFormSettings | null;
   /** Values keyed by custom field id */
   customFieldValues?: Record<string, string>;
+  /** Resolved meeting preference label (step 4 / 5) */
+  meetingChoiceLabel?: string | null;
 }
 
 export function BookingPreviewSidebar({
@@ -61,6 +68,7 @@ export function BookingPreviewSidebar({
   step1CatalogServices = [],
   intakeForm,
   customFieldValues = {},
+  meetingChoiceLabel,
 }: BookingPreviewSidebarProps) {
   const departmentWithStep1Services = (deptName: string) => {
     if (!selectedStep1ServiceIds.length || !step1CatalogServices.length) return deptName;
@@ -102,6 +110,13 @@ export function BookingPreviewSidebar({
 
       <div className="relative z-10">
         <div className="mb-4 sm:mb-4 lg:mb-6">
+          <div className="flex justify-end w-full mb-3 sm:mb-4 px-2">
+            <img
+              src={GETSETTIME_BOOKING_BRAND_LOGO_SRC}
+              alt="GetSetTime"
+              className="h-9 sm:h-10 w-auto max-w-[min(220px,90%)] object-contain object-right"
+            />
+          </div>
           <div className="inline-flex items-center gap-2 mb-2 sm:mb-3">
             <div className="w-2 h-2 rounded-full animate-pulse bg-indigo-600" />
             <span className="text-xs font-semibold uppercase tracking-wider">Live Preview</span>
@@ -121,7 +136,7 @@ export function BookingPreviewSidebar({
                   className="w-12 h-12 rounded-xl object-cover"
                 />
               )}
-              <div>
+              <div className="min-w-0">
                 <div className="text-sm text-gray-600">Schedule with</div>
                 <div className="text-lg font-semibold capitalize">{workspaceName}</div>
               </div>
@@ -238,6 +253,38 @@ export function BookingPreviewSidebar({
                   </div>
                   <div className="font-bold text-gray-900 text-base sm:text-lg pl-9 sm:pl-11">
                     {formatTimeWithTimezone(selectedDate, selectedTime, displayTimezone)}
+                  </div>
+                </div>
+              )}
+
+              {showIntakeInPreview && meetingChoiceLabel && (
+                <div className="details-box">
+                  <div className="flex items-center gap-2 sm:gap-3">
+                    <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-gradient-to-br from-violet-100 to-violet-200 flex items-center justify-center flex-shrink-0">
+                      <svg
+                        className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-violet-600"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"
+                        />
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"
+                        />
+                      </svg>
+                    </div>
+                    <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Meeting</div>
+                  </div>
+                  <div className="font-bold text-gray-900 text-sm sm:text-base pl-9 sm:pl-11 break-words">
+                    {meetingChoiceLabel}
                   </div>
                 </div>
               )}

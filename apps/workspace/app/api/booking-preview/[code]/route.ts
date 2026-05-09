@@ -73,7 +73,7 @@ export async function GET(
 
       supabase
         .from('workspaces')
-        .select('slug, user_id')
+        .select('slug, user_id, name')
         .eq('id', workspaceId)
         .single(),
     ]);
@@ -120,16 +120,22 @@ export async function GET(
       }
     }
 
+    const bookingRecordId = booking.id;
     const { id: _id, workspace_id: _wid, host_user_id: _huid, ...safeBooking } = booking;
 
     return NextResponse.json({
       booking: safeBooking,
+      booking_id: String(bookingRecordId),
       department,
       serviceProvider,
       workspaceOwner,
       services: servicesResult.data ?? [],
       intakeFormSettings: settingsResult.data?.intake_form ?? null,
       workspace_slug: workspaceResult.data?.slug ?? null,
+      workspace_name:
+        workspaceResult.data && typeof workspaceResult.data.name === 'string'
+          ? workspaceResult.data.name.trim() || null
+          : null,
     });
   } catch (err: unknown) {
     const error = err as Error;

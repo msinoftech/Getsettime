@@ -9,6 +9,7 @@ import { useAuth } from "../../providers/AuthProvider";
 const PATH_TO_MENU: Record<string, string> = {
   "/": "dashboard",
   "/users": "users",
+  "/user-auth-activity": "user-auth-activity",
   "/workspaces": "workspaces",
   "/integration-requests": "integration-requests",
   "/professions": "professions",
@@ -140,6 +141,11 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-users-icon lucide-users"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><path d="M16 3.128a4 4 0 0 1 0 7.744"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><circle cx="9" cy="7" r="4"/></svg>
             Users
           </Link>    
+
+          <Link href="/user-auth-activity" className={`flex items-center gap-3 rounded-xl px-4 py-3 text-left text-[14px] font-medium transition-all ${ activeMenu === "user-auth-activity" ? "bg-indigo-50 text-indigo-700 shadow-sm" : "text-gray-700 hover:bg-gray-50" }`} onClick={handleNavClick}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" x2="3" y1="12" y2="12"/></svg>
+            Auth activity
+          </Link>
           
           <Link href="/workspaces" className={`flex items-center gap-3 rounded-xl px-4 py-3 text-left text-[14px] font-medium transition-all ${ activeMenu === "workspaces" ? "bg-indigo-50 text-indigo-700 shadow-sm" : "text-gray-700 hover:bg-gray-50" }`} onClick={handleNavClick}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-briefcase-business-icon lucide-briefcase-business"><path d="M12 12h.01"/><path d="M16 6V4a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/><path d="M22 13a18.15 18.15 0 0 1-20 0"/><rect width="20" height="14" x="2" y="6" rx="2"/></svg>

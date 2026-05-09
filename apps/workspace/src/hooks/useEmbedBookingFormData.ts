@@ -8,7 +8,7 @@ import type {
   Service,
   ServiceProvider,
 } from '@/src/types/bookingForm';
-import type { IntakeFormSettings } from '@/src/types/workspace';
+import type { IntakeFormSettings, meeting_options_settings } from '@/src/types/workspace';
 import { getAllowedServiceIds, isServicesEnabled } from '@/src/utils/intakeForm';
 import { CALENDAR_BUFFER_DAYS, CALENDAR_BUFFER_DAYS_BEFORE } from '@/src/constants/booking';
 import { userActsAsServiceProviderFromMetadata } from '@/lib/service_provider_role';
@@ -59,6 +59,9 @@ export function useEmbedBookingFormData({
   const [providerScopedCatalogServices, setProviderScopedCatalogServices] = useState<Service[]>([]);
   const [loadingProviderScopedCatalog, setLoadingProviderScopedCatalog] = useState(false);
   const [settingsIntakeForm, setSettingsIntakeForm] = useState<IntakeFormSettings | undefined>(undefined);
+  const [meetingOptionsSettings, setMeetingOptionsSettings] = useState<
+    meeting_options_settings | undefined
+  >(undefined);
   const [generalSettings, setGeneralSettings] = useState<{
     primaryColor?: string;
     accentColor?: string;
@@ -109,10 +112,12 @@ export function useEmbedBookingFormData({
           settings?: {
             intake_form?: IntakeFormSettings;
             general?: { primaryColor?: string; accentColor?: string; timezone?: string };
+            meeting_options?: meeting_options_settings;
           };
         } = await res.json();
         setSettingsIntakeForm(data.settings?.intake_form);
         setGeneralSettings(data.settings?.general || null);
+        setMeetingOptionsSettings(data.settings?.meeting_options);
       } catch (e) {
         console.error('Error fetching embed settings:', e);
       }
@@ -350,5 +355,6 @@ export function useEmbedBookingFormData({
     intakeForm: effectiveIntakeForm,
     generalSettings,
     workspaceOwnerAdminNotice,
+    meetingOptions: meetingOptionsSettings,
   };
 }

@@ -4,6 +4,7 @@ import React, { useState, useCallback, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { type public_booking } from '@/src/types/public_booking';
 import { supabase } from '@/lib/supabaseClient';
+import { signOutWithAuthLog } from '@/src/lib/auth_activity_log_client';
 
 type Step = 'loading' | 'phone_input' | 'otp_verify' | 'bookings_list';
 
@@ -252,7 +253,7 @@ export default function MyBookingsPage() {
   };
 
   const handleLogout = async () => {
-    await supabase.auth.signOut();
+    await signOutWithAuthLog('manual');
     router.push('/login');
   };
 

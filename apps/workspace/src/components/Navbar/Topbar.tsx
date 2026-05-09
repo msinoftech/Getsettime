@@ -5,6 +5,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
+import { signOutWithAuthLog } from "@/src/lib/auth_activity_log_client";
 import { useAuth } from "../../providers/AuthProvider";
 import { useWorkspaceSettings } from "../../hooks/useWorkspaceSettings";
 
@@ -49,7 +50,7 @@ export default function Topbar({ toggleSidebar, isSidebarOpen }: TopbarProps) {
   const isExternalUrl = logoUrl?.startsWith('http://') || logoUrl?.startsWith('https://');
   
   const handleSignOut = async () => {
-    await supabase.auth.signOut();
+    await signOutWithAuthLog("manual");
     router.push('/login');
   };
   

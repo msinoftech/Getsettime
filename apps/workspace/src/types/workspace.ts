@@ -84,10 +84,18 @@ export type IntakeFormSettings = {
   custom_fields?: IntakeCustomField[];
 };
 
+export type meeting_options_settings = {
+  google_meet?: boolean;
+  in_person?: boolean;
+  phone_call?: boolean;
+  whatsapp?: boolean;
+};
+
 export type WorkspaceSettings = {
   general?: GeneralSettings;
   availability?: AvailabilitySettings;
   intake_form?: IntakeFormSettings;
+  meeting_options?: meeting_options_settings;
 };
 
 export type WorkspaceSettingsHook = {

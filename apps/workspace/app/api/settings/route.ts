@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createSupabaseServerClient } from '@app/db';
 import { createClient } from '@supabase/supabase-js';
 import { appendActivityLog } from '@/lib/activity-log';
+import { workspace_meeting_options_to_location } from '@/src/utils/meeting_options';
 
 async function getUserFromRequest(req: NextRequest) {
   const authHeader = req.headers.get('authorization');
@@ -128,6 +129,16 @@ export async function POST(req: NextRequest) {
         ...(existingSettings.intake_form || {}),
         ...(newSettings.intake_form || {}),
       },
+      meeting_options: {
+        ...(typeof existingSettings.meeting_options === 'object' &&
+        existingSettings.meeting_options !== null
+          ? (existingSettings.meeting_options as Record<string, unknown>)
+          : {}),
+        ...(typeof newSettings.meeting_options === 'object' &&
+        newSettings.meeting_options !== null
+          ? (newSettings.meeting_options as Record<string, unknown>)
+          : {}),
+      },
     };
     // #region agent log
     fetch('http://127.0.0.1:7242/ingest/c18ea6a2-9a56-4a40-8939-326a1784f350',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'route.ts:122',message:'After merge',data:{mergedSettings},timestamp:Date.now(),sessionId:'debug-session',runId:'initial',hypothesisId:'H2'})}).catch(()=>{});
@@ -179,6 +190,52 @@ export async function POST(req: NextRequest) {
         ? 'Availability schedule or time slots were changed'
         : 'General workspace configuration was changed',
     });
+
+    if (Object.prototype.hasOwnProperty.call(newSettings, 'meeting_options')) {
+      // Only in_person / phone / google_meet map to event_types.location_type; whatsapp-only → null → skip update.
+      const location_type = workspace_meeting_options_to_location(mergedSettings.meeting_options);
+      if (location_type) {
+        const wid =
+          typeof workspaceId === 'number' ? workspaceId : Number(workspaceId);
+        if (Number.isFinite(wid)) {
+          const { data: slugRow } = await supabase
+            .from('event_types')
+            .select('id')
+            .eq('workspace_id', wid)
+            .eq('slug', '30mins-chat')
+            .maybeSingle();
+
+          let defaultEventId: number | null =
+            slugRow && typeof (slugRow as { id?: unknown }).id === 'number'
+              ? (slugRow as { id: number }).id
+              : null;
+
+          if (defaultEventId == null) {
+            const { data: firstRow } = await supabase
+              .from('event_types')
+              .select('id')
+              .eq('workspace_id', wid)
+              .order('id', { ascending: true })
+              .limit(1)
+              .maybeSingle();
+            if (firstRow && typeof (firstRow as { id?: unknown }).id === 'number') {
+              defaultEventId = (firstRow as { id: number }).id;
+            }
+          }
+
+          if (defaultEventId != null) {
+            const { error: etError } = await supabase
+              .from('event_types')
+              .update({ location_type })
+              .eq('id', defaultEventId)
+              .eq('workspace_id', wid);
+            if (etError) {
+              console.warn('Default event_type location sync (non-critical):', etError);
+            }
+          }
+        }
+      }
+    }
 
     return NextResponse.json({ settings: data.settings });
   } catch (err: unknown) {

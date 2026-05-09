@@ -9,6 +9,12 @@ import type { Department, EventType, IntakeValues, ServiceProvider } from '../..
 import { DEFAULT_ACCENT_COLOR, DEFAULT_PRIMARY_COLOR } from '../../constants/booking';
 import { sortEventTypesByDuration } from '../../utils/bookingFormUtils';
 import { isServicesEnabled } from '../../utils/intakeForm';
+import {
+  effective_meeting_option_key,
+  label_for_meeting_option_key,
+  list_enabled_meeting_option_keys,
+  type meeting_option_key,
+} from '../../utils/meeting_options';
 import { isTimeSlotBooked, normalizeDate } from '../../utils/bookingTime';
 import { getDisplayTimezone, parseTimeStringTo24h } from '../../utils/timezone';
 
@@ -78,8 +84,27 @@ const MultiStepBookingForm = ({ onSave, onCancel }: MultiStepBookingFormProps) =
   const [showCalendar, setShowCalendar] = useState(false);
   const [workspacePrimaryColor, setWorkspacePrimaryColor] = useState(DEFAULT_PRIMARY_COLOR);
   const [workspaceAccentColor, setWorkspaceAccentColor] = useState<string | null>(null);
+  const [selectedMeetingOption, setSelectedMeetingOption] = useState('');
 
   const intakeForm = settings.intake_form;
+
+  const enabledMeetingOptionKeys = useMemo(
+    () => list_enabled_meeting_option_keys(settings.meeting_options),
+    [settings.meeting_options]
+  );
+
+  const intakeMeetingValidation = useMemo(
+    () =>
+      enabledMeetingOptionKeys.length > 1
+        ? { enabledKeys: enabledMeetingOptionKeys, selectedKey: selectedMeetingOption }
+        : null,
+    [enabledMeetingOptionKeys, selectedMeetingOption]
+  );
+
+  const meetingChoiceLabel = useMemo(() => {
+    const k = effective_meeting_option_key(enabledMeetingOptionKeys, selectedMeetingOption);
+    return k ? label_for_meeting_option_key(k) : '';
+  }, [enabledMeetingOptionKeys, selectedMeetingOption]);
 
   const [days, setDays] = useState<Date[]>(() =>
     Array.from({ length: 10 }, (_, i) => {
@@ -139,7 +164,8 @@ const MultiStepBookingForm = ({ onSave, onCancel }: MultiStepBookingFormProps) =
     selectedServiceIds,
     services,
     loadingServices,
-    hideIntakeCatalogServices && isServicesEnabled(intakeForm)
+    hideIntakeCatalogServices && isServicesEnabled(intakeForm),
+    intakeMeetingValidation
   );
   const isStep4Valid = Object.keys(intakeValidation).length === 0;
 
@@ -180,6 +206,13 @@ const MultiStepBookingForm = ({ onSave, onCancel }: MultiStepBookingFormProps) =
       setTouchedCustomFields({});
     }
   }, [step]);
+
+  useEffect(() => {
+    setSelectedMeetingOption((prev) => {
+      if (!prev.trim()) return '';
+      return enabledMeetingOptionKeys.includes(prev as meeting_option_key) ? prev : '';
+    });
+  }, [enabledMeetingOptionKeys]);
 
   useEffect(() => {
     if (!loadingSettings && general) {
@@ -249,7 +282,8 @@ const MultiStepBookingForm = ({ onSave, onCancel }: MultiStepBookingFormProps) =
         intakeValidation.name ||
         intakeValidation.email ||
         intakeValidation.phone ||
-        intakeValidation.services;
+        intakeValidation.services ||
+        intakeValidation.meeting_option;
       setError(first || 'Please fill in all required fields');
       return;
     }
@@ -328,6 +362,14 @@ const MultiStepBookingForm = ({ onSave, onCancel }: MultiStepBookingFormProps) =
         if (v) intakeFormPayload[field.id] = v;
       }
 
+      const meetingKey = effective_meeting_option_key(
+        enabledMeetingOptionKeys,
+        selectedMeetingOption
+      );
+      if (meetingKey) {
+        intakeFormPayload.meeting_option = meetingKey;
+      }
+
       const metadata: Record<string, unknown> = {};
       if (additionalDescriptionEnabled && notes.trim()) metadata.notes = notes.trim();
       if (sendWhatsapp) metadata.whatsapp_opt_in = true;
@@ -372,6 +414,7 @@ const MultiStepBookingForm = ({ onSave, onCancel }: MultiStepBookingFormProps) =
           start_at: startDate.toISOString(),
           end_at: endDate.toISOString(),
           status: bookingStatus,
+          ...(meetingKey ? { location: { meeting_option: meetingKey } } : {}),
           metadata: Object.keys(metadata).length > 0 ? metadata : null,
           ...(timezone ? { timezone } : {}),
         }),
@@ -430,6 +473,7 @@ const MultiStepBookingForm = ({ onSave, onCancel }: MultiStepBookingFormProps) =
             step1CatalogServices={providerScopedCatalogServices}
             intakeForm={intakeForm}
             customFieldValues={customFieldValues}
+            meetingChoiceLabel={meetingChoiceLabel.trim() || undefined}
           />
           <div className="p-4 sm:p-6 lg:p-8 xl:p-10 bg-white relative">
             <ProgressIndicator step={step} />
@@ -550,6 +594,9 @@ const MultiStepBookingForm = ({ onSave, onCancel }: MultiStepBookingFormProps) =
                   onBack={() => setStep(3)}
                   onConfirm={handleConfirm}
                   hideIntakeCatalogServices={hideIntakeCatalogServices}
+                  enabledMeetingOptionKeys={enabledMeetingOptionKeys}
+                  selectedMeetingOption={selectedMeetingOption}
+                  onMeetingOptionChange={setSelectedMeetingOption}
                 />
               )}
               {step === 5 && (
