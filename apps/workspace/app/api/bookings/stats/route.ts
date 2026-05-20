@@ -42,12 +42,22 @@ export async function GET(req: NextRequest) {
     }
 
     const w = String(workspaceId);
+    const userRole =
+      typeof user.user_metadata?.role === "string"
+        ? user.user_metadata.role
+        : "";
+    const isServiceProvider = userRole === "service_provider";
 
-    const table = () =>
-      supabase
+    const table = () => {
+      let q = supabase
         .from("bookings")
         .select("*", { count: "exact", head: true })
         .eq("workspace_id", w);
+      if (isServiceProvider) {
+        q = q.eq("service_provider_id", user.id);
+      }
+      return q;
+    };
 
     const [
       { count: total, error: errTotal },

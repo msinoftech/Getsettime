@@ -6,15 +6,29 @@ import Image from "next/image";
 import * as AppIcons from "@app/icons";
 import {
   workspaceAdminNeedsOnboardingWizard,
+  serviceProviderNeedsOnboardingWizard,
   workspaceOnboardingLastCompletedStep,
   workspaceOnboardingResumeStep,
+  readInviteOnboardingContext,
+  clearInviteOnboardingContext,
+  persistInviteOnboardingContext,
 } from "@/lib/auth_onboarding";
+import {
+  normalizeDepartmentIdArray,
+  normalizeStringArray,
+} from "@/lib/invite_department_assignment";
 import { supabase } from "@/lib/supabaseClient";
 import AvailabilityTimesheet, {
   type availability_timesheet_save_feedback,
 } from "@/src/components/Settings/AvailabilityTimesheet";
 import AlertMessage from "@/src/components/Auth/AlertMessage";
-import { ROLE_WORKSPACE_ADMIN, ROLE_CUSTOMER } from "@/src/constants/roles";
+import {
+  ROLE_WORKSPACE_ADMIN,
+  ROLE_SERVICE_PROVIDER,
+  ROLE_CUSTOMER,
+} from "@/src/constants/roles";
+
+type OnboardingRole = "workspace_admin" | "service_provider";
 
 /** Row from professions_list (onboarding catalog), not workspace professions.id */
 type Profession = {
@@ -126,10 +140,14 @@ export default function RegisterForm() {
 
   // Onboarding (new users after Google signup)
   const [onboardingMode, setOnboardingMode] = useState<boolean | null>(null);
+  const [onboardingRole, setOnboardingRole] = useState<OnboardingRole | null>(null);
   const [onboardingStep, setOnboardingStep] = useState(1);
   const [onboardingSaving, setOnboardingSaving] = useState(false);
   const [workspaceId, setWorkspaceId] = useState<number | null>(null);
   const [workspaceType, setWorkspaceType] = useState<string | null>(null);
+  const [workspaceCatalogProfessionId, setWorkspaceCatalogProfessionId] = useState("");
+  const [onboardingProviderUserId, setOnboardingProviderUserId] = useState<string | null>(null);
+  const [spDepartmentsLockedFromInvite, setSpDepartmentsLockedFromInvite] = useState(false);
   // Step 1 — Profession
   const [professions, setProfessions] = useState<Profession[]>([]);
   const [selectedProfessionId, setSelectedProfessionId] = useState<string>("");
@@ -141,10 +159,10 @@ export default function RegisterForm() {
   const [customDepartmentMode, setCustomDepartmentMode] = useState(false);
   // Step 4
   const [meetingOptions, setMeetingOptions] = useState({
-    google_meet: true,
     in_person: true,
     phone_call: false,
-    whatsapp: false,
+    google_meet: false,
+    // whatsapp: false,
   });
   const [step3Saved, setStep3Saved] = useState(false);
   const [timesheetSaveFeedback, setTimesheetSaveFeedback] =
@@ -160,6 +178,9 @@ export default function RegisterForm() {
   const emailFromUrlAppliedRef = useRef(false);
   /** Apply metadata resume step only once per user after login / first load; do not override Back/Next. */
   const resumeStepHydratedUserIdRef = useRef<string | null>(null);
+  /** Locked for full invite onboarding so auth refresh cannot create a personal workspace. */
+  const onboardingKindRef = useRef<"invite" | "owner" | null>(null);
+  const lockedWorkspaceIdRef = useRef<number | null>(null);
 
   const EMAIL_PARAM_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -170,6 +191,12 @@ export default function RegisterForm() {
       const params = new URLSearchParams(searchParams.toString());
       params.set("onboarding", "1");
       params.set("step", String(s));
+      const inviteCtx = readInviteOnboardingContext();
+      if (inviteCtx) {
+        params.set("invite_workspace_id", String(inviteCtx.workspaceId));
+      } else if (lockedWorkspaceIdRef.current != null) {
+        params.set("invite_workspace_id", String(lockedWorkspaceIdRef.current));
+      }
       const href = `${pathname}?${params.toString()}`;
       // Sync address bar immediately; App Router searchParams can lag behind router.replace,
       // and resolveMode must not read stale ?step= and overwrite onboardingStep (see fast path).
@@ -196,29 +223,129 @@ export default function RegisterForm() {
       return;
     }
     let meta = session.user.user_metadata ?? {};
-    let wid = meta.workspace_id as number | undefined;
-    const isConfirmedParam = searchParams.get("confirmed") === "1";
+    const parseWorkspaceIdFromMeta = (m: Record<string, unknown>): number | undefined => {
+      const raw = m.workspace_id;
+      const n =
+        typeof raw === "number" && Number.isFinite(raw)
+          ? raw
+          : typeof raw === "string"
+            ? parseInt(raw, 10)
+            : NaN;
+      return Number.isFinite(n) && n > 0 ? n : undefined;
+    };
 
-    if (!wid && (isConfirmedParam || session.user.email_confirmed_at)) {
+    let wid = parseWorkspaceIdFromMeta(meta);
+
+    const inviteCtxStored = readInviteOnboardingContext();
+    const inviteWorkspaceParam = searchParams.get("invite_workspace_id");
+    if (inviteCtxStored) {
+      wid = inviteCtxStored.workspaceId;
+      onboardingKindRef.current = "invite";
+      lockedWorkspaceIdRef.current = inviteCtxStored.workspaceId;
+    } else if (inviteWorkspaceParam) {
+      const fromInvite = parseInt(inviteWorkspaceParam, 10);
+      if (Number.isFinite(fromInvite) && fromInvite > 0) {
+        wid = fromInvite;
+        onboardingKindRef.current = "invite";
+        lockedWorkspaceIdRef.current = fromInvite;
+        persistInviteOnboardingContext(fromInvite);
+      }
+    }
+
+    const isOnboardingFlow = searchParams.get("onboarding") === "1";
+
+    const { data: userResultEarly, error: getUserEarlyErr } = await supabase.auth.getUser();
+    if (!getUserEarlyErr && userResultEarly.user?.user_metadata) {
+      meta = userResultEarly.user.user_metadata as Record<string, unknown>;
+      if (onboardingKindRef.current !== "invite") {
+        wid = parseWorkspaceIdFromMeta(meta) ?? wid;
+      }
+    }
+    if (onboardingKindRef.current === "invite" && lockedWorkspaceIdRef.current != null) {
+      wid = lockedWorkspaceIdRef.current;
+    } else if (inviteCtxStored) {
+      wid = inviteCtxStored.workspaceId;
+    } else if (inviteWorkspaceParam) {
+      const fromInviteLocked = parseInt(inviteWorkspaceParam, 10);
+      if (Number.isFinite(fromInviteLocked) && fromInviteLocked > 0) {
+        wid = fromInviteLocked;
+      }
+    }
+
+    const isConfirmedParam = searchParams.get("confirmed") === "1";
+    const invitedAt = meta.invited_at;
+    const isInvitedMember =
+      typeof invitedAt === "string"
+        ? invitedAt.trim() !== ""
+        : invitedAt != null;
+    const metaRole = typeof meta.role === "string" ? meta.role : "";
+    const isInvitedTeamRole =
+      metaRole === ROLE_SERVICE_PROVIDER ||
+      metaRole === "manager" ||
+      metaRole === "staff" ||
+      metaRole === "customer";
+
+    const hasWorkspaceFromMeta = wid != null;
+
+    // Invited team members: never create a personal workspace (bootstrap syncs invite workspace only).
+    const isInviteOnboarding =
+      onboardingKindRef.current === "invite" ||
+      Boolean(inviteWorkspaceParam) ||
+      Boolean(inviteCtxStored) ||
+      isInvitedMember ||
+      isInvitedTeamRole;
+
+    if (isInviteOnboarding && wid != null) {
+      onboardingKindRef.current = "invite";
+      lockedWorkspaceIdRef.current = wid;
+      persistInviteOnboardingContext(wid);
+    } else if (
+      !onboardingKindRef.current &&
+      (metaRole === ROLE_WORKSPACE_ADMIN || metaRole === "")
+    ) {
+      onboardingKindRef.current = "owner";
+    }
+
+    const isLockedInviteOnboarding = onboardingKindRef.current === "invite";
+
+    // Self-signup (email confirm or Google): create workspace even on /register?onboarding=1.
+    const shouldBootstrapOwnedWorkspace =
+      !isLockedInviteOnboarding &&
+      !hasWorkspaceFromMeta &&
+      !isInviteOnboarding &&
+      (isConfirmedParam ||
+        Boolean(session.user.email_confirmed_at) ||
+        (isOnboardingFlow &&
+          (metaRole === ROLE_WORKSPACE_ADMIN || metaRole === "")));
+
+    const runBootstrapWorkspace = async (timeoutMessage: string): Promise<number | null> => {
+      const res = await with_network_timeout(
+        fetch("/api/auth/bootstrap-workspace", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${session.access_token}` },
+        }),
+        ONBOARDING_BOOTSTRAP_TIMEOUT_MS,
+        timeoutMessage
+      );
+      if (!res.ok) return null;
+      const body = (await res.json()) as { workspace_id?: number };
+      const id = body.workspace_id;
+      return id != null && Number.isFinite(id) ? id : null;
+    };
+
+    if (isLockedInviteOnboarding && lockedWorkspaceIdRef.current != null) {
+      wid = lockedWorkspaceIdRef.current;
+    } else if (
+      shouldBootstrapOwnedWorkspace ||
+      (!hasWorkspaceFromMeta && isInviteOnboarding && !isLockedInviteOnboarding)
+    ) {
+      const timeoutMessage = shouldBootstrapOwnedWorkspace
+        ? "Creating your workspace is taking too long. Check your connection and refresh the page."
+        : "Could not load your workspace. Please refresh or sign in again.";
+
       let promise = bootstrapPromiseRef.current;
       if (!promise) {
-        promise = (async () => {
-          try {
-            const res = await with_network_timeout(
-              fetch("/api/auth/bootstrap-workspace", {
-                method: "POST",
-                headers: { Authorization: `Bearer ${session.access_token}` },
-              }),
-              ONBOARDING_BOOTSTRAP_TIMEOUT_MS,
-              "Creating your workspace is taking too long. Check your connection and refresh the page."
-            );
-            if (!res.ok) return null;
-            const body = (await res.json()) as { workspace_id: number };
-            return body.workspace_id;
-          } catch {
-            return null;
-          }
-        })();
+        promise = runBootstrapWorkspace(timeoutMessage).catch(() => null);
         bootstrapPromiseRef.current = promise;
       }
       let resolvedWid: number | null;
@@ -229,21 +356,28 @@ export default function RegisterForm() {
         setOnboardingMode(false);
         return;
       }
+      bootstrapPromiseRef.current = null;
+
       if (resolvedWid != null) {
         wid = resolvedWid;
+        if (isLockedInviteOnboarding && lockedWorkspaceIdRef.current != null) {
+          wid = lockedWorkspaceIdRef.current;
+        }
         try {
           await with_network_timeout(
             enqueueAuthRefresh(),
             25_000,
             "Session refresh timed out. Please refresh the page or sign in again."
           );
+          const { data: userAfterSync } = await supabase.auth.getUser();
+          if (userAfterSync.user?.user_metadata) {
+            meta = userAfterSync.user.user_metadata as Record<string, unknown>;
+          }
         } catch {
-          bootstrapPromiseRef.current = null;
           setOnboardingMode(false);
           return;
         }
       }
-      bootstrapPromiseRef.current = null;
     }
 
     if (!wid) {
@@ -252,8 +386,20 @@ export default function RegisterForm() {
     }
 
     const userRole = meta.role as string | undefined;
-    if (userRole && userRole !== ROLE_WORKSPACE_ADMIN) {
+    const isServiceProvider = userRole === ROLE_SERVICE_PROVIDER;
+    const isWorkspaceAdmin = userRole === ROLE_WORKSPACE_ADMIN;
+
+    if (userRole && !isWorkspaceAdmin && !isServiceProvider) {
       router.replace(userRole === ROLE_CUSTOMER ? "/my-bookings" : "/");
+      return;
+    }
+
+    if (isServiceProvider) {
+      setOnboardingRole("service_provider");
+    } else if (isWorkspaceAdmin) {
+      setOnboardingRole("workspace_admin");
+    } else {
+      setOnboardingMode(false);
       return;
     }
 
@@ -272,6 +418,7 @@ export default function RegisterForm() {
         type?: string | null;
         profession_id?: number | null;
         profession_name?: string | null;
+        admin_professions_id?: number | null;
       };
     };
     const ws = wsBody.workspace ?? null;
@@ -282,16 +429,25 @@ export default function RegisterForm() {
       meta = userResult.user.user_metadata as Record<string, unknown>;
     }
 
-    const hasType = !!ws?.type || !!ws?.profession_id;
-    const wizardIncomplete = workspaceAdminNeedsOnboardingWizard(meta, hasType);
-    if (!wizardIncomplete) {
-      resumeStepHydratedUserIdRef.current = null;
-      router.replace("/");
-      return;
-    }
-
     const userIdForResume =
       userResult.user?.id ?? session.user.id;
+
+    if (isServiceProvider) {
+      setOnboardingProviderUserId(userIdForResume);
+      if (!serviceProviderNeedsOnboardingWizard(meta)) {
+        resumeStepHydratedUserIdRef.current = null;
+        router.replace("/");
+        return;
+      }
+    } else {
+      const hasType = !!ws?.type || !!ws?.profession_id;
+      const wizardIncomplete = workspaceAdminNeedsOnboardingWizard(meta, hasType);
+      if (!wizardIncomplete) {
+        resumeStepHydratedUserIdRef.current = null;
+        router.replace("/");
+        return;
+      }
+    }
 
     // Already hydrated: refresh header user only. Do not setOnboardingStep from searchParams here —
     // after saveStep1, onAuthStateChange runs resolveMode while useSearchParams() still has the old ?step=,
@@ -315,72 +471,146 @@ export default function RegisterForm() {
       Authorization: `Bearer ${tokenAfterRefresh}`,
     };
 
-    setWorkspaceType(ws?.type ?? null);
-
-    // Catalog from professions_list; prefill from workspace.type (step 1) and/or server-resolved profession_name
-    const profRes = await fetch("/api/professions", { headers: authHeadersFresh });
-    let catalogList: Profession[] = [];
-    if (profRes.ok) {
-      const profBody = await profRes.json();
-      catalogList = (profBody.professions ?? []) as Profession[];
-    }
-    setProfessions(catalogList);
-
-    let resolvedCatalogProfessionId = "";
     const labelForProfession =
       (typeof ws?.type === "string" && ws.type.trim()) ||
       (typeof ws?.profession_name === "string" && ws.profession_name.trim()) ||
       "";
+    setWorkspaceType((labelForProfession || ws?.type) ?? null);
 
-    if (labelForProfession) {
-      if (catalogList.length > 0) {
-        const match = catalogList.find(
-          (x) => x.name.toLowerCase() === labelForProfession.toLowerCase()
-        );
-        if (match) {
-          resolvedCatalogProfessionId = String(match.id);
-          setSelectedProfessionId(String(match.id));
+    let resolvedCatalogProfessionId = "";
+    const adminCatalogId = ws?.admin_professions_id;
+    if (isServiceProvider && adminCatalogId != null && Number.isFinite(Number(adminCatalogId))) {
+      resolvedCatalogProfessionId = String(adminCatalogId);
+      setWorkspaceCatalogProfessionId(resolvedCatalogProfessionId);
+      setSelectedProfessionId(resolvedCatalogProfessionId);
+    } else {
+      const profRes = await fetch("/api/professions", { headers: authHeadersFresh });
+      let catalogList: Profession[] = [];
+      if (profRes.ok) {
+        const profBody = await profRes.json();
+        catalogList = (profBody.professions ?? []) as Profession[];
+      }
+      setProfessions(catalogList);
+
+      if (labelForProfession) {
+        if (catalogList.length > 0) {
+          const match = catalogList.find(
+            (x) => x.name.toLowerCase() === labelForProfession.toLowerCase()
+          );
+          if (match) {
+            resolvedCatalogProfessionId = String(match.id);
+            setSelectedProfessionId(String(match.id));
+          } else {
+            resolvedCatalogProfessionId = OTHER_VALUE;
+            setSelectedProfessionId(OTHER_VALUE);
+            setCustomProfession(labelForProfession);
+          }
         } else {
           resolvedCatalogProfessionId = OTHER_VALUE;
           setSelectedProfessionId(OTHER_VALUE);
           setCustomProfession(labelForProfession);
         }
-      } else {
-        resolvedCatalogProfessionId = OTHER_VALUE;
-        setSelectedProfessionId(OTHER_VALUE);
-        setCustomProfession(labelForProfession);
+      }
+      if (isServiceProvider && resolvedCatalogProfessionId) {
+        setWorkspaceCatalogProfessionId(resolvedCatalogProfessionId);
       }
     }
 
-    // Prefill department from workspace when step 1 was saved earlier
-    const wsDeptRes = await fetch("/api/departments", { headers: authHeadersFresh });
-    if (wsDeptRes.ok) {
-      const deptJson = (await wsDeptRes.json()) as { departments?: { name: string }[] };
-      const savedName = deptJson.departments?.[0]?.name?.trim();
-      if (savedName) {
-        let suggestionNames: string[] = [];
-        if (
-          resolvedCatalogProfessionId &&
-          resolvedCatalogProfessionId !== OTHER_VALUE &&
-          /^\d+$/.test(resolvedCatalogProfessionId)
-        ) {
-          const sRes = await fetch(
-            `/api/catalog/departments?profession_id=${encodeURIComponent(resolvedCatalogProfessionId)}`,
-            { headers: authHeadersFresh }
-          );
-          if (sRes.ok) {
-            const sj = (await sRes.json()) as { departments?: string[] };
-            suggestionNames = Array.isArray(sj.departments) ? sj.departments : [];
-          }
+    const prefillDepartmentNames = async (savedNames: string[]) => {
+      if (savedNames.length === 0) return;
+      let suggestionNames: string[] = [];
+      const catalogForSuggestions = resolvedCatalogProfessionId;
+      if (
+        catalogForSuggestions &&
+        catalogForSuggestions !== OTHER_VALUE &&
+        /^\d+$/.test(catalogForSuggestions)
+      ) {
+        const sRes = await fetch(
+          `/api/catalog/departments?profession_id=${encodeURIComponent(catalogForSuggestions)}`,
+          { headers: authHeadersFresh }
+        );
+        if (sRes.ok) {
+          const sj = (await sRes.json()) as { departments?: string[] };
+          suggestionNames = Array.isArray(sj.departments) ? sj.departments : [];
         }
+      }
+      const matched: string[] = [];
+      const custom: string[] = [];
+      for (const savedName of savedNames) {
         const exactInSuggestions = suggestionNames.find(
           (n) => n.toLowerCase() === savedName.toLowerCase()
         );
         if (exactInSuggestions) {
-          setSelectedDepartments([exactInSuggestions]);
+          matched.push(exactInSuggestions);
         } else {
-          setCustomDepartment(savedName);
-          setSelectedDepartments([savedName]);
+          custom.push(savedName);
+        }
+      }
+      if (matched.length > 0 || custom.length > 0) {
+        setSelectedDepartments([...matched, ...custom]);
+        if (custom.length > 0) setCustomDepartmentMode(true);
+      }
+    };
+
+    if (isServiceProvider && userIdForResume) {
+      const pendingIds = normalizeDepartmentIdArray(meta?.pending_department_ids);
+      const pendingNames = normalizeStringArray(meta?.pending_department_names);
+      if (pendingIds.length > 0 || pendingNames.length > 0) {
+        setSpDepartmentsLockedFromInvite(true);
+        const mergedNames = [...pendingNames];
+        if (pendingIds.length > 0) {
+          const allDeptRes = await fetch("/api/departments", { headers: authHeadersFresh });
+          if (allDeptRes.ok) {
+            const allDeptJson = (await allDeptRes.json()) as {
+              departments?: { id: number; name: string }[];
+            };
+            for (const d of allDeptJson.departments ?? []) {
+              if (pendingIds.includes(d.id)) {
+                const n = d.name.trim();
+                if (n && !mergedNames.some((x) => x.toLowerCase() === n.toLowerCase())) {
+                  mergedNames.push(n);
+                }
+              }
+            }
+          }
+        }
+        if (mergedNames.length > 0) {
+          await prefillDepartmentNames(mergedNames);
+        }
+      } else {
+        const udRes = await fetch(
+          `/api/user-departments?user_id=${encodeURIComponent(userIdForResume)}`,
+          { headers: authHeadersFresh }
+        );
+        if (udRes.ok) {
+          const udJson = (await udRes.json()) as {
+            assignments?: { department_id?: number }[];
+          };
+          const deptIds = (udJson.assignments ?? [])
+            .map((a) => a.department_id)
+            .filter((id): id is number => typeof id === "number");
+          if (deptIds.length > 0) {
+            const allDeptRes = await fetch("/api/departments", { headers: authHeadersFresh });
+            if (allDeptRes.ok) {
+              const allDeptJson = (await allDeptRes.json()) as {
+                departments?: { id: number; name: string }[];
+              };
+              const names = (allDeptJson.departments ?? [])
+                .filter((d) => deptIds.includes(d.id))
+                .map((d) => d.name.trim())
+                .filter(Boolean);
+              await prefillDepartmentNames(names);
+            }
+          }
+        }
+      }
+    } else {
+      const wsDeptRes = await fetch("/api/departments", { headers: authHeadersFresh });
+      if (wsDeptRes.ok) {
+        const deptJson = (await wsDeptRes.json()) as { departments?: { name: string }[] };
+        const savedName = deptJson.departments?.[0]?.name?.trim();
+        if (savedName) {
+          await prefillDepartmentNames([savedName]);
         }
       }
     }
@@ -484,14 +714,21 @@ export default function RegisterForm() {
   useEffect(() => {
     if (onboardingMode !== true) return;
 
-    if (!selectedProfessionId) {
+    const catalogProfessionId =
+      onboardingRole === "service_provider"
+        ? workspaceCatalogProfessionId || selectedProfessionId
+        : selectedProfessionId;
+
+    if (!catalogProfessionId) {
       setDepartmentSuggestions([]);
-      setSelectedDepartments([]);
-      setCustomDepartmentMode(false);
+      if (onboardingRole !== "service_provider") {
+        setSelectedDepartments([]);
+        setCustomDepartmentMode(false);
+      }
       return;
     }
 
-    if (selectedProfessionId === OTHER_VALUE) {
+    if (catalogProfessionId === OTHER_VALUE) {
       setDepartmentSuggestions([]);
       setCustomDepartmentMode(true);
       return;
@@ -502,7 +739,7 @@ export default function RegisterForm() {
       try {
         const headers = await headers_for_workspace_api();
         const res = await fetch(
-          `/api/catalog/departments?profession_id=${encodeURIComponent(selectedProfessionId)}`,
+          `/api/catalog/departments?profession_id=${encodeURIComponent(catalogProfessionId)}`,
           { headers }
         );
         const data = await res.json();
@@ -526,7 +763,7 @@ export default function RegisterForm() {
     return () => {
       cancelled = true;
     };
-  }, [onboardingMode, selectedProfessionId]);
+  }, [onboardingMode, onboardingRole, selectedProfessionId, workspaceCatalogProfessionId]);
 
   const persistOnboardingStep = async (lastCompleted: number) => {
     await ensureSupabaseSessionOrThrow();
@@ -537,6 +774,7 @@ export default function RegisterForm() {
   };
 
   const saveStep1 = async (): Promise<boolean> => {
+    const isSpOnboarding = onboardingRole === "service_provider";
     const isOtherProfession = selectedProfessionId === OTHER_VALUE;
     const hasProfession = isOtherProfession ? !!customProfession.trim() : !!selectedProfessionId;
     const customDepartmentName = customDepartment.trim();
@@ -547,28 +785,32 @@ export default function RegisterForm() {
     const uniqueDepartmentNames = Array.from(new Set(departmentNames.map((name) => name.trim()).filter(Boolean)));
     const hasDepartment = uniqueDepartmentNames.length > 0;
 
-    if (!hasProfession || !hasDepartment || workspaceId == null) return false;
+    if (workspaceId == null) return false;
+    if (!isSpOnboarding && (!hasProfession || !hasDepartment)) return false;
+    if (isSpOnboarding && !hasDepartment) return false;
     setOnboardingSaving(true);
     setError("");
     try {
       const headers = await headers_for_workspace_api();
 
-      const professionName = isOtherProfession
-        ? customProfession.trim()
-        : professions.find((p) => p.id === Number(selectedProfessionId))?.name ?? "";
+      if (!isSpOnboarding) {
+        const professionName = isOtherProfession
+          ? customProfession.trim()
+          : professions.find((p) => p.id === Number(selectedProfessionId))?.name ?? "";
 
-      const workspaceBody = isOtherProfession
-        ? { custom_profession: professionName }
-        : { professions_list_id: Number(selectedProfessionId) };
+        const workspaceBody = isOtherProfession
+          ? { custom_profession: professionName }
+          : { professions_list_id: Number(selectedProfessionId) };
 
-      const workspaceRes = await fetch("/api/workspace", {
-        method: "PUT",
-        headers,
-        body: JSON.stringify(workspaceBody),
-      });
-      if (!workspaceRes.ok) {
-        const err = await workspaceRes.json().catch(() => ({}));
-        throw new Error(err.error ?? "Failed to save profession");
+        const workspaceRes = await fetch("/api/workspace", {
+          method: "PUT",
+          headers,
+          body: JSON.stringify(workspaceBody),
+        });
+        if (!workspaceRes.ok) {
+          const err = await workspaceRes.json().catch(() => ({}));
+          throw new Error(err.error ?? "Failed to save profession");
+        }
       }
 
       // Check if department already exists in this workspace before creating
@@ -597,43 +839,58 @@ export default function RegisterForm() {
       const allWorkspaceDepts: { id: number; name: string }[] = finalListRes.ok
         ? (await finalListRes.json()).departments ?? []
         : [];
-      await ensureSupabaseSessionOrThrow();
-      const {
-        data: { session: ownerSession },
-      } = await supabase.auth.getSession();
-      const ownerUserId = ownerSession?.user?.id;
-      if (ownerUserId && allWorkspaceDepts.length > 0) {
-        const udRes = await fetch(
-          `/api/user-departments?user_id=${encodeURIComponent(ownerUserId)}`,
-          { headers }
-        );
-        const assignedIds = new Set<number>();
-        if (udRes.ok) {
-          const udJson = await udRes.json();
-          for (const row of (udJson.assignments ?? []) as { department_id?: number }[]) {
-            if (typeof row.department_id === "number") assignedIds.add(row.department_id);
+      const linkUserId = isSpOnboarding
+        ? onboardingProviderUserId
+        : (await supabase.auth.getSession()).data.session?.user?.id;
+      if (linkUserId && allWorkspaceDepts.length > 0) {
+        const deptIdsToLink = uniqueDepartmentNames
+          .map(
+            (deptName) =>
+              allWorkspaceDepts.find(
+                (d) => d.name.toLowerCase() === deptName.toLowerCase()
+              )?.id
+          )
+          .filter((id): id is number => typeof id === "number");
+        if (deptIdsToLink.length > 0) {
+          const { data: { session: adminSession } } = await supabase.auth.getSession();
+          const token = adminSession?.access_token;
+          if (token && workspaceId != null) {
+            const linkRes = await fetch("/api/user-departments", {
+              method: "PUT",
+              headers: {
+                ...headers,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                user_id: linkUserId,
+                department_ids: deptIdsToLink,
+              }),
+            });
+            if (!linkRes.ok) {
+              const err = await linkRes.json().catch(() => ({}));
+              throw new Error(err.error ?? "Failed to assign departments to your profile");
+            }
           }
-        }
-        const linkHeaders = { ...headers, "Content-Type": "application/json" };
-        for (const deptName of uniqueDepartmentNames) {
-          const dept = allWorkspaceDepts.find(
-            (d) => d.name.toLowerCase() === deptName.toLowerCase()
-          );
-          if (!dept || assignedIds.has(dept.id)) continue;
-          const linkRes = await fetch("/api/user-departments", {
-            method: "POST",
-            headers: linkHeaders,
-            body: JSON.stringify({ user_id: ownerUserId, department_id: dept.id }),
-          });
-          if (!linkRes.ok) {
-            const err = await linkRes.json().catch(() => ({}));
-            throw new Error(err.error ?? "Failed to assign departments to your profile");
-          }
-          assignedIds.add(dept.id);
         }
       }
 
-      setWorkspaceType(professionName);
+      if (isSpOnboarding) {
+        await ensureSupabaseSessionOrThrow();
+        await supabase.auth.updateUser({
+          data: {
+            pending_department_ids: null,
+            pending_department_names: null,
+          },
+        });
+        setSpDepartmentsLockedFromInvite(false);
+      }
+
+      if (!isSpOnboarding) {
+        const professionName = isOtherProfession
+          ? customProfession.trim()
+          : professions.find((p) => p.id === Number(selectedProfessionId))?.name ?? "";
+        setWorkspaceType(professionName);
+      }
       await persistOnboardingStep(1);
       return true;
     } catch (e: unknown) {
@@ -656,10 +913,10 @@ export default function RegisterForm() {
       const merged = {
         ...existingSettings,
         meeting_options: {
-          google_meet: meetingOptions.google_meet,
           in_person: meetingOptions.in_person,
           phone_call: meetingOptions.phone_call,
-          whatsapp: meetingOptions.whatsapp,
+          google_meet: meetingOptions.google_meet,
+          // whatsapp: meetingOptions.whatsapp,
         },
       };
       const postRes = await fetch("/api/settings", {
@@ -724,6 +981,9 @@ export default function RegisterForm() {
       if (onboardErr) {
         setError(onboardErr.message || "Failed to finish setup");
         return;
+      }
+      if (onboardingRole === "service_provider") {
+        clearInviteOnboardingContext();
       }
       await supabase.auth.getUser();
       router.replace("/");
@@ -810,17 +1070,25 @@ export default function RegisterForm() {
   if (onboardingMode === true) {
     const googleSync = onboardingUser?.google_calendar_sync === true;
     const googleEmail = onboardingUser?.email ?? "";
+    const isSpOnboardingUi = onboardingRole === "service_provider";
     const selectedProfessionName =
       selectedProfessionId === OTHER_VALUE
         ? customProfession.trim() || "Other"
         : professions.find((p) => p.id === Number(selectedProfessionId))?.name ?? "";
+    const workspaceProfessionLabel =
+      (workspaceType && workspaceType.trim()) ||
+      selectedProfessionName ||
+      "";
     const onboardingNextDisabled =
       onboardingSaving ||
       (onboardingStep === 1 &&
-        ((selectedProfessionId === OTHER_VALUE ? !customProfession.trim() : !selectedProfessionId) ||
-          (selectedProfessionId === OTHER_VALUE
-            ? selectedDepartments.length === 0 && !customDepartment.trim()
-            : selectedDepartments.length === 0)));
+        (isSpOnboardingUi
+          ? selectedDepartments.length === 0 &&
+            !(customDepartmentMode && customDepartment.trim())
+          : (selectedProfessionId === OTHER_VALUE ? !customProfession.trim() : !selectedProfessionId) ||
+            (selectedProfessionId === OTHER_VALUE
+              ? selectedDepartments.length === 0 && !customDepartment.trim()
+              : selectedDepartments.length === 0)));
 
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-white to-purple-50 py-8">
@@ -830,7 +1098,9 @@ export default function RegisterForm() {
             <Link href="/" className="inline-block">
               <Image src="/getsettime-logo.svg" alt="GetSetTime Logo" width={200} height={50} className="mx-auto mb-4" />
             </Link>
-            <h1 className="text-2xl font-bold text-gray-800">Set up your workspace</h1>
+            <h1 className="text-2xl font-bold text-gray-800">
+              {isSpOnboardingUi ? "Set up your profile" : "Set up your workspace"}
+            </h1>
             <p className="text-gray-600">Step {onboardingStep} of {ONBOARDING_STEPS}</p>
             <div className="flex justify-center gap-1 mt-2">
               {[1, 2, 3, 4].map((s) => (
@@ -881,7 +1151,7 @@ export default function RegisterForm() {
 
           {onboardingStep === 1 && (
             <div className="bg-white rounded-2xl shadow-xl p-8 border border-gray-100 space-y-8">
-              {/* Profession badges */}
+              {onboardingRole !== "service_provider" && (
               <div>
                 <h2 className="text-lg font-semibold text-gray-800 mb-1">What is your profession?</h2>
                 <p className="text-sm text-gray-500 mb-4">Select the option that best describes your work.</p>
@@ -968,11 +1238,31 @@ export default function RegisterForm() {
                   />
                 )}
               </div>
+              )}
 
               {/* Department */}
               <div>
-                <h2 className="text-lg font-semibold text-gray-800 mb-3">Department Suggestions</h2>
-                {!!selectedProfessionName && selectedProfessionId !== OTHER_VALUE && (
+                <h2 className="text-lg font-semibold text-gray-800 mb-3">
+                  {isSpOnboardingUi && spDepartmentsLockedFromInvite
+                    ? "Your assigned departments"
+                    : isSpOnboardingUi
+                      ? "Add your department"
+                      : "Department Suggestions"}
+                </h2>
+                {isSpOnboardingUi && spDepartmentsLockedFromInvite && (
+                  <p className="mb-3 text-sm text-slate-600">
+                    These departments were chosen by your workspace admin. Review and click Next to
+                    continue setup.
+                  </p>
+                )}
+                {isSpOnboardingUi && workspaceProfessionLabel && (
+                  <div className="mb-4 flex justify-end">
+                    <span className="inline-flex items-center rounded-full bg-violet-100 px-3 py-1 text-sm font-medium text-violet-700">
+                      Profession: {workspaceProfessionLabel}
+                    </span>
+                  </div>
+                )}
+                {!isSpOnboardingUi && !!selectedProfessionName && selectedProfessionId !== OTHER_VALUE && (
                   <div className="mb-4 flex justify-end">
                     <span className="inline-flex items-center rounded-full bg-violet-100 px-3 py-1 text-sm font-medium text-violet-700">
                       {selectedProfessionName}
@@ -991,15 +1281,17 @@ export default function RegisterForm() {
                       selectedDepartments.map((name) => (
                         <span key={name} className="inline-flex items-center gap-2 rounded-full bg-violet-600 px-4 py-2 text-sm font-medium text-white">
                           {name}
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setSelectedDepartments((prev) => prev.filter((dept) => dept !== name))
-                            }
-                            className="rounded-full bg-violet-500 px-2 py-0.5 text-xs font-semibold hover:bg-violet-400"
-                          >
-                            Remove
-                          </button>
+                          {!spDepartmentsLockedFromInvite && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setSelectedDepartments((prev) => prev.filter((dept) => dept !== name))
+                              }
+                              className="rounded-full bg-violet-500 px-2 py-0.5 text-xs font-semibold hover:bg-violet-400"
+                            >
+                              Remove
+                            </button>
+                          )}
                         </span>
                       ))
                     ) : (
@@ -1007,7 +1299,8 @@ export default function RegisterForm() {
                     )}
                   </div>
 
-                  {selectedProfessionId &&
+                  {!(isSpOnboardingUi && spDepartmentsLockedFromInvite) &&
+                    selectedProfessionId &&
                     selectedProfessionId !== OTHER_VALUE &&
                     departmentSuggestions.length > 0 && (
                     <div className="mb-6 flex flex-wrap gap-3">
@@ -1050,7 +1343,8 @@ export default function RegisterForm() {
                     </div>
                     )}
 
-                  {(selectedProfessionId === OTHER_VALUE || customDepartmentMode) && (
+                  {!(isSpOnboardingUi && spDepartmentsLockedFromInvite) &&
+                    (selectedProfessionId === OTHER_VALUE || customDepartmentMode) && (
                     <div className="rounded-2xl border border-dashed border-violet-200 p-4">
                       <p className="mb-3 text-lg text-slate-700">Add custom department</p>
                       <div className="flex flex-col gap-3 sm:flex-row">
@@ -1166,6 +1460,11 @@ export default function RegisterForm() {
               <h2 className="text-lg font-semibold text-gray-800 mb-4">Working Hours</h2>
               <p className="text-sm text-gray-600 mb-4">Configure your availability and break times, then click Save Timesheet before continuing.</p>
               <AvailabilityTimesheet
+                providerUserId={
+                  isSpOnboardingUi && onboardingProviderUserId
+                    ? onboardingProviderUserId
+                    : undefined
+                }
                 onSave={() => {
                   setStep3Saved(true);
                   setError("");
@@ -1181,10 +1480,10 @@ export default function RegisterForm() {
               <p className="text-sm text-gray-600">Choose how clients can meet with you.</p>
               <div className="space-y-3">
                 {[
-                  { key: "google_meet" as const, label: "Google Meet" },
                   { key: "in_person" as const, label: "In-person" },
                   { key: "phone_call" as const, label: "Phone call" },
-                  { key: "whatsapp" as const, label: "Whatsapp Notification" },
+                  { key: "google_meet" as const, label: "Google Meet" },
+                  // { key: "whatsapp" as const, label: "Whatsapp Notification" },
                 ].map(({ key, label }) => (
                   <label key={key} className="flex items-center gap-3 cursor-pointer">
                     <input

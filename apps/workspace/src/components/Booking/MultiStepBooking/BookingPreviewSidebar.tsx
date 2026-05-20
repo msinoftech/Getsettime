@@ -7,9 +7,12 @@ import {
   BOOKING_EMPTY_MESSAGES,
   DEFAULT_ACCENT_COLOR,
   DEFAULT_PRIMARY_COLOR,
-  GETSETTIME_BOOKING_BRAND_LOGO_SRC,
 } from '@/src/constants/booking';
 import { formatDateWithTimezone, formatTimeWithTimezone } from '@/src/utils/bookingTime';
+import {
+  resolve_workspace_logo_src,
+  workspace_logo_is_remote,
+} from '@/src/utils/workspace_logo';
 import {
   intakeCustomFieldHasDisplayValue,
   formatIntakeFieldValueForDisplay,
@@ -82,7 +85,8 @@ export function BookingPreviewSidebar({
 
   const primary = workspacePrimaryColor || DEFAULT_PRIMARY_COLOR;
   const accent = workspaceAccentColor || workspacePrimaryColor || DEFAULT_ACCENT_COLOR;
-  const isExternalLogoUrl = workspaceLogoUrl?.startsWith('http://') || workspaceLogoUrl?.startsWith('https://');
+  const resolvedLogoSrc = resolve_workspace_logo_src(workspaceLogoUrl);
+  const logoTreatAsRemote = workspace_logo_is_remote(resolvedLogoSrc);
   const hasSelection = selectedDepartment || selectedProvider || selectedType;
   const showIntakeInPreview = step === 4 || step === 5;
   const customFieldRows =
@@ -110,12 +114,12 @@ export function BookingPreviewSidebar({
 
       <div className="relative z-10">
         <div className="mb-4 sm:mb-4 lg:mb-6">
-          <div className="flex justify-end w-full mb-3 sm:mb-4 px-2">
-            <img
-              src={GETSETTIME_BOOKING_BRAND_LOGO_SRC}
-              alt="GetSetTime"
-              className="h-9 sm:h-10 w-auto max-w-[min(220px,90%)] object-contain object-right"
-            />
+          <div className="flex justify-end w-full mb-3 sm:mb-4 px-2 min-h-[1rem]">
+            {workspaceLogoUrl ? (
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">
+                Powered by GetSetTime
+              </span>
+            ) : null}
           </div>
           <div className="inline-flex items-center gap-2 mb-2 sm:mb-3">
             <div className="w-2 h-2 rounded-full animate-pulse bg-indigo-600" />
@@ -123,18 +127,14 @@ export function BookingPreviewSidebar({
           </div>
           <div className="py-2 z-10 relative">
             <div className="flex flex-wrap items-center gap-4">
-              {!loadingSettings && workspaceLogoUrl ? (
+              {!loadingSettings ? (
                 <img
-                  src={workspaceLogoUrl}
+                  src={resolvedLogoSrc}
                   alt={workspaceName}
-                  className={`w-12 h-12 rounded-xl ${isExternalLogoUrl ? 'object-contain' : 'object-cover'}`}
+                  className={`w-12 h-12 rounded-xl ${logoTreatAsRemote ? 'object-contain bg-white/80 p-0.5' : 'object-contain'}`}
                 />
               ) : (
-                <img
-                  src="/getsettime-icon.png"
-                  alt={workspaceName}
-                  className="w-12 h-12 rounded-xl object-cover"
-                />
+                <div className="w-12 h-12 rounded-xl bg-white/40 animate-pulse" aria-hidden />
               )}
               <div className="min-w-0">
                 <div className="text-sm text-gray-600">Schedule with</div>
@@ -196,7 +196,7 @@ export function BookingPreviewSidebar({
                         <svg className="w-3.5 h-3.5 text-teal-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5.121 17.804A13.937 13.937 0 0112 16c2.5 0 4.847.655 6.879 1.804M15 10a3 3 0 11-6 0 3 3 0 016 0zm6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                         </svg>
-                        <span>{selectedProvider.name}</span>
+                        <span className="capitalize">{selectedProvider.name}</span>
                       </div>
                     </div>
                   </div>

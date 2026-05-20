@@ -27,6 +27,7 @@ const UsersPage: React.FC = () => {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
@@ -128,6 +129,7 @@ const UsersPage: React.FC = () => {
   const handleDeleteClick = (user: User) => {
     if (user.role === 'superadmin') return;
     setError(null);
+    setSuccess(null);
     setDeletingUser(user);
     setIsDeleteModalOpen(true);
   };
@@ -246,6 +248,7 @@ const UsersPage: React.FC = () => {
 
     setSubmitting(true);
     setError(null);
+    setSuccess(null);
 
     try {
       const response = await fetch(`/api/users/${deletingUser.id}`, {
@@ -260,6 +263,7 @@ const UsersPage: React.FC = () => {
 
       setIsDeleteModalOpen(false);
       setDeletingUser(null);
+      setSuccess(data.message || 'User deleted successfully');
 
       await fetchUsers();
     } catch (err: any) {
@@ -356,6 +360,12 @@ const UsersPage: React.FC = () => {
       {error && (
         <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-red-800">
           {error}
+        </div>
+      )}
+
+      {success && (
+        <div className="bg-green-50 border border-green-200 rounded-xl p-4 text-green-800">
+          {success}
         </div>
       )}
 

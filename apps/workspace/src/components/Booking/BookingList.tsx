@@ -16,6 +16,7 @@ import {
 import { type Booking } from "@/src/types/booking";
 import { supabase } from "@/lib/supabaseClient";
 import { useEventTypes, useServiceProviders } from "@/src/hooks/useBookingLookups";
+import { useAuth } from "@/src/providers/AuthProvider";
 import { formatDate, formatTime } from "@/src/utils/date";
 import {
   getServiceProviderName,
@@ -57,8 +58,14 @@ function useDebouncedValue<T>(value: T, delay: number): T {
 }
 
 const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
+  const { user } = useAuth();
   const { data: eventTypes } = useEventTypes();
   const { data: serviceProviders, workspaceOwner } = useServiceProviders();
+
+  const currentUserRole =
+    (user?.user_metadata?.role as string | undefined) ?? null;
+  const isLoggedInServiceProvider = currentUserRole === "service_provider";
+  const currentUserId = user?.id ?? null;
 
   const [bookings, setBookings] = useState<Booking[]>(initialBookings || []);
   const [filter, setFilter] = useState("");
@@ -96,6 +103,17 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
   const debouncedEventType = useDebouncedValue(eventTypeFilter, 300);
   const debouncedProvider = useDebouncedValue(providerFilter, 300);
   const debouncedSort = useDebouncedValue(sortFilter, 300);
+
+  const effectiveProviderFilter = useMemo(() => {
+    if (isLoggedInServiceProvider && currentUserId) return currentUserId;
+    return debouncedProvider;
+  }, [isLoggedInServiceProvider, currentUserId, debouncedProvider]);
+
+  useEffect(() => {
+    if (isLoggedInServiceProvider && currentUserId) {
+      setProviderFilter(currentUserId);
+    }
+  }, [isLoggedInServiceProvider, currentUserId]);
 
   const fetchBookings = useCallback(
     async (
@@ -171,7 +189,7 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
   useEffect(() => {
     if (!initialFetchDone.current) return;
     setCurrentPage(1);
-  }, [debouncedFilter, debouncedDate, debouncedStatus, debouncedEventType, debouncedProvider, debouncedSort]);
+  }, [debouncedFilter, debouncedDate, debouncedStatus, debouncedEventType, effectiveProviderFilter, debouncedSort]);
 
   // Fetch when page or filters change
   useEffect(() => {
@@ -181,7 +199,7 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
       debouncedDate,
       debouncedStatus,
       debouncedEventType,
-      debouncedProvider,
+      effectiveProviderFilter,
       debouncedSort
     );
     initialFetchDone.current = true;
@@ -191,7 +209,7 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
     debouncedDate,
     debouncedStatus,
     debouncedEventType,
-    debouncedProvider,
+    effectiveProviderFilter,
     debouncedSort,
     fetchBookings,
   ]);
@@ -226,7 +244,7 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
             debouncedDate,
             debouncedStatus,
             debouncedEventType,
-            debouncedProvider,
+            effectiveProviderFilter,
             debouncedSort
           );
           await fetchWorkspaceBookingStats();
@@ -248,7 +266,7 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
       debouncedDate,
       debouncedStatus,
       debouncedEventType,
-      debouncedProvider,
+      effectiveProviderFilter,
       debouncedSort,
       fetchBookings,
       fetchWorkspaceBookingStats,
@@ -317,7 +335,7 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
       debouncedDate,
       debouncedStatus,
       debouncedEventType,
-      debouncedProvider,
+      effectiveProviderFilter,
       debouncedSort
     );
     await fetchWorkspaceBookingStats();
@@ -329,7 +347,7 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
     debouncedDate,
     debouncedStatus,
     debouncedEventType,
-    debouncedProvider,
+    effectiveProviderFilter,
     debouncedSort,
     fetchBookings,
     fetchWorkspaceBookingStats,
@@ -357,7 +375,7 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
       debouncedDate,
       debouncedStatus,
       debouncedEventType,
-      debouncedProvider,
+      effectiveProviderFilter,
       debouncedSort
     );
     await fetchWorkspaceBookingStats();
@@ -368,7 +386,7 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
     debouncedDate,
     debouncedStatus,
     debouncedEventType,
-    debouncedProvider,
+    effectiveProviderFilter,
     debouncedSort,
     fetchBookings,
     fetchWorkspaceBookingStats,
@@ -586,12 +604,13 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
             onProviderFilterChange={setProviderFilter}
             onSortFilterChange={setSortFilter}
             onResetFilters={handleResetFilters}
+            hideProviderFilter={isLoggedInServiceProvider}
           />
         </div>
 
         {showForm && (
           <div
-            className={`fixed inset-0 z-40 flex m-0 justify-end transition-opacity duration-200 ${
+            className={`fixed inset-0 z-40 flex items-center justify-center p-4 transition-opacity duration-200 ${
               showForm ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0"
             }`}
           >
@@ -603,21 +622,21 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
               onClick={handleFormCancel}
             />
             <section
-              className={`relative h-full w-full max-w-xl transform bg-white shadow-2xl transition-transform duration-300 ${
-                showForm ? "translate-x-0" : "translate-x-full"
+              className={`relative w-full max-w-3xl transform overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-2xl transition-all duration-300 ${
+                showForm ? "scale-100 translate-y-0 opacity-100" : "scale-95 translate-y-2 opacity-0"
               }`}
             >
-              <div className="flex items-center justify-between border-b border-gray-200 px-6 py-4">
+              <div className="flex items-center justify-between border-b border-slate-200 px-6 py-5">
                 <div>
-                  <h3 className="text-lg font-semibold text-gray-800">
-                    Edit Your Booking
+                  <h3 className="text-2xl font-bold text-slate-900">
+                    Edit Booking
                   </h3>
-                  <p className="text-xs uppercase tracking-wide text-gray-500">
-                    Make changes to your scheduled Bookings anytime.
+                  <p className="text-sm text-slate-500">
+                    Update booking details and save changes.
                   </p>
                 </div>
                 <button
-                  className="rounded-full p-2 text-gray-500 transition hover:bg-gray-100 hover:text-gray-700"
+                  className="rounded-full border border-slate-200 p-2 text-slate-500 transition hover:bg-slate-100 hover:text-slate-700"
                   aria-label="Close booking form"
                   onClick={handleFormCancel}
                 >
@@ -634,7 +653,7 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
                   </svg>
                 </button>
               </div>
-              <div className="h-[calc(100%-4rem)] overflow-y-auto p-6">
+              <div className="max-h-[calc(100vh-12rem)] overflow-y-auto p-6">
                 <BookingForm
                   booking={editingBooking}
                   onSave={handleFormSave}

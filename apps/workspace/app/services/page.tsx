@@ -19,6 +19,7 @@ import { AlertModal } from "@/src/components/ui/AlertModal";
 import { ConfirmModal } from "@/src/components/ui/ConfirmModal";
 import { ServiceSkeleton } from "@/src/components/ui/ServiceSkeleton";
 import { useServiceProviders, useUserDepartments } from "@/src/hooks/useBookingLookups";
+import { useAuth } from "@/src/providers/AuthProvider";
 import type { ServiceProvider } from "@/src/types/booking-entities";
 
 type ServiceStatus = "active" | "inactive";
@@ -111,9 +112,18 @@ function parsePriceInput(raw: string): number | null {
 }
 
 export default function ServicesPage() {
+  const { user, loading: authLoading } = useAuth();
   const { data: serviceProviders } = useServiceProviders();
-  const { byDepartment: providersByDepartmentId, refetch: refetchUserDepartments } =
-    useUserDepartments();
+  const {
+    byDepartment: providersByDepartmentId,
+    byUser: deptIdsByProvider,
+    refetch: refetchUserDepartments,
+  } = useUserDepartments();
+
+  const currentUserRole =
+    (user?.user_metadata?.role as string | undefined) ?? null;
+  const isLoggedInServiceProvider = currentUserRole === "service_provider";
+  const currentUserId = user?.id ?? null;
 
   const [departments, setDepartments] = useState<Department[]>([]);
   const [services, setServices] = useState<Service[]>([]);
@@ -204,6 +214,32 @@ export default function ServicesPage() {
     loadAll();
   }, [loadAll]);
 
+  useEffect(() => {
+    if (!isLoggedInServiceProvider || !currentUserId) return;
+    const assigned = deptIdsByProvider.get(currentUserId);
+    if (!assigned || assigned.size === 0) return;
+    setSelectedDepartmentId((prev) => {
+      if (prev !== null && assigned.has(prev)) return prev;
+      const firstAssigned = departments.find((d) => assigned.has(d.id));
+      return firstAssigned?.id ?? null;
+    });
+  }, [
+    isLoggedInServiceProvider,
+    currentUserId,
+    deptIdsByProvider,
+    departments,
+  ]);
+
+  const assignedDeptIdsForCurrentProvider = useMemo(() => {
+    if (!isLoggedInServiceProvider || !currentUserId) return new Set<number>();
+    return deptIdsByProvider.get(currentUserId) ?? new Set<number>();
+  }, [isLoggedInServiceProvider, currentUserId, deptIdsByProvider]);
+
+  const departmentsForList = useMemo(() => {
+    if (!isLoggedInServiceProvider) return departments;
+    return departments.filter((d) => assignedDeptIdsForCurrentProvider.has(d.id));
+  }, [departments, isLoggedInServiceProvider, assignedDeptIdsForCurrentProvider]);
+
   const callServicesApi = useCallback(
     async (
       method: "POST" | "PUT" | "DELETE",
@@ -262,7 +298,7 @@ export default function ServicesPage() {
     (department: Department | null): DoctorRow[] => {
       if (!department) return [];
       const assignedIds = providersByDepartmentId.get(department.id) ?? new Set();
-      return serviceProviders
+      const rows: DoctorRow[] = serviceProviders
         .filter((sp) => assignedIds.has(sp.id))
         .map((sp) => {
           const name = providerDisplayName(sp);
@@ -273,8 +309,38 @@ export default function ServicesPage() {
             avatar: providerInitials(name),
           };
         });
+
+      if (
+        isLoggedInServiceProvider &&
+        currentUserId &&
+        assignedIds.has(currentUserId) &&
+        !rows.some((r) => r.id === currentUserId)
+      ) {
+        const meta = user?.user_metadata as
+          | { full_name?: string; name?: string }
+          | undefined;
+        const name =
+          meta?.full_name?.trim() ||
+          meta?.name?.trim() ||
+          user?.email ||
+          "You";
+        rows.push({
+          id: currentUserId,
+          name,
+          role: "Doctor",
+          avatar: providerInitials(name),
+        });
+      }
+
+      return rows;
     },
-    [serviceProviders, providersByDepartmentId]
+    [
+      serviceProviders,
+      providersByDepartmentId,
+      isLoggedInServiceProvider,
+      currentUserId,
+      user,
+    ]
   );
 
   const departmentDoctors = useMemo(
@@ -323,9 +389,21 @@ export default function ServicesPage() {
   );
 
   const getDepartmentDoctorCount = useCallback(
-    (department: Department) =>
-      doctorsForDepartment(department).length,
-    [doctorsForDepartment]
+    (department: Department) => {
+      const fromAssignments = doctorsForDepartment(department).length;
+      if (
+        isLoggedInServiceProvider &&
+        assignedDeptIdsForCurrentProvider.has(department.id)
+      ) {
+        return Math.max(fromAssignments, 1);
+      }
+      return fromAssignments;
+    },
+    [
+      doctorsForDepartment,
+      isLoggedInServiceProvider,
+      assignedDeptIdsForCurrentProvider,
+    ]
   );
 
   const isDoctorAssignedToService = useCallback(
@@ -588,7 +666,7 @@ export default function ServicesPage() {
         ? "Active only"
         : "Inactive only";
 
-  if (initialLoading) {
+  if (initialLoading || authLoading) {
     return <ServiceSkeleton />;
   }
 
@@ -644,12 +722,14 @@ export default function ServicesPage() {
             <div className="mb-4">
               <h2 className="text-lg font-semibold text-slate-900">Departments</h2>
               <p className="mt-1 text-sm text-slate-500">
-                Select one department to manage services and doctor mapping.
+                {isLoggedInServiceProvider
+                  ? "Your assigned departments. Select one to manage its services."
+                  : "Select one department to manage services and doctor mapping."}
               </p>
             </div>
 
             <div className="space-y-3">
-              {departments.map((department) => {
+              {departmentsForList.map((department) => {
                 const active = department.id === selectedDepartmentId;
                 const doctorCount = getDepartmentDoctorCount(department);
                 const svcCount = getDepartmentServiceCount(department.id);
@@ -701,13 +781,17 @@ export default function ServicesPage() {
                 );
               })}
 
-              {departments.length === 0 && (
+              {departmentsForList.length === 0 && (
                 <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-6 text-center">
                   <p className="text-sm font-medium text-slate-700">
-                    No departments yet
+                    {isLoggedInServiceProvider
+                      ? "No assigned departments yet"
+                      : "No departments yet"}
                   </p>
                   <p className="mt-1 text-xs text-slate-500">
-                    Create a department first to add services.
+                    {isLoggedInServiceProvider
+                      ? "Ask your workspace admin to assign departments, or add them from the Departments page."
+                      : "Create a department first to add services."}
                   </p>
                 </div>
               )}

@@ -11,6 +11,7 @@ import { useRouter, usePathname } from 'next/navigation'
 import type { AuthChangeEvent, Session, User as SupabaseUser } from '@supabase/supabase-js'
 import {
   workspaceAdminIncompleteOnboarding,
+  serviceProviderIncompleteOnboarding,
   isAllowedPathDuringWorkspaceOnboarding,
   workspaceOnboardingRegisterUrl,
 } from '@/lib/auth_onboarding'
@@ -272,6 +273,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           return
         }
         if (incomplete) {
+          const meta = currentUser.user_metadata as Record<string, unknown> | undefined
+          router_ref.current.push(workspaceOnboardingRegisterUrl(meta ?? {}))
+          setUser(currentUser)
+          return
+        }
+      }
+
+      if (
+        userRole === 'service_provider' &&
+        !isPublicPath(pathname_ref.current) &&
+        !isAllowedPathDuringWorkspaceOnboarding(pathname_ref.current)
+      ) {
+        if (serviceProviderIncompleteOnboarding(currentUser as SupabaseUser)) {
           const meta = currentUser.user_metadata as Record<string, unknown> | undefined
           router_ref.current.push(workspaceOnboardingRegisterUrl(meta ?? {}))
           setUser(currentUser)

@@ -46,9 +46,10 @@ export async function GET(req: NextRequest) {
 
     const { data, error } = await supabase
       .from('departments')
-      .select('id, name, description')
+      .select('id, name, description, status')
       .eq('workspace_id', workspaceIdResolved)
       .eq('flag', true)
+      .eq('status', 'active')
       .order('created_at', { ascending: false });
 
     if (error) {

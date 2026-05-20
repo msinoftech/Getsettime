@@ -23,6 +23,7 @@ import { AlertModal } from "@/src/components/ui/AlertModal";
 import { ConfirmModal } from "@/src/components/ui/ConfirmModal";
 import { DepartmentSkeleton } from "@/src/components/ui/DepartmentSkeleton";
 import { useServiceProviders, useUserDepartments } from "@/src/hooks/useBookingLookups";
+import { useAuth } from "@/src/providers/AuthProvider";
 import type { ServiceProvider } from "@/src/types/booking-entities";
 
 type DepartmentStatus = "active" | "inactive";
@@ -73,10 +74,18 @@ const SOLE_SP_DEPARTMENT_CHIP_STYLES = [
 ] as const;
 
 export default function DepartmentsPage() {
+  const { user, loading: authLoading } = useAuth();
   const { data: serviceProviders, loading: spLoading } = useServiceProviders();
   const { byUser: deptIdsByProvider, refetch: refetchUserDepartments } =
     useUserDepartments();
-  const showFullDoctorFlow = serviceProviders.length > 1;
+
+  const currentUserRole =
+    (user?.user_metadata?.role as string | undefined) ?? null;
+  const isLoggedInServiceProvider = currentUserRole === "service_provider";
+  const currentUserId = user?.id ?? null;
+
+  const showFullDoctorFlow =
+    serviceProviders.length > 1 && !isLoggedInServiceProvider;
 
   const [departments, setDepartments] = useState<Department[]>([]);
   const [selectedDepartmentId, setSelectedDepartmentId] = useState<number | null>(
@@ -191,6 +200,22 @@ export default function DepartmentsPage() {
     fetchSuggestions();
   }, [fetchDepartments, fetchSuggestions]);
 
+  useEffect(() => {
+    if (!isLoggedInServiceProvider || !currentUserId) return;
+    const assigned = deptIdsByProvider.get(currentUserId);
+    if (!assigned || assigned.size === 0) return;
+    setSelectedDepartmentId((prev) => {
+      if (prev !== null && assigned.has(prev)) return prev;
+      const firstAssigned = departments.find((d) => assigned.has(d.id));
+      return firstAssigned?.id ?? null;
+    });
+  }, [
+    isLoggedInServiceProvider,
+    currentUserId,
+    deptIdsByProvider,
+    departments,
+  ]);
+
   const selectedDepartment = useMemo(
     () => departments.find((d) => d.id === selectedDepartmentId) ?? null,
     [departments, selectedDepartmentId]
@@ -296,27 +321,78 @@ export default function DepartmentsPage() {
     return departments;
   }, [departments, departmentFilter]);
 
-  const soleProviderId = useMemo(
-    () => (serviceProviders.length === 1 ? serviceProviders[0]!.id : null),
-    [serviceProviders]
-  );
+  const effectiveProviderId = useMemo(() => {
+    if (isLoggedInServiceProvider && currentUserId) return currentUserId;
+    if (serviceProviders.length === 1) return serviceProviders[0]!.id;
+    return null;
+  }, [
+    isLoggedInServiceProvider,
+    currentUserId,
+    serviceProviders,
+  ]);
+
+  const assignedDeptIdsForEffectiveProvider = useMemo(() => {
+    if (!effectiveProviderId) return new Set<number>();
+    return deptIdsByProvider.get(effectiveProviderId) ?? new Set<number>();
+  }, [effectiveProviderId, deptIdsByProvider]);
 
   const assignedDepartmentsForSoleProvider = useMemo(() => {
-    if (!soleProviderId) return [];
-    const deptIds = deptIdsByProvider.get(soleProviderId) ?? new Set<number>();
+    if (!effectiveProviderId) return [];
     return departments.filter((d) => {
-      if (!deptIds.has(d.id)) return false;
+      if (!assignedDeptIdsForEffectiveProvider.has(d.id)) return false;
       if (departmentFilter === "active") return d.status === "active";
       if (departmentFilter === "inactive") return d.status === "inactive";
       return true;
     });
-  }, [departments, soleProviderId, departmentFilter, deptIdsByProvider]);
+  }, [
+    departments,
+    effectiveProviderId,
+    departmentFilter,
+    assignedDeptIdsForEffectiveProvider,
+  ]);
 
   const suggestionAlreadyExists = useCallback(
     (name: string) =>
       departments.some((d) => d.name.toLowerCase() === name.toLowerCase()),
     [departments]
   );
+
+  const suggestionShowsAsSelected = useCallback(
+    (name: string) => {
+      if (isLoggedInServiceProvider) {
+        const dep = departments.find(
+          (d) => d.name.toLowerCase() === name.toLowerCase()
+        );
+        return (
+          dep != null && assignedDeptIdsForEffectiveProvider.has(dep.id)
+        );
+      }
+      return suggestionAlreadyExists(name);
+    },
+    [
+      isLoggedInServiceProvider,
+      departments,
+      assignedDeptIdsForEffectiveProvider,
+      suggestionAlreadyExists,
+    ]
+  );
+
+  const soleServiceProviderName = useMemo(() => {
+    if (!effectiveProviderId) return null;
+    if (isLoggedInServiceProvider && user) {
+      const meta = user.user_metadata as
+        | { full_name?: string; name?: string }
+        | undefined;
+      return meta?.full_name || meta?.name || user.email || "You";
+    }
+    const sp = serviceProviders.find((p) => p.id === effectiveProviderId);
+    return sp ? serviceProviderDisplayName(sp) : null;
+  }, [
+    effectiveProviderId,
+    isLoggedInServiceProvider,
+    user,
+    serviceProviders,
+  ]);
 
   const getDepartmentName = useCallback(
     (id: number) => departments.find((d) => d.id === id)?.name ?? "",
@@ -330,12 +406,29 @@ export default function DepartmentsPage() {
   );
 
   const getDepartmentDoctorCount = useCallback(
-    (departmentId: number) =>
-      doctors.filter((doctor) =>
+    (departmentId: number) => {
+      const fromAssignments = doctors.filter((doctor) =>
         doctor.assignedDepartmentIds.includes(departmentId)
-      ).length,
-    [doctors]
+      ).length;
+      if (
+        isLoggedInServiceProvider &&
+        assignedDeptIdsForEffectiveProvider.has(departmentId)
+      ) {
+        return Math.max(fromAssignments, 1);
+      }
+      return fromAssignments;
+    },
+    [doctors, isLoggedInServiceProvider, assignedDeptIdsForEffectiveProvider]
   );
+
+  const departmentsForList = useMemo(() => {
+    if (isLoggedInServiceProvider) return assignedDepartmentsForSoleProvider;
+    return filteredDepartments;
+  }, [
+    isLoggedInServiceProvider,
+    assignedDepartmentsForSoleProvider,
+    filteredDepartments,
+  ]);
 
   const callApi = useCallback(
     async (
@@ -367,6 +460,53 @@ export default function DepartmentsPage() {
     [getAuthToken]
   );
 
+  const assignSelfToDepartment = useCallback(
+    async (departmentId: number) => {
+      if (!isLoggedInServiceProvider || !currentUserId) return false;
+      if (assignedDeptIdsForEffectiveProvider.has(departmentId)) {
+        setSelectedDepartmentId(departmentId);
+        return true;
+      }
+
+      setBusyAction(true);
+      try {
+        const token = await getAuthToken();
+        if (!token) {
+          setAlertMessage("Not authenticated");
+          return false;
+        }
+        const res = await fetch("/api/user-departments", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            user_id: currentUserId,
+            department_id: departmentId,
+          }),
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => null);
+          setAlertMessage(err?.error || `Request failed (${res.status})`);
+          return false;
+        }
+        await refetchUserDepartments();
+        setSelectedDepartmentId(departmentId);
+        return true;
+      } finally {
+        setBusyAction(false);
+      }
+    },
+    [
+      isLoggedInServiceProvider,
+      currentUserId,
+      assignedDeptIdsForEffectiveProvider,
+      getAuthToken,
+      refetchUserDepartments,
+    ]
+  );
+
   const createDepartment = useCallback(
     async (rawName: string) => {
       const name = rawName.trim();
@@ -376,15 +516,23 @@ export default function DepartmentsPage() {
         (d) => d.name.toLowerCase() === name.toLowerCase()
       );
       if (existing) {
-        setSelectedDepartmentId(existing.id);
+        if (isLoggedInServiceProvider && currentUserId) {
+          await assignSelfToDepartment(existing.id);
+        } else {
+          setSelectedDepartmentId(existing.id);
+        }
         setDepartmentName("");
         setShowCustomInput(false);
         return;
       }
 
       setBusyAction(true);
-      const sole =
-        serviceProviders.length === 1 ? serviceProviders[0] : undefined;
+      const linkTarget =
+        isLoggedInServiceProvider && currentUserId
+          ? { id: currentUserId }
+          : serviceProviders.length === 1
+            ? serviceProviders[0]
+            : undefined;
       const data = (await callApi("POST", {
         name,
         status: "active",
@@ -394,9 +542,10 @@ export default function DepartmentsPage() {
         reused?: boolean;
       } | null;
 
-      if (sole && data?.department?.id != null) {
+      if (linkTarget && data?.department?.id != null) {
         const deptId = data.department.id;
-        const alreadyLinked = deptIdsByProvider.get(sole.id)?.has(deptId) ?? false;
+        const alreadyLinked =
+          deptIdsByProvider.get(linkTarget.id)?.has(deptId) ?? false;
         if (!alreadyLinked) {
           const token = await getAuthToken();
           if (token) {
@@ -407,7 +556,7 @@ export default function DepartmentsPage() {
                 Authorization: `Bearer ${token}`,
               },
               body: JSON.stringify({
-                user_id: sole.id,
+                user_id: linkTarget.id,
                 department_id: deptId,
               }),
             });
@@ -428,12 +577,29 @@ export default function DepartmentsPage() {
       setDepartmentName("");
       setShowCustomInput(false);
     },
-    [callApi, departments, fetchDepartments, serviceProviders, deptIdsByProvider, refetchUserDepartments, getAuthToken]
+    [
+      callApi,
+      departments,
+      fetchDepartments,
+      serviceProviders,
+      deptIdsByProvider,
+      refetchUserDepartments,
+      getAuthToken,
+      isLoggedInServiceProvider,
+      currentUserId,
+      assignSelfToDepartment,
+    ]
   );
 
   const handleAddDepartment = () => createDepartment(departmentName);
 
-  const addSuggestedDepartment = (name: string) => createDepartment(name);
+  const handleSuggestionClick = useCallback(
+    async (name: string) => {
+      if (suggestionShowsAsSelected(name)) return;
+      await createDepartment(name);
+    },
+    [suggestionShowsAsSelected, createDepartment]
+  );
 
   const startEditDepartment = (department: Department) => {
     setEditingDepartmentId(department.id);
@@ -666,14 +832,9 @@ export default function DepartmentsPage() {
     );
   };
 
-  if (initialLoading || spLoading) {
+  if (initialLoading || spLoading || authLoading) {
     return <DepartmentSkeleton />;
   }
-
-  const soleServiceProviderName =
-    serviceProviders.length === 1
-      ? serviceProviderDisplayName(serviceProviders[0]!)
-      : null;
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -811,7 +972,9 @@ export default function DepartmentsPage() {
                     Department List
                   </h2>
                   <p className="mt-1 text-sm text-slate-500">
-                    Add, edit, activate, deactivate, and delete departments.
+                    {isLoggedInServiceProvider
+                      ? "Your assigned departments. Add more from Quick Suggestions."
+                      : "Add, edit, activate, deactivate, and delete departments."}
                   </p>
                 </div>
 
@@ -822,44 +985,47 @@ export default function DepartmentsPage() {
                     </p>
                     <div className="flex flex-wrap gap-2">
                       {suggestions.map((item) => {
-                        const exists = suggestionAlreadyExists(item);
+                        const selected = suggestionShowsAsSelected(item);
 
                         return (
                           <button
                             key={item}
                             type="button"
-                            onClick={() => !exists && addSuggestedDepartment(item)}
-                            disabled={busyAction}
+                            onClick={() => void handleSuggestionClick(item)}
+                            disabled={busyAction || selected}
                             className={`rounded-full px-3 py-1.5 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-60 ${
-                              exists
+                              selected
                                 ? "border border-emerald-200 bg-emerald-50 text-emerald-700"
                                 : "border border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
                             }`}
                           >
-                            {exists ? "\u2713" : "+"} {item}
+                            {selected ? "\u2713" : "+"} {item}
                           </button>
                         );
                       })}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setShowCustomInput(true);
-                          setTimeout(() => customInputRef.current?.focus(), 0);
-                        }}
-                        disabled={busyAction}
-                        className={`rounded-full px-3 py-1.5 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-60 ${
-                          showCustomInput
-                            ? "border border-indigo-300 bg-indigo-50 text-indigo-700"
-                            : "border border-dashed border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
-                        }`}
-                      >
-                        + Other
-                      </button>
+                      {!isLoggedInServiceProvider && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowCustomInput(true);
+                            setTimeout(() => customInputRef.current?.focus(), 0);
+                          }}
+                          disabled={busyAction}
+                          className={`rounded-full px-3 py-1.5 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-60 ${
+                            showCustomInput
+                              ? "border border-indigo-300 bg-indigo-50 text-indigo-700"
+                              : "border border-dashed border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
+                          }`}
+                        >
+                          + Other
+                        </button>
+                      )}
                     </div>
                   </div>
                 )}
 
-                {(suggestions.length === 0 || showCustomInput) && (
+                {!isLoggedInServiceProvider &&
+                  (suggestions.length === 0 || showCustomInput) && (
                   <div className="mt-5 flex gap-2">
                     <input
                       ref={customInputRef}
@@ -939,7 +1105,7 @@ export default function DepartmentsPage() {
                 </div>
 
                 <div className="mt-5 space-y-3">
-                  {filteredDepartments.map((dep) => {
+                  {departmentsForList.map((dep) => {
                     const active = dep.id === selectedDepartmentId;
                     const count = getDepartmentDoctorCount(dep.id);
                     const isEditing = editingDepartmentId === dep.id;
@@ -1023,7 +1189,7 @@ export default function DepartmentsPage() {
                               </button>
                             </div>
                           </div>
-                        ) : (
+                        ) : !isLoggedInServiceProvider ? (
                           <div className="mt-3 flex flex-wrap gap-2">
                             <button
                               type="button"
@@ -1067,18 +1233,22 @@ export default function DepartmentsPage() {
                               Delete
                             </button>
                           </div>
-                        )}
+                        ) : null}
                       </div>
                     );
                   })}
 
-                  {filteredDepartments.length === 0 && (
+                  {departmentsForList.length === 0 && (
                     <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center">
                       <p className="text-sm font-semibold text-slate-700">
-                        No departments found
+                        {isLoggedInServiceProvider
+                          ? "No assigned departments yet"
+                          : "No departments found"}
                       </p>
                       <p className="mt-1 text-xs text-slate-500">
-                        Try switching filter or add a new department.
+                        {isLoggedInServiceProvider
+                          ? "Choose a department from Quick Suggestions above."
+                          : "Try switching filter or add a new department."}
                       </p>
                     </div>
                   )}
@@ -1213,10 +1383,9 @@ export default function DepartmentsPage() {
                     </h2>
 
                     <p className="mt-2 text-sm text-slate-500">
-                      New departments you add on the left are automatically
-                      assigned to this provider. Click a chip to match the
-                      selection on the left; filters above the list still apply
-                      to which chips appear.
+                      {isLoggedInServiceProvider
+                        ? "Departments assigned to you by your workspace admin. Click a chip or an assigned department on the left to view details."
+                        : "New departments you add on the left are automatically assigned to this provider. Click a chip to match the selection on the left; filters above the list still apply to which chips appear."}
                     </p>
 
                     <div className="mt-4">
@@ -1397,7 +1566,9 @@ export default function DepartmentsPage() {
                 </div>
               </div>
               )}
-              {!showFullDoctorFlow && serviceProviders.length === 1 && (
+              {!showFullDoctorFlow &&
+                effectiveProviderId &&
+                !isLoggedInServiceProvider && (
               <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
                 <h3 className="text-base font-semibold text-slate-900">
                   Tips for a single provider workspace

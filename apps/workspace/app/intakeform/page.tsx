@@ -27,6 +27,12 @@ interface CustomField {
 
 type DefaultIntakeFieldKey = "name" | "email" | "phone" | "file_upload" | "additional_description";
 type FieldIcon = "user" | "mail" | "phone" | "upload" | "message" | "file";
+const LOCKED_DEFAULT_INTAKE_FIELDS: ReadonlySet<DefaultIntakeFieldKey> = new Set([
+  "name",
+  "email",
+  "phone",
+  "additional_description",
+]);
 
 const DEFAULT_INTAKE_FIELD_META: Array<{
   key: DefaultIntakeFieldKey;
@@ -37,8 +43,8 @@ const DEFAULT_INTAKE_FIELD_META: Array<{
   { key: "name", label: "Name", description: "Collect invitee's full name", icon: "user" },
   { key: "email", label: "Email", description: "Collect invitee's email address", icon: "mail" },
   { key: "phone", label: "Phone", description: "Collect invitee's phone number", icon: "phone" },
-  { key: "file_upload", label: "File Upload", description: "Allow invitees to upload a file, PDF, or image", icon: "upload" },
   { key: "additional_description", label: "Additional Description", description: "Collect notes, symptoms, requests, or extra details", icon: "message" },
+  { key: "file_upload", label: "File Upload", description: "Allow invitees to upload a file, PDF, or image", icon: "upload" },
 ];
 
 type IconName = FieldIcon | "search" | "plus" | "save" | "trash" | "edit" | "sparkles" | "grip" | "clipboard";
@@ -97,7 +103,7 @@ export default function RoutingForm({ dark = false }) {
   const [intakeFormSettings, setIntakeFormSettings] = useState({
     name: true,
     email: true,
-    phone: false,
+    phone: true,
     /*
     TEMP DISABLED: Services intake support
     services: {
@@ -106,7 +112,7 @@ export default function RoutingForm({ dark = false }) {
     },
     */
     file_upload: false,
-    additional_description: false,
+    additional_description: true,
     custom_fields: [] as CustomField[],
   });
 
@@ -172,9 +178,9 @@ export default function RoutingForm({ dark = false }) {
         const data = await response.json();
         if (data.settings?.intake_form) {
           setIntakeFormSettings({
-            name: data.settings.intake_form.name ?? true,
-            email: data.settings.intake_form.email ?? true,
-            phone: data.settings.intake_form.phone ?? false,
+            name: true,
+            email: true,
+            phone: true,
             /*
             TEMP DISABLED: Services intake support
             services: data.settings.intake_form.services ?? {
@@ -183,7 +189,7 @@ export default function RoutingForm({ dark = false }) {
             },
             */
             file_upload: data.settings.intake_form.file_upload ?? false,
-            additional_description: data.settings.intake_form.additional_description ?? false,
+            additional_description: true,
             custom_fields: data.settings.intake_form.custom_fields ?? [],
           });
         }
@@ -212,7 +218,13 @@ export default function RoutingForm({ dark = false }) {
         },
         body: JSON.stringify({
           settings: {
-            intake_form: intakeFormSettings,
+            intake_form: {
+              ...intakeFormSettings,
+              name: true,
+              email: true,
+              phone: true,
+              additional_description: true,
+            },
           },
         }),
       });
@@ -359,6 +371,7 @@ export default function RoutingForm({ dark = false }) {
   );
 
   const toggleDefaultIntakeField = (key: DefaultIntakeFieldKey) => {
+    if (LOCKED_DEFAULT_INTAKE_FIELDS.has(key)) return;
     setIntakeFormSettings((prev) => {
       switch (key) {
         case "name":
@@ -464,6 +477,7 @@ export default function RoutingForm({ dark = false }) {
               <div className="mt-7 space-y-3">
                 {filteredDefaultFieldMeta.map((field) => {
                   const enabled = defaultFieldEnabled(field.key);
+                  const isLocked = LOCKED_DEFAULT_INTAKE_FIELDS.has(field.key);
                   return (
                     <div
                       key={field.key}
@@ -481,9 +495,10 @@ export default function RoutingForm({ dark = false }) {
                       <button
                         type="button"
                         onClick={() => toggleDefaultIntakeField(field.key)}
-                        aria-label={`Toggle ${field.label}`}
+                        aria-label={isLocked ? `${field.label} is always enabled` : `Toggle ${field.label}`}
                         aria-pressed={enabled}
-                        className={`relative h-8 w-14 shrink-0 rounded-full transition ${enabled ? "bg-blue-600" : "bg-slate-300"}`}
+                        disabled={isLocked}
+                        className={`relative h-8 w-14 shrink-0 rounded-full transition ${enabled ? "bg-blue-600" : "bg-slate-300"} ${isLocked ? "cursor-not-allowed opacity-20" : ""}`}
                       >
                         <span
                           className={`absolute top-1 h-6 w-6 rounded-full bg-white shadow transition ${enabled ? "left-7" : "left-1"}`}

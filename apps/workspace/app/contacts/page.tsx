@@ -101,6 +101,35 @@ function get_last_booking_label(contact: FormContact): string {
   return "No booking yet";
 }
 
+function get_contact_notes(contact: FormContact): string {
+  const meta = contact.metadata;
+
+  if (meta && typeof meta === "object" && meta !== null && "notes" in meta) {
+    const v = (meta as { notes?: unknown }).notes;
+
+    if (typeof v === "string" && v.trim()) {
+      return v.trim();
+    }
+  }
+
+  return "No notes added yet.";
+}
+
+/** Raw notes string for edit form (empty if none). */
+function get_contact_notes_value(contact: FormContact): string {
+  const meta = contact.metadata;
+
+  if (meta && typeof meta === "object" && meta !== null && "notes" in meta) {
+    const v = (meta as { notes?: unknown }).notes;
+
+    if (typeof v === "string") {
+      return v;
+    }
+  }
+
+  return "";
+}
+
 function get_filtered_contacts(
   contacts: FormContact[],
 
@@ -183,6 +212,10 @@ export default function ContactsCreative() {
     state: "",
 
     country: "",
+
+    source: "Manual" satisfies contact_source,
+
+    notes: "",
   });
 
   const fetch_contacts = useCallback(async () => {
@@ -275,6 +308,10 @@ export default function ContactsCreative() {
       state: "",
 
       country: "",
+
+      source: "Manual",
+
+      notes: "",
     });
 
     set_show_modal(true);
@@ -295,6 +332,10 @@ export default function ContactsCreative() {
       state: contact.state ?? "",
 
       country: contact.country ?? "",
+
+      source: get_contact_source(contact),
+
+      notes: get_contact_notes_value(contact),
     });
 
     set_show_modal(true);
@@ -388,6 +429,10 @@ export default function ContactsCreative() {
             state: form_data.state || null,
 
             country: form_data.country || null,
+
+            source: form_data.source,
+
+            notes: form_data.notes,
           }),
         });
 
@@ -422,6 +467,10 @@ export default function ContactsCreative() {
             state: form_data.state || null,
 
             country: form_data.country || null,
+
+            source: form_data.source,
+
+            notes: form_data.notes,
           }),
         });
 
@@ -452,6 +501,10 @@ export default function ContactsCreative() {
         state: "",
 
         country: "",
+
+        source: "Manual",
+
+        notes: "",
       });
     } catch (e) {
       set_alert_message(
@@ -479,6 +532,10 @@ export default function ContactsCreative() {
       state: "",
 
       country: "",
+
+      source: "Manual",
+
+      notes: "",
     });
   };
 
@@ -826,192 +883,257 @@ export default function ContactsCreative() {
 
       {show_modal && (
         <div
-          className={`fixed inset-0 z-99999 m-0 flex justify-end transition-opacity duration-200 ${show_modal ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0"}`}
+          className="fixed inset-0 z-[100001] flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm"
+          role="presentation"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              handle_close_modal();
+            }
+          }}
         >
           <div
-            className={`absolute inset-0 bg-black/40 transition-opacity duration-300 ${show_modal ? "opacity-100" : "opacity-0"}`}
-            aria-hidden="true"
-            onClick={handle_close_modal}
-          />
-
-          <div
-            className={`relative h-full w-full max-w-xl transform bg-white shadow-2xl transition-transform duration-300 ${show_modal ? "translate-x-0" : "translate-x-full"}`}
+            className="flex max-h-[min(90vh,880px)] w-full max-w-2xl flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-2xl"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="contact-form-title"
           >
-            <div className="flex items-center justify-between border-b border-gray-200 px-6 py-4">
-              <div>
-                <h3 className="text-lg font-semibold text-slate-800">
-                  {editing_contact ? "Update Contact" : "Create New Contact"}
-                </h3>
+            <div className="shrink-0 border-b border-slate-100 px-6 pb-5 pt-6 sm:px-8">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h3
+                    id="contact-form-title"
+                    className="text-2xl font-bold tracking-tight text-slate-950"
+                  >
+                    {editing_contact ? "Edit Contact" : "Create Contact"}
+                  </h3>
 
-                <p className="text-xs uppercase tracking-wide text-gray-500">
-                  {editing_contact
-                    ? "Modify your contact details below."
-                    : "Quickly add a new contact to your list."}
-                </p>
+                  <p className="mt-1 text-sm text-slate-500">
+                    Keep your customer information clean and updated.
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handle_close_modal}
+                  className="shrink-0 rounded-full border border-slate-200 p-2 text-slate-500 transition hover:bg-slate-100 hover:text-slate-800"
+                  aria-label="Close contact form"
+                >
+                  <Icon name="x" className="h-5 w-5" />
+                </button>
+              </div>
+            </div>
+
+            <form
+              onSubmit={handle_submit}
+              className="flex min-h-0 flex-1 flex-col"
+            >
+              <div className="flex-1 overflow-y-auto px-6 py-6 sm:px-8">
+                <div className="grid gap-5 md:grid-cols-2">
+                  <div>
+                    <label
+                      htmlFor="name"
+                      className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-500"
+                    >
+                      Name <span className="text-red-500 normal-case">*</span>
+                    </label>
+
+                    <input
+                      id="name"
+                      type="text"
+                      required
+                      value={form_data.name}
+                      onChange={(e) =>
+                        set_form_data({ ...form_data, name: e.target.value })
+                      }
+                      placeholder="Full name"
+                      className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
+                    />
+                  </div>
+
+                  <div>
+                    <label
+                      htmlFor="email"
+                      className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-500"
+                    >
+                      Email <span className="text-red-500 normal-case">*</span>
+                    </label>
+
+                    <input
+                      id="email"
+                      type="email"
+                      required
+                      disabled={!!editing_contact}
+                      value={form_data.email}
+                      onChange={(e) =>
+                        set_form_data({
+                          ...form_data,
+                          email: e.target.value,
+                        })
+                      }
+                      placeholder="email@example.com"
+                      className={`w-full rounded-xl border border-slate-200 px-4 py-3 text-sm font-medium outline-none transition ${editing_contact ? "cursor-not-allowed bg-slate-50 text-slate-500" : "text-slate-900 focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"}`}
+                    />
+                  </div>
+
+                  <div>
+                    <label
+                      htmlFor="phone"
+                      className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-500"
+                    >
+                      Phone
+                    </label>
+
+                    <input
+                      id="phone"
+                      type="tel"
+                      value={form_data.phone}
+                      onChange={(e) =>
+                        set_form_data({ ...form_data, phone: e.target.value })
+                      }
+                      placeholder="Phone number"
+                      className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
+                    />
+                  </div>
+
+                  <div>
+                    <label
+                      htmlFor="city"
+                      className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-500"
+                    >
+                      City
+                    </label>
+
+                    <input
+                      id="city"
+                      type="text"
+                      value={form_data.city}
+                      onChange={(e) =>
+                        set_form_data({ ...form_data, city: e.target.value })
+                      }
+                      placeholder="City"
+                      className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
+                    />
+                  </div>
+
+                  <div>
+                    <label
+                      htmlFor="state"
+                      className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-500"
+                    >
+                      State
+                    </label>
+
+                    <input
+                      id="state"
+                      type="text"
+                      value={form_data.state}
+                      onChange={(e) =>
+                        set_form_data({
+                          ...form_data,
+                          state: e.target.value,
+                        })
+                      }
+                      placeholder="State / Province"
+                      className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
+                    />
+                  </div>
+
+                  <div>
+                    <label
+                      htmlFor="country"
+                      className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-500"
+                    >
+                      Country
+                    </label>
+
+                    <input
+                      id="country"
+                      type="text"
+                      value={form_data.country}
+                      onChange={(e) =>
+                        set_form_data({
+                          ...form_data,
+                          country: e.target.value,
+                        })
+                      }
+                      placeholder="Country"
+                      className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
+                    />
+                  </div>
+
+                  <div className="md:col-span-2">
+                    <label
+                      htmlFor="source"
+                      className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-500"
+                    >
+                      Source
+                    </label>
+
+                    <select
+                      id="source"
+                      value={form_data.source}
+                      onChange={(e) =>
+                        set_form_data({
+                          ...form_data,
+                          source: e.target.value as contact_source,
+                        })
+                      }
+                      className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold capitalize text-slate-900 outline-none transition focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
+                    >
+                      {(
+                        ["Manual", "Booking", "Website"] as const satisfies readonly contact_source[]
+                      ).map((opt) => (
+                        <option key={opt} value={opt}>
+                          {opt}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="md:col-span-2">
+                    <label
+                      htmlFor="notes"
+                      className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-500"
+                    >
+                      Notes
+                    </label>
+
+                    <textarea
+                      id="notes"
+                      rows={4}
+                      value={form_data.notes}
+                      onChange={(e) =>
+                        set_form_data({ ...form_data, notes: e.target.value })
+                      }
+                      placeholder="Add context for your team..."
+                      className="w-full resize-y rounded-xl border border-slate-200 px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
+                    />
+                  </div>
+                </div>
               </div>
 
-              <button
-                className="rounded-full p-2 text-gray-500 transition hover:bg-gray-100 hover:text-gray-700"
-                onClick={handle_close_modal}
-                aria-label="Close contact form"
-              >
-                <svg
-                  className="h-5 w-5"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth="2"
-                  viewBox="0 0 24 24"
+              <div className="flex shrink-0 flex-wrap items-center justify-end gap-3 border-t border-slate-100 px-6 py-4 sm:px-8">
+                <button
+                  type="button"
+                  onClick={handle_close_modal}
+                  className="rounded-xl border border-slate-200 bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
                 >
-                  <path d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
+                  Cancel
+                </button>
 
-            <div className="p-5">
-              <form
-                onSubmit={handle_submit}
-                className="grid md:grid-cols-2 gap-4 p-5 rounded-xl border border-slate-200 bg-gray-50/70"
-              >
-                <div>
-                  <label
-                    htmlFor="name"
-                    className="block text-sm font-medium text-slate-700 mb-1"
-                  >
-                    Name <span className="text-red-500">*</span>
-                  </label>
-
-                  <input
-                    id="name"
-                    type="text"
-                    required
-                    value={form_data.name}
-                    onChange={(e) =>
-                      set_form_data({ ...form_data, name: e.target.value })
-                    }
-                    placeholder="e.g. John Doe"
-                    className="w-full px-4 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-indigo-500 outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label
-                    htmlFor="email"
-                    className="block text-sm font-medium text-slate-700 mb-1"
-                  >
-                    Email <span className="text-red-500">*</span>
-                  </label>
-
-                  <input
-                    id="email"
-                    type="email"
-                    required
-                    disabled={!!editing_contact}
-                    value={form_data.email}
-                    onChange={(e) =>
-                      set_form_data({ ...form_data, email: e.target.value })
-                    }
-                    placeholder="e.g. john@example.com"
-                    className={`w-full px-4 py-2 rounded-lg border border-slate-300 outline-none ${editing_contact ? "bg-slate-100 text-slate-500 cursor-not-allowed" : "focus:ring-2 focus:ring-indigo-500"}`}
-                  />
-                </div>
-
-                <div>
-                  <label
-                    htmlFor="phone"
-                    className="block text-sm font-medium text-slate-700 mb-1"
-                  >
-                    Phone number
-                  </label>
-
-                  <input
-                    id="phone"
-                    type="tel"
-                    value={form_data.phone}
-                    onChange={(e) =>
-                      set_form_data({ ...form_data, phone: e.target.value })
-                    }
-                    placeholder="e.g. +1 234 567 8900"
-                    className="w-full px-4 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-indigo-500 outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label
-                    htmlFor="city"
-                    className="block text-sm font-medium text-slate-700 mb-1"
-                  >
-                    City
-                  </label>
-
-                  <input
-                    id="city"
-                    type="text"
-                    value={form_data.city}
-                    onChange={(e) =>
-                      set_form_data({ ...form_data, city: e.target.value })
-                    }
-                    placeholder="e.g. New York"
-                    className="w-full px-4 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-indigo-500 outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label
-                    htmlFor="state"
-                    className="block text-sm font-medium text-slate-700 mb-1"
-                  >
-                    State
-                  </label>
-
-                  <input
-                    id="state"
-                    type="text"
-                    value={form_data.state}
-                    onChange={(e) =>
-                      set_form_data({ ...form_data, state: e.target.value })
-                    }
-                    placeholder="e.g. California"
-                    className="w-full px-4 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-indigo-500 outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label
-                    htmlFor="country"
-                    className="block text-sm font-medium text-slate-700 mb-1"
-                  >
-                    Country
-                  </label>
-
-                  <input
-                    id="country"
-                    type="text"
-                    value={form_data.country}
-                    onChange={(e) =>
-                      set_form_data({ ...form_data, country: e.target.value })
-                    }
-                    placeholder="e.g. USA"
-                    className="w-full px-4 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-indigo-500 outline-none"
-                  />
-                </div>
-
-                <div className="md:col-span-2 flex justify-end gap-2 mt-2">
-                  <button
-                    type="submit"
-                    disabled={submitting}
-                    className="px-5 py-2.5 rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 transition font-medium disabled:opacity-70"
-                  >
-                    {submitting
-                      ? "Saving..."
-                      : editing_contact
-                        ? "Update Contact"
-                        : "Add Contact"}
-                  </button>
-                </div>
-              </form>
-            </div>
+                <button
+                  type="submit"
+                  disabled={submitting}
+                  className="rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-indigo-200 transition hover:from-indigo-700 hover:to-violet-700 disabled:opacity-60"
+                >
+                  {submitting
+                    ? "Saving..."
+                    : editing_contact
+                      ? "Update Contact"
+                      : "Add Contact"}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
@@ -1027,117 +1149,136 @@ export default function ContactsCreative() {
           }}
         >
           <div
-            className="w-full max-w-lg overflow-hidden rounded-3xl bg-white shadow-2xl"
+            className="w-full max-w-2xl overflow-hidden rounded-[28px] border border-slate-200/80 bg-white shadow-2xl"
             role="dialog"
             aria-modal="true"
             aria-labelledby="contact-view-title"
           >
-            <div className="flex items-center justify-between border-b border-slate-100 px-6 py-5">
-              <div>
-                <h3
-                  id="contact-view-title"
-                  className="text-xl font-bold text-slate-950"
+            <div className="border-b border-slate-100 px-6 pb-5 pt-6 sm:px-8">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h3
+                    id="contact-view-title"
+                    className="text-2xl font-bold tracking-tight text-slate-950"
+                  >
+                    Contact Details
+                  </h3>
+
+                  <p className="mt-1 text-sm text-slate-500">
+                    Keep your customer information clean and updated.
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => set_view_contact(null)}
+                  className="shrink-0 rounded-full border border-slate-200 p-2 text-slate-500 transition hover:bg-slate-100 hover:text-slate-800"
+                  aria-label="Close"
                 >
-                  Contact Details
-                </h3>
-
-                <p className="text-sm text-slate-500">
-                  View-only summary for this record.
-                </p>
+                  <Icon name="x" className="h-5 w-5" />
+                </button>
               </div>
-
-              <button
-                type="button"
-                onClick={() => set_view_contact(null)}
-                className="rounded-xl p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
-                aria-label="Close"
-              >
-                <Icon name="x" className="h-5 w-5" />
-              </button>
             </div>
 
-            <div className="space-y-5 p-6">
-              <div className="flex items-center gap-4 rounded-2xl bg-slate-50 p-4">
-                <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-3xl bg-indigo-100 text-2xl font-black text-indigo-700">
+            <div className="max-h-[min(70vh,640px)] space-y-6 overflow-y-auto px-6 py-6 sm:px-8">
+              <div className="flex items-center gap-4 rounded-2xl border border-sky-100/80 bg-gradient-to-br from-sky-50 to-slate-50 p-5">
+                <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-full bg-sky-100 text-2xl font-black text-sky-800">
                   {get_initials(view_contact.name ?? "")}
                 </div>
 
-                <div>
-                  <h4 className="text-xl font-bold text-slate-950">
+                <div className="min-w-0">
+                  <h4 className="truncate text-xl font-bold text-slate-950">
                     {view_contact.name || "—"}
                   </h4>
 
-                  <p className="text-sm font-medium text-slate-500">
-                    {get_contact_source(view_contact)} contact
+                  <p className="mt-0.5 text-sm font-medium text-slate-500">
+                    {get_contact_source(view_contact)} Contact
                   </p>
                 </div>
               </div>
 
-              <div className="grid gap-3 text-sm">
-                <div className="flex justify-between gap-4">
-                  <span className="font-bold text-slate-500">Email</span>
-
-                  <span className="text-right font-medium text-slate-800">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="rounded-2xl bg-slate-50 p-4">
+                  <div className="mb-3 flex items-center gap-2 text-slate-400">
+                    <Icon name="mail" className="h-4 w-4 shrink-0" />
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                      Email
+                    </span>
+                  </div>
+                  <p className="break-all text-sm font-bold text-slate-900">
                     {view_contact.email || "—"}
-                  </span>
+                  </p>
                 </div>
 
-                <div className="flex justify-between gap-4">
-                  <span className="font-bold text-slate-500">Phone</span>
-
-                  <span className="text-right font-medium text-slate-800">
+                <div className="rounded-2xl bg-slate-50 p-4">
+                  <div className="mb-3 flex items-center gap-2 text-slate-400">
+                    <Icon name="phone" className="h-4 w-4 shrink-0" />
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                      Phone
+                    </span>
+                  </div>
+                  <p className="text-sm font-bold text-slate-900">
                     {view_contact.phone || "—"}
-                  </span>
+                  </p>
                 </div>
 
-                <div className="flex justify-between gap-4">
-                  <span className="font-bold text-slate-500">Location</span>
-
-                  <span className="text-right font-medium text-slate-800">
-                    {location_label(view_contact)}
-                  </span>
+                <div className="rounded-2xl bg-slate-50 p-4">
+                  <div className="mb-3 flex items-center gap-2 text-slate-400">
+                    <Icon name="map-pin" className="h-4 w-4 shrink-0" />
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                      City
+                    </span>
+                  </div>
+                  <p className="text-sm font-bold text-slate-900">
+                    {(view_contact.city ?? "").trim() || "—"}
+                  </p>
                 </div>
 
-                <div className="flex justify-between gap-4">
-                  <span className="font-bold text-slate-500">Last Booking</span>
-
-                  <span className="text-right font-medium text-slate-800">
+                <div className="rounded-2xl bg-slate-50 p-4">
+                  <div className="mb-3 flex items-center gap-2 text-slate-400">
+                    <Icon name="clock" className="h-4 w-4 shrink-0" />
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                      Last Booking
+                    </span>
+                  </div>
+                  <p className="text-sm font-bold text-slate-900">
                     {get_last_booking_label(view_contact)}
-                  </span>
-                </div>
-
-                <div className="flex justify-between gap-4">
-                  <span className="font-bold text-slate-500">Status</span>
-
-                  <span className="text-right font-medium capitalize text-slate-800">
-                    {get_contact_status(view_contact)}
-                  </span>
+                  </p>
                 </div>
               </div>
 
-              <div className="flex flex-wrap justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => set_view_contact(null)}
-                  className="rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-                >
-                  Close
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    const c = view_contact;
-
-                    set_view_contact(null);
-
-                    handle_edit_contact(c);
-                  }}
-                  className="rounded-2xl bg-indigo-600 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-indigo-200 transition hover:bg-indigo-700"
-                >
-                  Edit
-                </button>
+              <div className="rounded-2xl border border-slate-200 bg-white p-5">
+                <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                  Notes
+                </p>
+                <p className="mt-2 text-sm leading-relaxed text-slate-800">
+                  {get_contact_notes(view_contact)}
+                </p>
               </div>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-end gap-3 border-t border-slate-100 px-6 py-4 sm:px-8">
+              <button
+                type="button"
+                onClick={() => set_view_contact(null)}
+                className="rounded-xl border border-slate-200 bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
+              >
+                Close
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  const c = view_contact;
+
+                  set_view_contact(null);
+
+                  handle_edit_contact(c);
+                }}
+                className="rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-indigo-200 transition hover:from-indigo-700 hover:to-violet-700"
+              >
+                Edit
+              </button>
             </div>
           </div>
         </div>
@@ -1269,6 +1410,9 @@ type IconName =
   | "user-check"
   | "calendar-check"
   | "map-pin"
+  | "mail"
+  | "phone"
+  | "clock"
   | "x"
   | "filter"
   | "more"
@@ -1420,6 +1564,31 @@ function Icon({
           <path d="M20 10c0 5-8 12-8 12S4 15 4 10a8 8 0 1 1 16 0Z" />
 
           <circle cx="12" cy="10" r="3" />
+        </svg>
+      );
+
+    case "mail":
+      return (
+        <svg {...common}>
+          <rect x="3" y="5" width="18" height="14" rx="2" />
+
+          <path d="m3 7 9 6 9-6" />
+        </svg>
+      );
+
+    case "phone":
+      return (
+        <svg {...common}>
+          <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92Z" />
+        </svg>
+      );
+
+    case "clock":
+      return (
+        <svg {...common}>
+          <circle cx="12" cy="12" r="10" />
+
+          <path d="M12 6v6l4 2" />
         </svg>
       );
 

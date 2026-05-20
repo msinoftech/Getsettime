@@ -1,4 +1,5 @@
 import type { IntakeFormSettings } from './workspace';
+import type { departments } from './departments';
 
 /** Day names matching date.getDay() order (Sun=0) */
 export type DayName = 'Sun' | 'Mon' | 'Tue' | 'Wed' | 'Thu' | 'Fri' | 'Sat';
@@ -10,11 +11,10 @@ export interface EventType {
   slug?: string;
 }
 
-export interface Department {
-  id: number;
-  name: string;
-  description: string | null;
-}
+export type Department = Pick<
+  departments,
+  'id' | 'name' | 'description' | 'status'
+>;
 
 export interface ServiceProvider {
   id: string;

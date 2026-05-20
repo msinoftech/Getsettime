@@ -1,6 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient, type User } from '@supabase/supabase-js';
 
+function userCanSelfAssignDuringOnboarding(user: User, targetUserId: string): boolean {
+  if (user.user_metadata?.role !== 'service_provider') return false;
+  if (user.id !== targetUserId) return false;
+  if (user.user_metadata?.onboarding_completed === true) return false;
+  return true;
+}
+
+/** Service providers may add themselves to an existing workspace department. */
+function userCanSelfAssignDepartment(user: User, targetUserId: string): boolean {
+  if (user.user_metadata?.role !== 'service_provider') return false;
+  return user.id === targetUserId;
+}
+
 function userCanManageAssignments(user: User): boolean {
   if (user.user_metadata?.is_workspace_owner === true) return true;
   const role = user.user_metadata?.role;
@@ -79,7 +92,15 @@ export async function POST(req: NextRequest) {
     if (authError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-    if (!userCanManageAssignments(user)) {
+
+    const body = await req.json();
+    const userId = typeof body.user_id === 'string' ? body.user_id : null;
+
+    if (
+      !userCanManageAssignments(user) &&
+      !(userId && userCanSelfAssignDuringOnboarding(user, userId)) &&
+      !(userId && userCanSelfAssignDepartment(user, userId))
+    ) {
       return NextResponse.json({ error: 'Forbidden: Access denied' }, { status: 403 });
     }
 
@@ -87,9 +108,6 @@ export async function POST(req: NextRequest) {
     if (!workspaceId) {
       return NextResponse.json({ error: 'Workspace ID not found' }, { status: 400 });
     }
-
-    const body = await req.json();
-    const userId = typeof body.user_id === 'string' ? body.user_id : null;
     const departmentIdNum =
       typeof body.department_id === 'number'
         ? body.department_id
@@ -143,7 +161,13 @@ export async function PUT(req: NextRequest) {
     if (authError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-    if (!userCanManageAssignments(user)) {
+    const body = await req.json();
+    const userId = typeof body.user_id === 'string' ? body.user_id : null;
+
+    if (
+      !userCanManageAssignments(user) &&
+      !(userId && userCanSelfAssignDuringOnboarding(user, userId))
+    ) {
       return NextResponse.json({ error: 'Forbidden: Access denied' }, { status: 403 });
     }
 
@@ -152,8 +176,6 @@ export async function PUT(req: NextRequest) {
       return NextResponse.json({ error: 'Workspace ID not found' }, { status: 400 });
     }
 
-    const body = await req.json();
-    const userId = typeof body.user_id === 'string' ? body.user_id : null;
     const deptIdsRaw = body.department_ids;
     if (!userId || !Array.isArray(deptIdsRaw)) {
       return NextResponse.json({ error: 'user_id and department_ids[] are required' }, { status: 400 });

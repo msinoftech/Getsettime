@@ -12,6 +12,10 @@ import type { IntakeFormSettings, meeting_options_settings } from '@/src/types/w
 import { getAllowedServiceIds, isServicesEnabled } from '@/src/utils/intakeForm';
 import { CALENDAR_BUFFER_DAYS, CALENDAR_BUFFER_DAYS_BEFORE } from '@/src/constants/booking';
 import { userActsAsServiceProviderFromMetadata } from '@/lib/service_provider_role';
+import {
+  filterBookableDepartments,
+  memberActsInDepartment,
+} from '@/src/utils/bookingFormUtils';
 
 interface TeamMemberRow {
   id: string;
@@ -44,9 +48,14 @@ export function useEmbedBookingFormData({
   intakeForm,
   onAvailabilityChange,
 }: UseEmbedBookingFormDataParams) {
-  const [departments, setDepartments] = useState<Department[]>([]);
+  const [allDepartments, setDepartments] = useState<Department[]>([]);
   const [loadingDepartments, setLoadingDepartments] = useState(true);
   const [workspaceMembers, setWorkspaceMembers] = useState<TeamMemberRow[]>([]);
+
+  const departments = useMemo(
+    () => filterBookableDepartments(allDepartments, workspaceMembers),
+    [allDepartments, workspaceMembers]
+  );
   const [workspaceOwnerUserId, setWorkspaceOwnerUserId] = useState<string | null>(null);
   const [eventTypes, setEventTypes] = useState<EventType[]>([]);
   const [loadingEventTypes, setLoadingEventTypes] = useState(true);
@@ -80,8 +89,7 @@ export function useEmbedBookingFormData({
             is_workspace_owner: m.is_workspace_owner === true,
             additional_roles: m.additional_roles,
           }) &&
-          Array.isArray(m.departments) &&
-          m.departments.includes(selectedDepartment.id)
+          memberActsInDepartment(m.departments, selectedDepartment.id)
       )
       .map((m) => ({
         id: m.id,
@@ -96,9 +104,25 @@ export function useEmbedBookingFormData({
   }, [selectedDepartment, workspaceMembers]);
 
   const showProviderPicker = useMemo(
-    () => providersActingInDepartment.some((p) => !p.is_workspace_owner),
+    () => providersActingInDepartment.length > 0,
     [providersActingInDepartment]
   );
+
+  const effectiveProviderId = useMemo(() => {
+    if (!selectedDepartment) return null;
+    if (!showProviderPicker) return workspaceOwnerUserId;
+    if (selectedProvider?.id) return selectedProvider.id;
+    if (providersActingInDepartment.length === 1) {
+      return providersActingInDepartment[0].id;
+    }
+    return null;
+  }, [
+    selectedDepartment,
+    showProviderPicker,
+    workspaceOwnerUserId,
+    selectedProvider?.id,
+    providersActingInDepartment,
+  ]);
 
   const needsExplicitProvider =
     departments.length > 0 && selectedDepartment !== null && showProviderPicker;
@@ -187,7 +211,7 @@ export function useEmbedBookingFormData({
   }, [workspace.slug]);
 
   useEffect(() => {
-    if (!selectedProvider && needsExplicitProvider) {
+    if (!effectiveProviderId && needsExplicitProvider) {
       setAvailabilitySettings(null);
       setExistingBookings([]);
       onAvailabilityChange?.();
@@ -213,9 +237,9 @@ export function useEmbedBookingFormData({
         const generalIndividual = availability.individual;
         let finalTimesheet = generalTimesheet;
         let finalIndividual = generalIndividual || {};
-        if (selectedProvider) {
+        if (effectiveProviderId) {
           const providers = availability.providers || {};
-          const overrides = providers[selectedProvider.id] || {};
+          const overrides = providers[effectiveProviderId] || {};
           finalTimesheet = generalTimesheet
             ? { ...generalTimesheet, ...(overrides.timesheet || {}) }
             : overrides.timesheet;
@@ -230,7 +254,7 @@ export function useEmbedBookingFormData({
     };
     fetchAvailability();
   }, [
-    selectedProvider,
+    effectiveProviderId,
     departments.length,
     loadingDepartments,
     workspace.id,
@@ -241,7 +265,7 @@ export function useEmbedBookingFormData({
   useEffect(() => {
     const hasReqs =
       selectedType &&
-      (departments.length === 0 || !needsExplicitProvider || selectedProvider);
+      (departments.length === 0 || !needsExplicitProvider || effectiveProviderId);
     if (!hasReqs) {
       setExistingBookings([]);
       return;
@@ -257,8 +281,8 @@ export function useEmbedBookingFormData({
     const fetchBookings = async () => {
       setLoadingBookings(true);
       try {
-        const url = selectedProvider
-          ? `/api/embed/bookings?workspace_id=${workspace.id}&start_date=${fmt(rangeStart)}&end_date=${fmt(rangeEnd)}&service_provider_id=${selectedProvider.id}`
+        const url = effectiveProviderId
+          ? `/api/embed/bookings?workspace_id=${workspace.id}&start_date=${fmt(rangeStart)}&end_date=${fmt(rangeEnd)}&service_provider_id=${effectiveProviderId}`
           : `/api/embed/bookings?workspace_id=${workspace.id}&start_date=${fmt(rangeStart)}&end_date=${fmt(rangeEnd)}`;
         const res = await fetch(url);
         if (res.ok) {
@@ -266,7 +290,7 @@ export function useEmbedBookingFormData({
           const active = (result.data || []).filter(
             (b: Booking & { service_provider_id?: string }) => {
               if (b.status === 'cancelled' || b.status === 'emergency') return false;
-              if (selectedProvider && b.service_provider_id !== selectedProvider.id) return false;
+              if (effectiveProviderId && b.service_provider_id !== effectiveProviderId) return false;
               return true;
             }
           );
@@ -282,7 +306,7 @@ export function useEmbedBookingFormData({
       }
     };
     fetchBookings();
-  }, [selectedType, selectedProvider, days, departments.length, workspace.id, needsExplicitProvider]);
+  }, [selectedType, effectiveProviderId, days, departments.length, workspace.id, needsExplicitProvider]);
 
   const effectiveIntakeForm = settingsIntakeForm ?? intakeForm;
   useEffect(() => {
@@ -309,7 +333,6 @@ export function useEmbedBookingFormData({
   }, [effectiveIntakeForm, workspace.id]);
 
   useEffect(() => {
-    const effectiveProviderId = showProviderPicker ? selectedProvider?.id : workspaceOwnerUserId;
     if (!selectedDepartment || !effectiveProviderId) {
       setProviderScopedCatalogServices([]);
       return;
@@ -333,7 +356,7 @@ export function useEmbedBookingFormData({
       }
     };
     fetchScoped();
-  }, [selectedDepartment, selectedProvider?.id, showProviderPicker, workspace.id, workspaceOwnerUserId]);
+  }, [selectedDepartment, effectiveProviderId, workspace.id]);
 
   return {
     departments,

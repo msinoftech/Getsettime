@@ -12,6 +12,10 @@ import { getAllowedServiceIds, isServicesEnabled } from '@/src/utils/intakeForm'
 import { CALENDAR_BUFFER_DAYS, CALENDAR_BUFFER_DAYS_BEFORE } from '@/src/constants/booking';
 import { userActsAsServiceProviderFromMetadata } from '@/lib/service_provider_role';
 import { serviceIdsFromUserServiceAssignments } from '@/src/utils/bookingServiceAssignments';
+import {
+  filterBookableDepartments,
+  memberActsInDepartment,
+} from '@/src/utils/bookingFormUtils';
 
 interface TeamMemberRow {
   id: string;
@@ -39,9 +43,14 @@ export function useBookingFormData({
   intakeForm,
   onAvailabilityChange,
 }: UseBookingFormDataParams) {
-  const [departments, setDepartments] = useState<Department[]>([]);
+  const [allDepartments, setDepartments] = useState<Department[]>([]);
   const [loadingDepartments, setLoadingDepartments] = useState(true);
   const [workspaceMembers, setWorkspaceMembers] = useState<TeamMemberRow[]>([]);
+
+  const departments = useMemo(
+    () => filterBookableDepartments(allDepartments, workspaceMembers),
+    [allDepartments, workspaceMembers]
+  );
   const [workspaceOwnerUserId, setWorkspaceOwnerUserId] = useState<string | null>(null);
   const [eventTypes, setEventTypes] = useState<EventType[]>([]);
   const [loadingEventTypes, setLoadingEventTypes] = useState(true);
@@ -67,8 +76,7 @@ export function useBookingFormData({
             is_workspace_owner: m.is_workspace_owner === true,
             additional_roles: m.additional_roles,
           }) &&
-          Array.isArray(m.departments) &&
-          m.departments.includes(selectedDepartment.id)
+          memberActsInDepartment(m.departments, selectedDepartment.id)
       )
       .map((m) => ({
         id: m.id,
@@ -82,9 +90,25 @@ export function useBookingFormData({
   }, [selectedDepartment, workspaceMembers]);
 
   const showProviderPicker = useMemo(
-    () => providersActingInDepartment.some((p) => !p.is_workspace_owner),
+    () => providersActingInDepartment.length > 0,
     [providersActingInDepartment]
   );
+
+  const effectiveProviderId = useMemo(() => {
+    if (!selectedDepartment) return null;
+    if (!showProviderPicker) return workspaceOwnerUserId;
+    if (selectedProvider?.id) return selectedProvider.id;
+    if (providersActingInDepartment.length === 1) {
+      return providersActingInDepartment[0].id;
+    }
+    return null;
+  }, [
+    selectedDepartment,
+    showProviderPicker,
+    workspaceOwnerUserId,
+    selectedProvider?.id,
+    providersActingInDepartment,
+  ]);
 
   const needsExplicitProvider =
     departments.length > 0 && selectedDepartment !== null && showProviderPicker;
@@ -160,7 +184,7 @@ export function useBookingFormData({
   }, []);
 
   useEffect(() => {
-    if (!selectedProvider && needsExplicitProvider) {
+    if (!effectiveProviderId && needsExplicitProvider) {
       setAvailabilitySettings(null);
       setExistingBookings([]);
       onAvailabilityChange?.();
@@ -193,9 +217,9 @@ export function useBookingFormData({
           const generalIndividual = availability.individual;
           let finalTimesheet = generalTimesheet;
           let finalIndividual = generalIndividual || {};
-          if (selectedProvider) {
+          if (effectiveProviderId) {
             const providers = availability.providers || {};
-            const providerOverrides = providers[selectedProvider.id] || {};
+            const providerOverrides = providers[effectiveProviderId] || {};
             finalTimesheet = generalTimesheet
               ? { ...generalTimesheet, ...(providerOverrides.timesheet || {}) }
               : providerOverrides.timesheet;
@@ -211,7 +235,7 @@ export function useBookingFormData({
     };
     fetchAvailability();
   }, [
-    selectedProvider,
+    effectiveProviderId,
     departments.length,
     loadingDepartments,
     needsExplicitProvider,
@@ -244,7 +268,7 @@ export function useBookingFormData({
   }, []);
 
   useEffect(() => {
-    const hasReqs = departments.length === 0 || !needsExplicitProvider || selectedProvider;
+    const hasReqs = departments.length === 0 || !needsExplicitProvider || effectiveProviderId;
     if (!hasReqs) {
       setExistingBookings([]);
       return;
@@ -265,8 +289,8 @@ export function useBookingFormData({
           data: { session },
         } = await supabase.auth.getSession();
         if (!session?.access_token) return;
-        const url = selectedProvider
-          ? `/api/bookings?start_date=${fmt(rangeStart)}&end_date=${fmt(rangeEnd)}&service_provider_id=${selectedProvider.id}`
+        const url = effectiveProviderId
+          ? `/api/bookings?start_date=${fmt(rangeStart)}&end_date=${fmt(rangeEnd)}&service_provider_id=${effectiveProviderId}`
           : `/api/bookings?start_date=${fmt(rangeStart)}&end_date=${fmt(rangeEnd)}`;
         const res = await fetch(url, {
           headers: { Authorization: `Bearer ${session.access_token}` },
@@ -276,7 +300,7 @@ export function useBookingFormData({
           const active = (result.data || []).filter(
             (b: Booking & { service_provider_id?: string }) => {
               if (b.status === 'cancelled' || b.status === 'emergency' || b.status === 'deleted') return false;
-              if (selectedProvider && b.service_provider_id !== selectedProvider.id) return false;
+              if (effectiveProviderId && b.service_provider_id !== effectiveProviderId) return false;
               return true;
             }
           );
@@ -292,7 +316,7 @@ export function useBookingFormData({
       }
     };
     fetchBookings();
-  }, [selectedProvider, days, departments.length, needsExplicitProvider]);
+  }, [effectiveProviderId, days, departments.length, needsExplicitProvider]);
 
   useEffect(() => {
     if (!isServicesEnabled(intakeForm)) {
@@ -325,7 +349,6 @@ export function useBookingFormData({
   }, [intakeForm]);
 
   useEffect(() => {
-    const effectiveProviderId = showProviderPicker ? selectedProvider?.id : workspaceOwnerUserId;
     if (!selectedDepartment || !effectiveProviderId) {
       setProviderScopedCatalogServices([]);
       return;
@@ -370,7 +393,7 @@ export function useBookingFormData({
       }
     };
     fetchScoped();
-  }, [selectedDepartment, selectedProvider?.id, showProviderPicker, workspaceOwnerUserId]);
+  }, [selectedDepartment, effectiveProviderId]);
 
   return {
     departments,

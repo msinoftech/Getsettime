@@ -3,9 +3,9 @@
 import { useState, useEffect, useCallback } from "react";
 import { usePathname } from "next/navigation";
 import Link from "next/link";
-import Image from "next/image";
 import { useAuth } from "../../providers/AuthProvider";
 import { useWorkspaceSettings } from "../../hooks/useWorkspaceSettings";
+import { WorkspaceBrandLogo } from "../molecules/WorkspaceBrandLogo";
 import { supabase } from "@/lib/supabaseClient";
 
 const PATH_TO_MENU: Record<string, string> = {
@@ -51,7 +51,11 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
   const [profileImage, setProfileImage] = useState<string | null>(null);
   const pathname = usePathname();
   const { user } = useAuth();
-  const { general, loading: loadingConfig, workspaceName, workspaceLogo } = useWorkspaceSettings();
+  const {
+    loading: loadingConfig,
+    workspaceName,
+    workspaceLogoResolved,
+  } = useWorkspaceSettings();
 
   const activeMenu = pathnameToActiveMenu(pathname);
 
@@ -110,9 +114,7 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
     };
   }, [user]);
 
-  const logoUrl = workspaceLogo || "/getsettime-logo.svg";
   const accountName = workspaceName || "GetSetTime";
-  const isExternalUrl = logoUrl?.startsWith('http://') || logoUrl?.startsWith('https://');
 
   const handleNavClick = () => {
     if (typeof window !== "undefined" && window.innerWidth < 1024) {
@@ -136,21 +138,13 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
           <Link href="/" className="logo flex items-center gap-2" onClick={handleNavClick}>
             {!loadingConfig && (
               <>
-                {isExternalUrl ? (
-                  <img 
-                    src={logoUrl} 
-                    alt={`${accountName} Logo`} 
-                    className="h-10 w-auto object-contain"
-                  />
-                ) : (
-                  <Image 
-                    src={logoUrl} 
-                    alt={`${accountName} Logo`} 
-                    width={150} 
-                    height={40} 
-                    className="object-contain"
-                  />
-                )}
+                <WorkspaceBrandLogo
+                  src={workspaceLogoResolved}
+                  alt={`${accountName} Logo`}
+                  width={150}
+                  height={40}
+                  className="h-10 w-auto object-contain"
+                />
                 {accountName && accountName !== "GetSetTime" && (
                   <span className="text-xs sm:text-sm font-semibold text-gray-700 truncate max-w-[100px]">
                     {accountName}
@@ -233,13 +227,13 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
                 </div>
               )}
             </div>
-            <Link href="/notifications" className={`flex items-center gap-3 rounded-xl px-4 py-3 text-left text-[14px] font-medium transition-all ${ activeMenu === "notifications" ? "bg-indigo-50 text-indigo-700 shadow-sm" : "text-gray-700 hover:bg-gray-50" }`} onClick={handleNavClick}>
+            {/* <Link href="/notifications" className={`flex items-center gap-3 rounded-xl px-4 py-3 text-left text-[14px] font-medium transition-all ${ activeMenu === "notifications" ? "bg-indigo-50 text-indigo-700 shadow-sm" : "text-gray-700 hover:bg-gray-50" }`} onClick={handleNavClick}>
               <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-bell h-4.5 w-4.5" aria-hidden="true" data-source-pos="107:20-107:52" data-source-name="Icon"><path d="M10.268 21a2 2 0 0 0 3.464 0"></path><path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"></path></svg>
               Notifications
-            </Link>
+            </Link> */}
             <Link href="/integrations" className={`flex items-center gap-3 rounded-xl px-4 py-3 text-left text-[14px] font-medium transition-all ${ activeMenu === "integrations" ? "bg-indigo-50 text-indigo-700 shadow-sm" : "text-gray-700 hover:bg-gray-50" }`} onClick={handleNavClick}>
               <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-plug-zap h-4.5 w-4.5" aria-hidden="true" data-source-pos="107:20-107:52" data-source-name="Icon"><path d="M6.3 20.3a2.4 2.4 0 0 0 3.4 0L12 18l-6-6-2.3 2.3a2.4 2.4 0 0 0 0 3.4Z"></path><path d="m2 22 3-3"></path><path d="M7.5 13.5 10 11"></path><path d="M10.5 16.5 13 14"></path><path d="m18 3-4 4h6l-4 4"></path></svg>
-              Integrations
+              Workflow Integrations
             </Link>        
             <Link href="/team-members" className={`flex items-center gap-3 rounded-xl px-4 py-3 text-left text-[14px] font-medium transition-all ${ activeMenu === "team-members" ? "bg-indigo-50 text-indigo-700 shadow-sm" : "text-gray-700 hover:bg-gray-50" }`} onClick={handleNavClick}>
               <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-users h-4.5 w-4.5" aria-hidden="true" data-source-pos="107:20-107:52" data-source-name="Icon"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path><path d="M16 3.128a4 4 0 0 1 0 7.744"></path><path d="M22 21v-2a4 4 0 0 0-3-3.87"></path><circle cx="9" cy="7" r="4"></circle></svg>

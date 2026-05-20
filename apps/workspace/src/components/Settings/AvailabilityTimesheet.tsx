@@ -28,6 +28,8 @@ interface AvailabilityTimesheetProps {
   onSaveFeedback?: (payload: availability_timesheet_save_feedback) => void;
   /** When provided, skips the initial settings fetch and uses this data instead */
   initialTimesheet?: Record<string, DaySchedule> | null;
+  /** When set, load/save under availability.providers[userId] instead of workspace-wide timesheet */
+  providerUserId?: string;
 }
 
 const DAYS: DayName[] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -129,6 +131,7 @@ export default function AvailabilityTimesheet({
   onSave,
   onSaveFeedback,
   initialTimesheet,
+  providerUserId,
 }: AvailabilityTimesheetProps) {
   const [schedules, setSchedules] = useState<Record<DayName, DaySchedule>>(() => {
     const defaultSchedule: DaySchedule = {
@@ -162,7 +165,7 @@ export default function AvailabilityTimesheet({
       return;
     }
     loadAvailability();
-  }, [hasInitialData, initialTimesheet]);
+  }, [hasInitialData, initialTimesheet, providerUserId]);
 
   const loadAvailability = async () => {
     try {
@@ -178,8 +181,13 @@ export default function AvailabilityTimesheet({
 
       if (response.ok) {
         const data = await response.json();
-        if (data?.settings?.availability?.timesheet) {
-          setSchedules(data.settings.availability.timesheet);
+        const availability = data?.settings?.availability;
+        if (providerUserId && availability?.providers?.[providerUserId]?.timesheet) {
+          const general = availability.timesheet ?? {};
+          const provider = availability.providers[providerUserId].timesheet ?? {};
+          setSchedules((prev) => ({ ...prev, ...general, ...provider }));
+        } else if (availability?.timesheet) {
+          setSchedules(availability.timesheet);
         }
       } else if (response.status === 404) {
         // API route doesn't exist yet, use default schedules
@@ -232,11 +240,42 @@ export default function AvailabilityTimesheet({
       const { data: { session } } = await supabase.auth.getSession();
       const token = session?.access_token;
 
-      const settingsData = {
-        availability: {
-          timesheet: schedules,
-        },
-      };
+      let settingsPayload: Record<string, unknown>;
+
+      if (providerUserId) {
+        const getResponse = await fetch('/api/settings', {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
+        let existingSettings: Record<string, unknown> = {};
+        if (getResponse.ok) {
+          const payload = await getResponse.json();
+          existingSettings = payload?.settings ?? {};
+        }
+        const existingAvailability =
+          (existingSettings.availability as Record<string, unknown> | undefined) ?? {};
+        const existingProviders =
+          (existingAvailability.providers as Record<string, unknown> | undefined) ?? {};
+        settingsPayload = {
+          ...existingSettings,
+          availability: {
+            ...existingAvailability,
+            providers: {
+              ...existingProviders,
+              [providerUserId]: {
+                ...(existingProviders[providerUserId] as Record<string, unknown> | undefined),
+                timesheet: schedules,
+                lastUpdated: new Date().toISOString(),
+              },
+            },
+          },
+        };
+      } else {
+        settingsPayload = {
+          availability: {
+            timesheet: schedules,
+          },
+        };
+      }
 
       const response = await fetch('/api/settings', {
         method: 'POST',
@@ -244,7 +283,7 @@ export default function AvailabilityTimesheet({
           'Content-Type': 'application/json',
           ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
         },
-        body: JSON.stringify({ settings: settingsData }),
+        body: JSON.stringify({ settings: settingsPayload }),
       });
 
       if (!response.ok) {

@@ -34,6 +34,8 @@ interface BookingFiltersProps {
   onProviderFilterChange: (value: string) => void;
   onSortFilterChange: (value: string) => void;
   onResetFilters?: () => void;
+  /** When true, provider filter is hidden (service provider sees only their bookings). */
+  hideProviderFilter?: boolean;
 }
 
 const inputBase =
@@ -67,6 +69,7 @@ export function BookingFilters({
   onProviderFilterChange,
   onSortFilterChange,
   onResetFilters,
+  hideProviderFilter = false,
 }: BookingFiltersProps) {
   const [showAdvanced, setShowAdvanced] = useState(false);
   const panelId = useId();
@@ -87,7 +90,7 @@ export function BookingFilters({
     dateFilter !== "" ||
     statusFilter !== "" ||
     eventTypeFilter !== "" ||
-    providerFilter !== "" ||
+    (!hideProviderFilter && providerFilter !== "") ||
     sortFilter !== "start_at";
 
   const handleReset = () => {
@@ -96,7 +99,7 @@ export function BookingFilters({
     onClearDateFilter();
     onStatusFilterChange("");
     onEventTypeFilterChange("");
-    onProviderFilterChange("");
+    if (!hideProviderFilter) onProviderFilterChange("");
     onSortFilterChange("start_at");
     onResetFilters?.();
   };
@@ -235,6 +238,7 @@ export function BookingFilters({
               </div>
             </div>
 
+            {!hideProviderFilter && (
             <div className="min-w-0">
               <label
                 htmlFor="provider-filter"
@@ -265,6 +269,7 @@ export function BookingFilters({
                 />
               </div>
             </div>
+            )}
 
             <div className="min-w-0">
               <label

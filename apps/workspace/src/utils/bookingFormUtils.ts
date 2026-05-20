@@ -1,4 +1,59 @@
-import type { EventType } from '@/src/types/bookingForm';
+import type { Department, EventType } from '@/src/types/bookingForm';
+import { userActsAsServiceProviderFromMetadata } from '@/lib/service_provider_role';
+
+/** Minimal team row for bookable-department resolution. */
+export type booking_team_member_for_departments = {
+  deactivated?: boolean;
+  role?: string | null;
+  is_workspace_owner?: boolean;
+  additional_roles?: string[];
+  departments?: number[];
+};
+
+/** Department ids that have at least one active service provider assigned. */
+export function departmentIdsWithActiveServiceProviders(
+  members: booking_team_member_for_departments[]
+): Set<number> {
+  const ids = new Set<number>();
+  for (const m of members) {
+    if (m.deactivated) continue;
+    if (
+      !userActsAsServiceProviderFromMetadata({
+        role: m.role ?? null,
+        is_workspace_owner: m.is_workspace_owner === true,
+        additional_roles: m.additional_roles,
+      })
+    ) {
+      continue;
+    }
+    for (const raw of m.departments ?? []) {
+      const n = Number(raw);
+      if (Number.isInteger(n) && n > 0) ids.add(n);
+    }
+  }
+  return ids;
+}
+
+/** Departments bookable in public/multi-step flows: active status + active provider. */
+export function filterBookableDepartments(
+  departments: Department[],
+  members: booking_team_member_for_departments[]
+): Department[] {
+  const withProvider = departmentIdsWithActiveServiceProviders(members);
+  return departments.filter(
+    (d) => d.status !== 'inactive' && withProvider.has(Number(d.id))
+  );
+}
+
+/** Match team member department ids to a department row (coerces string/number). */
+export function memberActsInDepartment(
+  memberDepartmentIds: number[] | undefined,
+  departmentId: number
+): boolean {
+  if (!Array.isArray(memberDepartmentIds)) return false;
+  const did = Number(departmentId);
+  return memberDepartmentIds.some((id) => Number(id) === did);
+}
 
 export function sortEventTypesByDuration(eventTypes: EventType[]): EventType[] {
   return [...eventTypes].sort(

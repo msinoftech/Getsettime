@@ -73,7 +73,7 @@ export async function GET(
 
       supabase
         .from('workspaces')
-        .select('slug, user_id, name')
+        .select('slug, user_id, name, logo_url')
         .eq('id', workspaceId)
         .single(),
     ]);
@@ -136,6 +136,11 @@ export async function GET(
         workspaceResult.data && typeof workspaceResult.data.name === 'string'
           ? workspaceResult.data.name.trim() || null
           : null,
+      workspace_logo_url: (() => {
+        const ws = workspaceResult.data as { logo_url?: string | null } | null;
+        const u = ws?.logo_url;
+        return typeof u === 'string' && u.trim() !== '' ? u.trim() : null;
+      })(),
     });
   } catch (err: unknown) {
     const error = err as Error;

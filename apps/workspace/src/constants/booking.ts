@@ -71,12 +71,8 @@ export const BOOKING_EMPTY_MESSAGES = {
   noServices: 'No services available',
 } as const;
 
-/** GetSetTime wordmark in booking preview sidebar (multi-step + embed). Override in prod via NEXT_PUBLIC_GETSETTIME_BOOKING_BRAND_LOGO_SRC. */
-export const GETSETTIME_BOOKING_BRAND_LOGO_SRC =
-  typeof process.env.NEXT_PUBLIC_GETSETTIME_BOOKING_BRAND_LOGO_SRC === 'string' &&
-  process.env.NEXT_PUBLIC_GETSETTIME_BOOKING_BRAND_LOGO_SRC.trim() !== ''
-    ? process.env.NEXT_PUBLIC_GETSETTIME_BOOKING_BRAND_LOGO_SRC.trim()
-    : 'http://localhost:3001/getsettime-logo.svg';
+/** @deprecated Prefer `resolve_workspace_logo_src` / `WORKSPACE_LOGO_FALLBACK_SRC` from `@/src/utils/workspace_logo`. Kept for legacy imports. */
+export { WORKSPACE_LOGO_FALLBACK_SRC as GETSETTIME_BOOKING_BRAND_LOGO_SRC } from '@/src/utils/workspace_logo';
 
 // Config
 export const SCROLL_LOAD_DISTANCE = 200;

@@ -77,10 +77,19 @@ export async function GET(req: NextRequest) {
     const endDate = searchParams.get('end_date') || '';
     const status = searchParams.get('status') || '';
     const eventTypeId = searchParams.get('event_type_id') || '';
-    const serviceProviderId = searchParams.get('service_provider_id') || '';
+    const serviceProviderIdParam = searchParams.get('service_provider_id') || '';
     const departmentId = searchParams.get('department_id') || '';
     const sortBy = searchParams.get('sort') || 'start_at';
     const offset = (page - 1) * limit;
+
+    const userRole =
+      typeof user.user_metadata?.role === 'string'
+        ? user.user_metadata.role
+        : '';
+    const isServiceProvider = userRole === 'service_provider';
+    const serviceProviderId = isServiceProvider
+      ? user.id
+      : serviceProviderIdParam.trim();
     
     const now = new Date().toISOString();
 
@@ -163,9 +172,9 @@ export async function GET(req: NextRequest) {
       query = query.eq('event_type_id', eventTypeId.trim());
     }
 
-    // Apply service provider filter if provided
-    if (serviceProviderId.trim()) {
-      query = query.eq('service_provider_id', serviceProviderId.trim());
+    // Apply service provider filter if provided (SP role is always scoped to self)
+    if (serviceProviderId) {
+      query = query.eq('service_provider_id', serviceProviderId);
     }
 
     // Apply department filter if provided

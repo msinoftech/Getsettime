@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import {
+  normalizeDepartmentIdArray,
+  normalizeStringArray,
+} from '@/lib/invite_department_assignment';
+import { replaceUserDepartmentsForWorkspaceUser } from '@/lib/user_workspace_assignments';
 
 /**
  * Creates an admin Supabase client for user creation
@@ -24,11 +29,10 @@ function createAdminClient() {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { token, password, name } = body;
+    const { token, password } = body;
 
-    // Validation
-    if (!token || !password || !name) {
-      return NextResponse.json({ error: 'Token, password, and name are required' }, { status: 400 });
+    if (!token || !password) {
+      return NextResponse.json({ error: 'Token and password are required' }, { status: 400 });
     }
 
     if (password.length < 6) {
@@ -70,23 +74,64 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'User with this email already exists' }, { status: 409 });
     }
 
-    const deptIds = Array.isArray(invite.departments)
-      ? invite.departments
-          .map((x: unknown) => (typeof x === 'number' ? x : Number(x)))
-          .filter((n: number) => Number.isInteger(n) && n > 0)
-      : [];
+    const deptIds = normalizeDepartmentIdArray(invite.departments);
+    const deptNamesPending = normalizeStringArray(invite.department_names);
+
+    const inviteWorkspaceId = Number(invite.workspace_id);
+    if (!Number.isFinite(inviteWorkspaceId) || inviteWorkspaceId <= 0) {
+      return NextResponse.json({ error: 'Invalid workspace on invite' }, { status: 500 });
+    }
+
+    const inviteRole =
+      typeof invite.role === 'string' && invite.role.trim() !== ''
+        ? invite.role.trim()
+        : 'service_provider';
+
+    const inviteName =
+      typeof invite.name === 'string' ? invite.name.trim() : '';
+    if (!inviteName) {
+      return NextResponse.json(
+        {
+          error:
+            'This invite is missing your name. Ask your workspace admin to send a new invitation.',
+        },
+        { status: 400 }
+      );
+    }
+
+    const invitePhone =
+      typeof invite.phone === 'string' ? invite.phone.trim() : '';
+
+    const userMetadata: Record<string, unknown> = {
+      name: inviteName,
+      role: inviteRole,
+      workspace_id: inviteWorkspaceId,
+      invited_at: new Date().toISOString(),
+      ...(invitePhone !== '' ? { phone: invitePhone } : {}),
+    };
+    if (inviteRole === 'service_provider') {
+      userMetadata.onboarding_completed = false;
+      userMetadata.onboarding_last_completed_step = 0;
+    } else if (inviteRole === 'staff' || inviteRole === 'manager') {
+      // Internal team: no provider onboarding wizard after accept.
+      userMetadata.onboarding_completed = true;
+    }
+
+    if (inviteRole === 'service_provider') {
+      if (deptIds.length > 0) {
+        userMetadata.pending_department_ids = deptIds;
+      }
+      if (deptNamesPending.length > 0) {
+        userMetadata.pending_department_names = deptNamesPending;
+      }
+    }
 
     // Create user with metadata from invite
     const { data: newUser, error: createError } = await adminClient.auth.admin.createUser({
       email: invite.email,
       password,
       email_confirm: true,
-      user_metadata: {
-        name,
-        role: invite.role,
-        workspace_id: invite.workspace_id,
-        invited_at: new Date().toISOString(),
-      },
+      user_metadata: userMetadata,
     });
 
     if (createError) {
@@ -98,16 +143,32 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Failed to create user' }, { status: 500 });
     }
 
-    if (deptIds.length > 0) {
-      const ws = Number(invite.workspace_id);
-      const rows = [...new Set(deptIds)].map((department_id) => ({
-        user_id: newUser.user.id,
-        department_id,
-        workspace_id: ws,
-      }));
-      const { error: udErr } = await adminClient.from('user_departments').insert(rows);
+    const createdMeta = newUser.user.user_metadata as Record<string, unknown> | undefined;
+    const createdWs = createdMeta?.workspace_id;
+    if (Number(createdWs) !== inviteWorkspaceId) {
+      const { error: metaFixErr } = await adminClient.auth.admin.updateUserById(newUser.user.id, {
+        user_metadata: userMetadata,
+      });
+      if (metaFixErr) {
+        console.error('invites accept metadata fix:', metaFixErr);
+        return NextResponse.json({ error: metaFixErr.message }, { status: 500 });
+      }
+    }
+
+    // Staff/manager: assign departments immediately. Service providers defer until onboarding step 1.
+    if (inviteRole !== 'service_provider' && deptIds.length > 0) {
+      const { error: udErr } = await replaceUserDepartmentsForWorkspaceUser(
+        adminClient,
+        inviteWorkspaceId,
+        newUser.user.id,
+        deptIds
+      );
       if (udErr) {
         console.error('invites accept user_departments:', udErr);
+        return NextResponse.json(
+          { error: udErr.message || 'Failed to assign departments to user' },
+          { status: 500 }
+        );
       }
     }
 
@@ -132,6 +193,7 @@ export async function POST(req: NextRequest) {
         email: newUser.user.email,
         name: newUser.user.user_metadata?.name,
         role: newUser.user.user_metadata?.role,
+        workspace_id: inviteWorkspaceId,
       },
     }, { status: 201 });
   } catch (err: unknown) {

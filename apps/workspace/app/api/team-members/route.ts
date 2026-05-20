@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient, User } from '@supabase/supabase-js';
 import { user_belongs_to_workspace } from '@/lib/team_members_workspace';
-import { userActsAsServiceProviderFromSupabaseUser } from '@/lib/service_provider_role';
+import {
+  userActsAsServiceProviderFromMetadata,
+  userActsAsServiceProviderFromSupabaseUser,
+} from '@/lib/service_provider_role';
 import { pruneDepartmentsToValidServiceProviders } from '@/lib/department_service_provider_prune';
 import {
   normalizeDepartmentIdsFromUserMetadata,
@@ -18,6 +21,12 @@ function userCanManageTeam(user: User): boolean {
   if (user.user_metadata?.is_workspace_owner === true) return true;
   const role = user.user_metadata?.role;
   return role === 'workspace_admin' || role === 'manager';
+}
+
+/** Read team roster for booking/availability UIs (not full team management). */
+function userCanReadTeamMembers(user: User): boolean {
+  if (userCanManageTeam(user)) return true;
+  return user.user_metadata?.role === 'service_provider';
 }
 
 /**
@@ -126,10 +135,12 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Check if user has permission (owner, workspace_admin, or manager)
-    if (!userCanManageTeam(user)) {
+    if (!userCanReadTeamMembers(user)) {
       return NextResponse.json({ error: 'Forbidden: Access denied' }, { status: 403 });
     }
+    const isServiceProviderReadOnly =
+      !userCanManageTeam(user) &&
+      user.user_metadata?.role === 'service_provider';
 
     const workspaceId = user.user_metadata?.workspace_id;
     if (!workspaceId) {
@@ -180,6 +191,7 @@ export async function GET(req: NextRequest) {
           ? (additionalRolesRaw.filter((r) => typeof r === 'string') as string[])
           : [];
         const deptIds = [...new Set(deptByUser.get(u.id) ?? [])].sort((a, b) => a - b);
+        const onboardingCompleted = meta?.onboarding_completed;
         return {
           id: u.id,
           email: u.email,
@@ -192,8 +204,24 @@ export async function GET(req: NextRequest) {
           email_confirmed_at: u.email_confirmed_at,
           deactivated: u.user_metadata?.deactivated || false,
           is_workspace_owner: u.user_metadata?.is_workspace_owner === true,
+          onboarding_completed:
+            onboardingCompleted === true
+              ? true
+              : onboardingCompleted === false
+                ? false
+                : null,
         };
       });
+
+    const visibleMembers = isServiceProviderReadOnly
+      ? teamMembers.filter((m) =>
+          userActsAsServiceProviderFromMetadata({
+            role: m.role,
+            is_workspace_owner: m.is_workspace_owner,
+            additional_roles: m.additional_roles,
+          })
+        )
+      : teamMembers;
 
     const { startIso, endExclusiveIso } = parseWeekRangeFromRequest(req);
     const { data: bookingRows, error: bookErr } = await adminClient
@@ -216,7 +244,7 @@ export async function GET(req: NextRequest) {
       countsByProvider.set(pid, (countsByProvider.get(pid) ?? 0) + 1);
     }
 
-    const teamMembersWithCounts = teamMembers.map((m) => ({
+    const teamMembersWithCounts = visibleMembers.map((m) => ({
       ...m,
       bookings_this_week: countsByProvider.get(m.id) ?? 0,
     }));
@@ -291,17 +319,24 @@ export async function POST(req: NextRequest) {
     const phoneStr =
       typeof phone === 'string' ? phone.trim() : '';
 
+    const assignedRole = role || 'service_provider';
+    const userMetadata: Record<string, unknown> = {
+      name,
+      role: assignedRole,
+      workspace_id: workspaceId,
+      ...(phoneStr !== '' ? { phone: phoneStr } : {}),
+    };
+    if (assignedRole === 'service_provider') {
+      userMetadata.onboarding_completed = false;
+      userMetadata.onboarding_last_completed_step = 0;
+    }
+
     // Create user with metadata
     const { data: newUser, error: createError } = await adminClient.auth.admin.createUser({
       email,
       password,
       email_confirm: true, // Auto-confirm email
-      user_metadata: {
-        name,
-        role: role || 'service_provider',
-        workspace_id: workspaceId,
-        ...(phoneStr !== '' ? { phone: phoneStr } : {}),
-      },
+      user_metadata: userMetadata,
     });
 
     if (createError) {

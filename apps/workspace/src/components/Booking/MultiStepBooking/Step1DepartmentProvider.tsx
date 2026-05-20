@@ -9,7 +9,7 @@ interface Step1DepartmentProviderProps {
   selectedDepartment: Department | null;
   selectedProvider: ServiceProvider | null;
   serviceProviders: ServiceProvider[];
-  /** When false, skip provider list (general availability); booking assigns workspace owner. */
+  /** When false, no service providers are assigned to the selected department. */
   showProviderPicker: boolean;
   loadingDepartments: boolean;
   loadingProviders: boolean;

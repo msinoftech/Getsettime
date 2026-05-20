@@ -2,6 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import crypto from 'crypto';
 import { appUrl } from '@/lib/app-url';
+import {
+  normalizeDepartmentIdArray,
+  normalizeStringArray,
+  splitDepartmentSelectionByName,
+} from '@/lib/invite_department_assignment';
 
 /**
  * Creates an authenticated Supabase client using the anon key (respects RLS)
@@ -82,7 +87,7 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json();
-    const { email, role, departments } = body;
+    const { email, role, departments, department_names, name, phone } = body;
 
     // Validation
     if (!email || !role) {
@@ -116,17 +121,56 @@ export async function POST(req: NextRequest) {
     const expiresAt = new Date();
     expiresAt.setHours(expiresAt.getHours() + 72); // 72 hours expiration
 
+    const nameStr = typeof name === 'string' ? name.trim() : '';
+    const phoneStr = typeof phone === 'string' ? phone.trim() : '';
+
+    if (!nameStr) {
+      return NextResponse.json({ error: 'Full name is required' }, { status: 400 });
+    }
+
+    const { data: workspaceDepts, error: wsDeptErr } = await adminClient
+      .from('departments')
+      .select('id, name')
+      .eq('workspace_id', workspaceId)
+      .eq('flag', true);
+    if (wsDeptErr) {
+      console.error('Error loading workspace departments for invite:', wsDeptErr);
+      return NextResponse.json({ error: 'Failed to resolve departments' }, { status: 500 });
+    }
+
+    const explicitIds = normalizeDepartmentIdArray(departments);
+    const explicitNames = normalizeStringArray(department_names);
+    const fromNames =
+      explicitNames.length > 0
+        ? splitDepartmentSelectionByName(explicitNames, workspaceDepts ?? [])
+        : { departmentIds: [] as number[], departmentNames: [] as string[] };
+
+    const normalizedDepartments = [
+      ...new Set([...explicitIds, ...fromNames.departmentIds]),
+    ];
+    const normalizedDepartmentNames = fromNames.departmentNames;
+
+    if (role === 'service_provider' && normalizedDepartments.length === 0 && normalizedDepartmentNames.length === 0) {
+      return NextResponse.json(
+        { error: 'Select at least one department for the service provider' },
+        { status: 400 }
+      );
+    }
+
     // Store invite in database
     const inviteData = {
       token: inviteToken,
       email,
       role,
-      departments: departments || [],
+      name: nameStr,
+      departments: normalizedDepartments,
+      department_names: normalizedDepartmentNames,
       workspace_id: workspaceId,
       invited_by: user.id,
       invited_at: new Date().toISOString(),
       expires_at: expiresAt.toISOString(),
       used: false,
+      ...(phoneStr !== '' ? { phone: phoneStr } : {}),
     };
 
     // Insert invite into database
@@ -154,7 +198,7 @@ export async function POST(req: NextRequest) {
         secure: process.env.SMTP_SECURE === 'true', // true for 465, false for other ports
         auth: {
           user: process.env.SMTP_USER,
-          pass: process.env.SMTP_PASS,
+          pass: process.env.SMTP_PASSWORD,
         },
       });
 

@@ -128,6 +128,30 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
     onAvailabilityChange,
   });
 
+  useEffect(() => {
+    if (
+      selectedDepartment &&
+      !departments.some((d) => d.id === selectedDepartment.id)
+    ) {
+      setSelectedDepartment(null);
+      setSelectedProvider(null);
+      setSelectedServiceIds([]);
+    }
+  }, [departments, selectedDepartment]);
+
+  useEffect(() => {
+    if (!selectedDepartment) return;
+    if (serviceProviders.length === 1) {
+      setSelectedProvider((prev) =>
+        prev?.id === serviceProviders[0].id ? prev : serviceProviders[0]
+      );
+      return;
+    }
+    setSelectedProvider((prev) =>
+      prev && serviceProviders.some((p) => p.id === prev.id) ? prev : null
+    );
+  }, [selectedDepartment, serviceProviders]);
+
   const sortedEventTypes = getSortedFilteredEventTypes(eventTypes, {
     slug: eventTypeSlug,
     duration: targetDuration,

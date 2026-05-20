@@ -3,6 +3,12 @@ import { useState, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
+import { supabase } from "@/lib/supabaseClient";
+import {
+  persistInviteOnboardingContext,
+  workspaceOnboardingRegisterUrl,
+} from "@/lib/auth_onboarding";
+import { ROLE_SERVICE_PROVIDER } from "@/src/constants/roles";
 
 export default function InviteAcceptForm() {
   const router = useRouter();
@@ -13,10 +19,14 @@ export default function InviteAcceptForm() {
   const [validating, setValidating] = useState(true);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(false);
-  const [inviteData, setInviteData] = useState<{ email: string; role: string } | null>(null);
+  const [inviteData, setInviteData] = useState<{
+    email: string;
+    role: string;
+    name?: string | null;
+    phone?: string | null;
+  } | null>(null);
 
   const [formData, setFormData] = useState({
-    name: "",
     password: "",
     confirmPassword: "",
   });
@@ -39,7 +49,12 @@ export default function InviteAcceptForm() {
       const data = await response.json();
 
       if (response.ok && data.valid) {
-        setInviteData({ email: data.email, role: data.role });
+        setInviteData({
+          email: data.email,
+          role: data.role,
+          name: data.name ?? null,
+          phone: data.phone ?? null,
+        });
         setValidating(false);
       } else {
         setError(data.error || "Invalid or expired invite link");
@@ -55,12 +70,6 @@ export default function InviteAcceptForm() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
-
-    // Validation
-    if (!formData.name.trim()) {
-      setError("Name is required");
-      return;
-    }
 
     if (formData.password.length < 6) {
       setError("Password must be at least 6 characters");
@@ -80,7 +89,6 @@ export default function InviteAcceptForm() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           token,
-          name: formData.name,
           password: formData.password,
         }),
       });
@@ -88,9 +96,61 @@ export default function InviteAcceptForm() {
       const data = await response.json();
 
       if (response.ok) {
+        const invitedRole = data.user?.role ?? inviteData?.role;
+        const email = inviteData?.email;
+        if (email) {
+          const { data: signInData, error: signInErr } = await supabase.auth.signInWithPassword({
+            email,
+            password: formData.password,
+          });
+          if (signInErr || !signInData.session?.access_token) {
+            setError(
+              signInErr?.message ??
+                "Account created. Please sign in with your new password."
+            );
+            setLoading(false);
+            return;
+          }
+          await supabase.auth.refreshSession();
+          const sessionRes = await fetch("/api/auth/session-set", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ access_token: signInData.session.access_token }),
+          });
+          const sessionJson = await sessionRes.json();
+          if (sessionJson.error) {
+            console.error("Failed to set session cookies:", sessionJson.error);
+          }
+
+          if (invitedRole === ROLE_SERVICE_PROVIDER) {
+            const inviteWorkspaceId =
+              typeof data.user?.workspace_id === "number"
+                ? data.user.workspace_id
+                : Number(data.user?.workspace_id);
+            if (Number.isFinite(inviteWorkspaceId) && inviteWorkspaceId > 0) {
+              persistInviteOnboardingContext(inviteWorkspaceId);
+            }
+            router.replace(
+              workspaceOnboardingRegisterUrl(
+                {},
+                {
+                  inviteWorkspaceId:
+                    Number.isFinite(inviteWorkspaceId) && inviteWorkspaceId > 0
+                      ? inviteWorkspaceId
+                      : undefined,
+                }
+              )
+            );
+            return;
+          }
+
+          // Staff / manager / admin invites: direct workspace access (no provider onboarding).
+          router.replace("/");
+          return;
+        }
         setSuccess(true);
         setTimeout(() => {
-          router.push('/login');
+          router.push("/login");
         }, 2000);
       } else {
         setError(data.error || 'Failed to create account');
@@ -189,18 +249,39 @@ export default function InviteAcceptForm() {
             className="mx-auto mb-4"
           />
           <h1 className="text-3xl font-bold text-gray-800 mb-2">Accept Invitation</h1>
-          <p className="text-gray-600">Complete your account setup</p>
+          <p className="text-gray-600">Set your password to activate your account</p>
         </div>
 
         {/* Invite Info */}
         {inviteData && (
-          <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4 mb-6">
-            <p className="text-sm text-indigo-800">
-              <strong>Email:</strong> {inviteData.email}
-            </p>
-            <p className="text-sm text-indigo-800 mt-1">
-              <strong>Role:</strong> {inviteData.role.replace('_', ' ')}
-            </p>
+          <div className="mb-6 space-y-4">
+            <div className="rounded-lg border border-indigo-200 bg-indigo-50 p-4">
+              <p className="text-sm text-indigo-800">
+                <strong>Email:</strong> {inviteData.email}
+              </p>
+              <p className="mt-1 text-sm text-indigo-800">
+                <strong>Role:</strong> {inviteData.role.replace(/_/g, " ")}
+              </p>
+              {inviteData.name?.trim() ? (
+                <p className="mt-1 text-sm text-indigo-800">
+                  <strong>Name:</strong> {inviteData.name.trim()}
+                </p>
+              ) : null}
+              {inviteData.phone?.trim() ? (
+                <p className="mt-1 text-sm text-indigo-800">
+                  <strong>Phone:</strong> {inviteData.phone.trim()}
+                </p>
+              ) : null}
+            </div>
+            {inviteData.role !== ROLE_SERVICE_PROVIDER && (
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50/80 p-4">
+                <p className="text-sm font-semibold text-emerald-900">Internal team invite flow</p>
+                <p className="mt-1 text-sm text-emerald-800">
+                  Staff and managers get direct workspace access after accepting the invite. They
+                  are not required to complete provider onboarding.
+                </p>
+              </div>
+            )}
           </div>
         )}
 
@@ -215,23 +296,6 @@ export default function InviteAcceptForm() {
               <p className="text-sm">{error}</p>
             </div>
           )}
-
-          {/* Name Field */}
-          <div>
-            <label htmlFor="name" className="block text-sm font-medium text-gray-700 mb-2">
-              Full Name
-            </label>
-            <input
-              id="name"
-              type="text"
-              placeholder="John Doe"
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
-              value={formData.name}
-              onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-              disabled={loading}
-              required
-            />
-          </div>
 
           {/* Password Field */}
           <div>

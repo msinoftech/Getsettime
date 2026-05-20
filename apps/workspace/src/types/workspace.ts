@@ -104,6 +104,8 @@ export type WorkspaceSettingsHook = {
   availability: AvailabilitySettings;
   workspaceName?: string | null;
   workspaceLogo?: string | null;
+  /** `workspaceLogo` / legacy `general.logoUrl` resolved with app fallback */
+  workspaceLogoResolved: string;
   /** Resolved profession label from workspace (joined name or legacy `type`) */
   workspaceProfessionLabel?: string | null;
   loading: boolean;

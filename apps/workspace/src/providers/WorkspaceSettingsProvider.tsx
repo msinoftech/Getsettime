@@ -1,8 +1,9 @@
 'use client';
 
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from './AuthProvider';
 import type { GeneralSettings, AvailabilitySettings, WorkspaceSettings, WorkspaceSettingsHook } from '../types/workspace';
+import { resolve_workspace_logo_src } from '../utils/workspace_logo';
 
 const WorkspaceSettingsContext = createContext<WorkspaceSettingsHook | null>(null);
 
@@ -82,12 +83,19 @@ export function WorkspaceSettingsProvider({ children }: { children: React.ReactN
     fetchSettings();
   }, [fetchSettings]);
 
+  const general = (settings.general || {}) as GeneralSettings;
+  const workspaceLogoResolved = useMemo(
+    () => resolve_workspace_logo_src(workspaceLogo ?? general.logoUrl ?? null),
+    [workspaceLogo, general.logoUrl]
+  );
+
   const value: WorkspaceSettingsHook = {
     settings,
-    general: (settings.general || {}) as GeneralSettings,
+    general,
     availability: (settings.availability || {}) as AvailabilitySettings,
     workspaceName,
     workspaceLogo,
+    workspaceLogoResolved,
     workspaceProfessionLabel,
     loading,
     error,

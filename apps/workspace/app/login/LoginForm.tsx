@@ -1,6 +1,7 @@
 "use client";
 import {
   workspaceAdminNeedsOnboardingWizard,
+  serviceProviderNeedsOnboardingWizard,
   workspaceOnboardingRegisterUrl,
 } from "@/lib/auth_onboarding";
 import { supabase } from "@/lib/supabaseClient";
@@ -273,7 +274,17 @@ export default function LoginForm() {
         return;
       }
 
-      if (!userForNav.user_metadata?.workspace_id) {
+      const { data: freshUserResult } = await supabase.auth.getUser();
+      if (freshUserResult.user) {
+        userForNav = freshUserResult.user;
+      }
+      const freshMeta = userForNav.user_metadata as Record<string, unknown> | undefined;
+      const hasWorkspaceId =
+        freshMeta?.workspace_id != null &&
+        Number.isFinite(Number(freshMeta.workspace_id)) &&
+        Number(freshMeta.workspace_id) > 0;
+
+      if (!hasWorkspaceId) {
         const bootRes = await fetch("/api/auth/bootstrap-workspace", {
           method: "POST",
           headers: { Authorization: `Bearer ${accessToken}` },
@@ -306,6 +317,8 @@ export default function LoginForm() {
         return;
       }
 
+      const meta = userForNav.user_metadata as Record<string, unknown>;
+
       if (finalRole === "workspace_admin") {
         const wid = userForNav.user_metadata?.workspace_id as number | undefined;
         let hasWorkspaceProfile = false;
@@ -317,11 +330,15 @@ export default function LoginForm() {
             .maybeSingle();
           hasWorkspaceProfile = !!(ws?.type || ws?.profession_id);
         }
-        const meta = userForNav.user_metadata as Record<string, unknown>;
         if (workspaceAdminNeedsOnboardingWizard(meta, hasWorkspaceProfile)) {
           router.push(workspaceOnboardingRegisterUrl(meta));
           return;
         }
+      }
+
+      if (finalRole === "service_provider" && serviceProviderNeedsOnboardingWizard(meta)) {
+        router.push(workspaceOnboardingRegisterUrl(meta));
+        return;
       }
 
       router.push("/");

@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { getOrCreateWorkspace, updateUserWorkspaceMetadata } from "@/lib/workspace-service";
+import {
+  getOrCreateWorkspace,
+  updateUserWorkspaceMetadata,
+  resolveAcceptedInviteForEmail,
+  syncInvitedUserWorkspaceMetadata,
+} from "@/lib/workspace-service";
 
 export async function POST(req: Request) {
   try {
@@ -33,15 +38,65 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const meta = user.user_metadata ?? {};
-    const name = (meta.name as string) || user.email?.split("@")[0] || "User";
-    const userEmail = user.email || "";
-
     const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {
       auth: { autoRefreshToken: false, persistSession: false },
     });
 
-    // Get or create workspace (ensures one user = one workspace)
+    // JWT custom claims can lag after invite accept; auth.users metadata is authoritative.
+    const { data: authUserRow } = await supabaseAdmin.auth.admin.getUserById(user.id);
+    const meta = authUserRow?.user?.user_metadata ?? user.user_metadata ?? {};
+    const name = (meta.name as string) || user.email?.split("@")[0] || "User";
+    const userEmail = user.email || "";
+
+    const parseWorkspaceId = (raw: unknown): number => {
+      if (typeof raw === "number" && Number.isFinite(raw)) return raw;
+      if (typeof raw === "string") {
+        const n = parseInt(raw, 10);
+        return Number.isFinite(n) ? n : NaN;
+      }
+      return NaN;
+    };
+
+    const acceptedInvite = userEmail
+      ? await resolveAcceptedInviteForEmail(supabaseAdmin, userEmail)
+      : null;
+    if (acceptedInvite) {
+      const { error: syncErr } = await syncInvitedUserWorkspaceMetadata(
+        user.id,
+        acceptedInvite,
+        supabaseAdmin
+      );
+      if (syncErr) {
+        return NextResponse.json({ error: syncErr }, { status: 500 });
+      }
+      return NextResponse.json({ workspace_id: acceptedInvite.workspaceId });
+    }
+
+    const existingWorkspaceId = parseWorkspaceId(meta.workspace_id);
+    if (Number.isFinite(existingWorkspaceId) && existingWorkspaceId > 0) {
+      return NextResponse.json({ workspace_id: existingWorkspaceId });
+    }
+
+    const invitedAt = meta.invited_at;
+    const isInvitedMember =
+      typeof invitedAt === "string"
+        ? invitedAt.trim() !== ""
+        : invitedAt != null;
+    const invitedRole = typeof meta.role === "string" ? meta.role : "";
+    if (
+      isInvitedMember ||
+      invitedRole === "service_provider" ||
+      invitedRole === "manager" ||
+      invitedRole === "staff" ||
+      invitedRole === "customer"
+    ) {
+      return NextResponse.json(
+        { error: "Invited team member is missing workspace assignment. Contact your workspace admin." },
+        { status: 400 }
+      );
+    }
+
+    // Get or create workspace (ensures one user = one workspace) — workspace owners / self-signup only
     const { data: workspaceResult, error: workspaceError } = await getOrCreateWorkspace({
       userId: user.id,
       userName: name,

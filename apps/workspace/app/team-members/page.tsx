@@ -20,6 +20,11 @@ import {
   LuUserPlus,
   LuUsers,
 } from "react-icons/lu";
+import {
+  EditTeamMemberModal,
+  ProviderCreateModal,
+  StaffInviteModal,
+} from "./team-member-modals";
 import { supabase } from "@/lib/supabaseClient";
 import { useAuth } from "@/src/providers/AuthProvider";
 import { ConfirmModal } from "@/src/components/ui/ConfirmModal";
@@ -29,8 +34,10 @@ import {
   OWNER_DISALLOWED_ROLES,
   MANAGE_ROLES,
   ROLE_SERVICE_PROVIDER,
+  ROLE_WORKSPACE_ADMIN,
   formatRoleLabel,
 } from "@/src/constants/roles";
+import { splitDepartmentSelectionByName } from "@/lib/invite_department_assignment";
 import { userActsAsServiceProviderFromMetadata } from "@/lib/service_provider_role";
 
 interface Department {
@@ -53,6 +60,7 @@ interface TeamMember {
   email_confirmed_at: string | null;
   deactivated: boolean;
   is_workspace_owner: boolean;
+  onboarding_completed?: boolean | null;
   /** Assignments where this user is service_provider_id, Mon–Sun local week */
   bookings_this_week?: number;
 }
@@ -100,11 +108,14 @@ function getMemberUiStatus(
 ): MemberUiStatus {
   if (m.deactivated) return "inactive";
   if (!m.email_confirmed_at) return "invited";
-  if (
-    teamMemberActsAsServiceProvider(m) &&
-    getSortedDepartmentIdsForDisplay(m, depts).length === 0
-  ) {
-    return "onboarding";
+  if (teamMemberActsAsServiceProvider(m)) {
+    if (m.onboarding_completed === false) return "onboarding";
+    if (
+      m.onboarding_completed == null &&
+      getSortedDepartmentIdsForDisplay(m, depts).length === 0
+    ) {
+      return "onboarding";
+    }
   }
   return "active";
 }
@@ -164,7 +175,7 @@ function formatWeeklyBookingsLabel(count: number): string {
   return count === 1 ? "1 booking this week" : `${count} bookings this week`;
 }
 
-/** Local Monday 00:00 → next Monday 00:00 (ISO), for “bookings this week” on the team list. */
+/** Local Monday 00:00 → next Monday 00:00 (ISO), for bookings this week on the team list. */
 function getLocalWeekRangeQueryParams(): { week_start: string; week_end: string } {
   const now = new Date();
   const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -207,11 +218,17 @@ export default function TeamMembersPage() {
     departments: [] as number[],
   });
   const [inviteFormData, setInviteFormData] = useState({
+    name: "",
     email: "",
-    role: ROLE_SERVICE_PROVIDER,
+    phone: "",
+    role: ROLE_WORKSPACE_ADMIN,
     departments: [] as number[],
   });
   const [inviteUrl, setInviteUrl] = useState<string | null>(null);
+  const [providerCatalogNames, setProviderCatalogNames] = useState<string[]>([]);
+  const [providerProfessionLabel, setProviderProfessionLabel] = useState<string | null>(null);
+  const [providerSelectedDepartmentNames, setProviderSelectedDepartmentNames] = useState<string[]>([]);
+  const [providerInviteUrl, setProviderInviteUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [initialLoading, setInitialLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -327,6 +344,50 @@ export default function TeamMembersPage() {
     }
   };
 
+  const loadProviderCatalogDepartments = async () => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+
+      const headers = { Authorization: `Bearer ${session.access_token}` };
+      const wsRes = await fetch("/api/workspace", { headers });
+      if (!wsRes.ok) return;
+
+      const wsBody = (await wsRes.json()) as {
+        workspace?: {
+          type?: string | null;
+          profession_name?: string | null;
+          admin_professions_id?: number | null;
+        };
+      };
+      const ws = wsBody.workspace;
+      const label =
+        (typeof ws?.type === "string" && ws.type.trim()) ||
+        (typeof ws?.profession_name === "string" && ws.profession_name.trim()) ||
+        null;
+      setProviderProfessionLabel(label);
+
+      const catalogId = ws?.admin_professions_id;
+      if (catalogId == null || !Number.isFinite(Number(catalogId))) {
+        setProviderCatalogNames([]);
+        return;
+      }
+
+      const catRes = await fetch(
+        `/api/catalog/departments?profession_id=${encodeURIComponent(String(catalogId))}`,
+        { headers }
+      );
+      if (catRes.ok) {
+        const catBody = (await catRes.json()) as { departments?: string[] };
+        setProviderCatalogNames(
+          Array.isArray(catBody.departments) ? catBody.departments : []
+        );
+      }
+    } catch (err) {
+      console.error("Error loading provider catalog departments:", err);
+    }
+  };
+
   const handleNewMember = () => {
     setEditingMember(null);
     setMemberFormData({
@@ -338,16 +399,21 @@ export default function TeamMembersPage() {
       additional_roles: [],
       departments: [],
     });
+    setProviderSelectedDepartmentNames([]);
+    setProviderInviteUrl(null);
     setError(null);
     setSuccess(null);
     setShowInviteForm(false);
     setShowMemberForm(true);
+    void loadProviderCatalogDepartments();
   };
 
   const handleInviteMember = () => {
     setInviteFormData({
+      name: "",
       email: "",
-      role: ROLE_SERVICE_PROVIDER,
+      phone: "",
+      role: ROLE_WORKSPACE_ADMIN,
       departments: [],
     });
     setInviteUrl(null);
@@ -385,15 +451,83 @@ export default function TeamMembersPage() {
       additional_roles: [],
       departments: [],
     });
+    setProviderSelectedDepartmentNames([]);
+    setProviderInviteUrl(null);
     setError(null);
     setSuccess(null);
+  };
+
+  const toggleProviderDepartmentName = (name: string) => {
+    setProviderSelectedDepartmentNames((prev) =>
+      prev.includes(name) ? prev.filter((n) => n !== name) : [...prev, name]
+    );
+  };
+
+  const handleProviderInviteSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError(null);
+    setSuccess(null);
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        setError("Not authenticated");
+        setLoading(false);
+        return;
+      }
+
+      const { departmentIds, departmentNames } = splitDepartmentSelectionByName(
+        providerSelectedDepartmentNames,
+        departments
+      );
+
+      if (departmentIds.length === 0 && departmentNames.length === 0) {
+        setError("Select at least one department");
+        setLoading(false);
+        return;
+      }
+
+      const response = await fetch("/api/invites", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          email: memberFormData.email,
+          role: ROLE_SERVICE_PROVIDER,
+          name: memberFormData.name.trim(),
+          phone: memberFormData.phone.trim(),
+          departments: departmentIds,
+          department_names: departmentNames,
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setSuccess("Provider invite sent successfully!");
+        setProviderInviteUrl(data.inviteUrl);
+        await fetchTeamMembers();
+      } else {
+        const errorData = await response.json();
+        setError(errorData.error || "Failed to send provider invite");
+      }
+    } catch (err) {
+      console.error("Error sending provider invite:", err);
+      setError("An error occurred while sending the provider invite");
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleInviteFormCancel = () => {
     setShowInviteForm(false);
     setInviteFormData({
+      name: "",
       email: "",
-      role: ROLE_SERVICE_PROVIDER,
+      phone: "",
+      role: ROLE_WORKSPACE_ADMIN,
       departments: [],
     });
     setInviteUrl(null);
@@ -449,32 +583,28 @@ export default function TeamMembersPage() {
         return;
       }
 
+      if (!editingMember) {
+        setLoading(false);
+        return;
+      }
+
       const url = '/api/team-members';
-      const method = editingMember ? 'PUT' : 'POST';
+      const method = 'PUT';
       // additional_roles is only meaningful for owners; send only then to keep payload clean.
       const additionalRolesForOwner = editingMember?.is_workspace_owner
         ? memberFormData.additional_roles.filter(r => r !== memberFormData.role)
         : undefined;
-      const body = editingMember
-        ? {
-            id: editingMember.id,
-            name: memberFormData.name,
-            email: memberFormData.email,
-            phone: memberFormData.phone,
-            role: memberFormData.role,
-            departments: memberFormData.departments,
-            ...(additionalRolesForOwner !== undefined
-              ? { additional_roles: additionalRolesForOwner }
-              : {}),
-          }
-        : {
-            name: memberFormData.name,
-            email: memberFormData.email,
-            phone: memberFormData.phone,
-            password: memberFormData.password,
-            role: memberFormData.role,
-            departments: memberFormData.departments,
-          };
+      const body = {
+        id: editingMember.id,
+        name: memberFormData.name,
+        email: memberFormData.email,
+        phone: memberFormData.phone,
+        role: memberFormData.role,
+        departments: memberFormData.departments,
+        ...(additionalRolesForOwner !== undefined
+          ? { additional_roles: additionalRolesForOwner }
+          : {}),
+      };
 
       const response = await fetch(url, {
         method,
@@ -587,6 +717,8 @@ export default function TeamMembersPage() {
           email: inviteFormData.email,
           role: inviteFormData.role,
           departments: inviteFormData.departments,
+          name: inviteFormData.name.trim(),
+          phone: inviteFormData.phone.trim(),
         }),
       });
 
@@ -1061,471 +1193,44 @@ export default function TeamMembersPage() {
         </div>
       )}
 
-      {/* Team Member Form Modal */}
-      {showMemberForm && (
-        <div className={`fixed inset-0 z-40 flex m-0 justify-end transition-opacity duration-200 ${showMemberForm ? 'pointer-events-auto opacity-100' : 'pointer-events-none opacity-0'}`}>
-          <div className={`absolute inset-0 bg-black/40 transition-opacity duration-300 ${showMemberForm ? 'opacity-100' : 'opacity-0'}`} aria-hidden="true" onClick={handleMemberFormCancel} />
-          <section className={`relative h-full w-full max-w-xl transform bg-white shadow-2xl transition-transform duration-300 ${showMemberForm ? 'translate-x-0' : 'translate-x-full'}`}>
-            <div className="flex items-center justify-between border-b border-gray-200 px-6 py-4">
-              <div>
-                <h2 className="text-lg font-semibold text-gray-800">
-                  {editingMember ? "Edit Team Member" : "Create New Team Member"}
-                </h2>
-                <p className="text-xs text-slate-500 mt-1">Fill in the team member details below</p>
-              </div>
-              <button className="rounded-full p-2 text-gray-500 hover:bg-gray-100 transition" aria-label="Close form" onClick={handleMemberFormCancel}>
-                <svg className="h-5 w-5" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" viewBox="0 0 24 24">
-                  <path d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-            <div className="h-[calc(100%-4rem)] overflow-y-auto p-6">
-              <form onSubmit={handleMemberFormSubmit} className="space-y-5">
-                <div>
-                  <label className="block text-sm font-medium mb-2 text-slate-700">
-                    Name <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={memberFormData.name}
-                    onChange={(e) => setMemberFormData({ ...memberFormData, name: e.target.value })}
-                    placeholder="e.g., John Doe"
-                    className="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition"
-                    required
-                  />
-                </div>
+      <ProviderCreateModal
+        open={showMemberForm && !editingMember}
+        loading={loading}
+        professionLabel={providerProfessionLabel}
+        catalogDepartmentNames={providerCatalogNames}
+        selectedDepartmentNames={providerSelectedDepartmentNames}
+        memberFormData={memberFormData}
+        inviteUrl={providerInviteUrl}
+        onCancel={handleMemberFormCancel}
+        onSubmit={handleProviderInviteSubmit}
+        onChange={setMemberFormData}
+        onToggleDepartmentName={toggleProviderDepartmentName}
+      />
 
-                <div>
-                  <label className="block text-sm font-medium mb-2 text-slate-700">
-                    Email <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="email"
-                    value={memberFormData.email}
-                    onChange={(e) => setMemberFormData({ ...memberFormData, email: e.target.value })}
-                    placeholder="e.g., john@example.com"
-                    className="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition"
-                    required
-                  />
-                </div>
+      <EditTeamMemberModal
+        open={showMemberForm && editingMember !== null}
+        loading={loading}
+        editingMember={editingMember!}
+        departments={departments}
+        memberFormData={memberFormData}
+        onCancel={handleMemberFormCancel}
+        onSubmit={handleMemberFormSubmit}
+        onChange={setMemberFormData}
+        onToggleDepartment={toggleDepartment}
+        onToggleAdditionalRole={toggleAdditionalRole}
+      />
 
-                {!editingMember && (
-                  <div>
-                    <label className="block text-sm font-medium mb-2 text-slate-700">
-                      Password <span className="text-red-500">*</span>
-                    </label>
-                    <input
-                      type="password"
-                      value={memberFormData.password}
-                      onChange={(e) => setMemberFormData({ ...memberFormData, password: e.target.value })}
-                      placeholder="Minimum 6 characters"
-                      className="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition"
-                      required
-                      minLength={6}
-                    />
-                    <p className="mt-1 text-xs text-slate-500">Password must be at least 6 characters long</p>
-                  </div>
-                )}
-
-                <div>
-                  <label className="block text-sm font-medium mb-2 text-slate-700">
-                    Phone number
-                  </label>
-                  <input
-                    type="tel"
-                    value={memberFormData.phone}
-                    onChange={(e) =>
-                      setMemberFormData({ ...memberFormData, phone: e.target.value })
-                    }
-                    placeholder="e.g., +1 (555) 000-0000"
-                    className="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition"
-                    autoComplete="tel"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium mb-2 text-slate-700">
-                    {editingMember?.is_workspace_owner ? 'Primary role' : 'Role'} <span className="text-red-500">*</span>
-                  </label>
-                  <select
-                    value={memberFormData.role}
-                    onChange={(e) => {
-                      const newRole = e.target.value;
-                      // Remove the newly-selected primary from additional_roles to
-                      // avoid duplicates, then clear departments only when
-                      // service_provider is absent from both the primary and the
-                      // remaining additional roles.
-                      const nextAdditional = memberFormData.additional_roles.filter(r => r !== newRole);
-                      const stillServiceProvider =
-                        newRole === ROLE_SERVICE_PROVIDER || nextAdditional.includes(ROLE_SERVICE_PROVIDER);
-                      setMemberFormData({
-                        ...memberFormData,
-                        role: newRole,
-                        additional_roles: nextAdditional,
-                        departments: stillServiceProvider ? memberFormData.departments : [],
-                      });
-                    }}
-                    className="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition"
-                    required
-                  >
-                    {ASSIGNABLE_ROLES.filter(r =>
-                      editingMember?.is_workspace_owner
-                        ? !OWNER_DISALLOWED_ROLES.includes(r.value)
-                        : true
-                    ).map((r) => (
-                      <option key={r.value} value={r.value}>{r.label}</option>
-                    ))}
-                  </select>
-                  <p className="mt-1 text-xs text-slate-500">
-                    {editingMember?.is_workspace_owner
-                      ? 'Owner can hold multiple roles. Pick the primary role below, then add any additional roles.'
-                      : 'Select the role for this team member'}
-                  </p>
-                </div>
-
-                {editingMember?.is_workspace_owner && (
-                  <div>
-                    <label className="block text-sm font-medium mb-2 text-slate-700">
-                      Additional roles
-                    </label>
-                    <div className="border border-slate-300 rounded-lg p-3">
-                      <div className="space-y-2">
-                        {ASSIGNABLE_ROLES.filter(r =>
-                          r.value !== memberFormData.role &&
-                          !OWNER_DISALLOWED_ROLES.includes(r.value)
-                        ).map((r) => {
-                          const checked = memberFormData.additional_roles.includes(r.value);
-                          return (
-                            <button
-                              key={r.value}
-                              type="button"
-                              onClick={() => toggleAdditionalRole(r.value)}
-                              className={`w-full text-left px-3 py-2 rounded-md text-sm transition ${
-                                checked
-                                  ? 'bg-indigo-100 text-indigo-700'
-                                  : 'text-slate-700 hover:bg-indigo-50 hover:text-indigo-700'
-                              }`}
-                            >
-                              <div className="flex items-center gap-2">
-                                {checked ? (
-                                  <svg className="w-4 h-4 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                                  </svg>
-                                ) : (
-                                  <svg className="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                                  </svg>
-                                )}
-                                {r.label}
-                              </div>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-                    <p className="mt-1 text-xs text-slate-500">Owner retains full workspace privileges regardless of these selections.</p>
-                  </div>
-                )}
-
-                {/* Departments Selector - Show when service_provider is the
-                    primary role OR present in additional roles (owner case) */}
-                {(memberFormData.role === ROLE_SERVICE_PROVIDER ||
-                  memberFormData.additional_roles.includes(ROLE_SERVICE_PROVIDER)) && (
-                <div>
-                  <label className="block text-sm font-medium mb-2 text-slate-700">
-                    Departments
-                  </label>
-
-                  {/* Selected Departments Chips */}
-                  {memberFormData.departments.length > 0 && (
-                    <div className="mb-3 flex flex-wrap gap-2">
-                      {memberFormData.departments.map((departmentId) => {
-                        const department = departments.find(d => d.id === departmentId);
-                        if (!department) return null;
-                        return (
-                          <span
-                            key={departmentId}
-                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium bg-indigo-100 text-indigo-800"
-                          >
-                            {department.name}
-                            <button
-                              type="button"
-                              onClick={() => toggleDepartment(departmentId)}
-                              className="ml-1 inline-flex items-center justify-center w-4 h-4 rounded-full hover:bg-indigo-200 transition"
-                              aria-label={`Remove ${department.name}`}
-                            >
-                              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                              </svg>
-                            </button>
-                          </span>
-                        );
-                      })}
-                    </div>
-                  )}
-
-                  {/* Departments List */}
-                  {departments.length > 0 ? (
-                    <div className="border border-slate-300 rounded-lg p-3 max-h-48 overflow-y-auto">
-                      <div className="space-y-2">
-                        {departments.map((department) => (
-                          <button
-                            key={department.id}
-                            type="button"
-                            onClick={() => toggleDepartment(department.id)}
-                            className={`w-full text-left px-3 py-2 rounded-md text-sm transition ${
-                              memberFormData.departments.includes(department.id)
-                                ? 'bg-indigo-100 text-indigo-700'
-                                : 'text-slate-700 hover:bg-indigo-50 hover:text-indigo-700'
-                            }`}
-                          >
-                            <div className="flex items-center gap-2">
-                              {memberFormData.departments.includes(department.id) ? (
-                                <svg className="w-4 h-4 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                                </svg>
-                              ) : (
-                                <svg className="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                                </svg>
-                              )}
-                              {department.name}
-                            </div>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="text-sm text-slate-500 border border-slate-300 rounded-lg p-3">
-                      No departments available. Create departments first to assign them to team members.
-                    </div>
-                  )}
-                  <p className="mt-1 text-xs text-slate-500">Select departments for this team member (optional)</p>
-                </div>
-                )}
-
-                <div className="flex gap-3 justify-end pt-6 border-t border-slate-200">
-                  <button
-                    type="button"
-                    onClick={handleMemberFormCancel}
-                    className="px-4 py-2 rounded-lg text-sm font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 transition"
-                    disabled={loading}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    className="px-4 py-2 rounded-lg text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
-                    disabled={loading}
-                  >
-                    {loading ? 'Saving...' : (editingMember ? 'Update Team Member' : 'Create Team Member')}
-                  </button>
-                </div>
-              </form>
-            </div>
-          </section>
-        </div>
-      )}
-
-      {/* Invite Team Member Form Modal */}
-      {showInviteForm && (
-        <div className={`fixed inset-0 z-40 flex m-0 justify-end transition-opacity duration-200 ${showInviteForm ? 'pointer-events-auto opacity-100' : 'pointer-events-none opacity-0'}`}>
-          <div className={`absolute inset-0 bg-black/40 transition-opacity duration-300 ${showInviteForm ? 'opacity-100' : 'opacity-0'}`} aria-hidden="true" onClick={handleInviteFormCancel} />
-          <section className={`relative h-full w-full max-w-xl transform bg-white shadow-2xl transition-transform duration-300 ${showInviteForm ? 'translate-x-0' : 'translate-x-full'}`}>
-            <div className="flex items-center justify-between border-b border-gray-200 px-6 py-4">
-              <div>
-                <h2 className="text-lg font-semibold text-gray-800">Invite Team Member</h2>
-                <p className="text-xs text-slate-500 mt-1">Send an invitation to join your workspace</p>
-              </div>
-              <button className="rounded-full p-2 text-gray-500 hover:bg-gray-100 transition" aria-label="Close form" onClick={handleInviteFormCancel}>
-                <svg className="h-5 w-5" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" viewBox="0 0 24 24">
-                  <path d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-            <div className="h-[calc(100%-4rem)] overflow-y-auto p-6">
-              {inviteUrl ? (
-                <div className="space-y-4">
-                  <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-                    <div className="flex items-center gap-2 mb-2">
-                      <svg className="h-5 w-5 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                      </svg>
-                      <p className="text-sm font-medium text-green-800">Invite Created Successfully!</p>
-                    </div>
-                    <p className="text-xs text-green-700">Share this link with the team member:</p>
-                  </div>
-                  
-                  <div>
-                    <label className="block text-sm font-medium mb-2 text-slate-700">Invite Link</label>
-                    <div className="flex gap-2">
-                      <input
-                        type="text"
-                        value={inviteUrl}
-                        readOnly
-                        className="flex-1 px-4 py-2.5 rounded-lg border border-slate-300 bg-slate-50 text-sm"
-                      />
-                      <button
-                        onClick={() => {
-                          navigator.clipboard.writeText(inviteUrl);
-                          setSuccess('Link copied to clipboard!');
-                        }}
-                        className="px-4 py-2 rounded-lg text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700 transition"
-                      >
-                        Copy
-                      </button>
-                    </div>
-                    <p className="mt-2 text-xs text-slate-500">This link will expire in 72 hours and can only be used once.</p>
-                  </div>
-
-                  <div className="flex gap-3 justify-end pt-6 border-t border-slate-200">
-                    <button
-                      onClick={handleInviteFormCancel}
-                      className="px-4 py-2 rounded-lg text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700 transition"
-                    >
-                      Done
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <form onSubmit={handleInviteFormSubmit} className="space-y-5">
-                  <div>
-                    <label className="block text-sm font-medium mb-2 text-slate-700">
-                      Email <span className="text-red-500">*</span>
-                    </label>
-                    <input
-                      type="email"
-                      value={inviteFormData.email}
-                      onChange={(e) => setInviteFormData({ ...inviteFormData, email: e.target.value })}
-                      placeholder="e.g., john@example.com"
-                      className="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition"
-                      required
-                    />
-                    <p className="mt-1 text-xs text-slate-500">The team member will receive an invitation email</p>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium mb-2 text-slate-700">
-                      Role <span className="text-red-500">*</span>
-                    </label>
-                    <select
-                      value={inviteFormData.role}
-                      onChange={(e) => {
-                        const newRole = e.target.value;
-                        setInviteFormData({
-                          ...inviteFormData,
-                          role: newRole,
-                          departments: newRole === ROLE_SERVICE_PROVIDER ? inviteFormData.departments : [],
-                        });
-                      }}
-                      className="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition"
-                      required
-                    >
-                      {ASSIGNABLE_ROLES.map((r) => (
-                        <option key={r.value} value={r.value}>{r.label}</option>
-                      ))}
-                    </select>
-                    <p className="mt-1 text-xs text-slate-500">Select the role for this team member</p>
-                  </div>
-
-                  {/* Departments Selector - Only show for service_provider role */}
-                  {inviteFormData.role === ROLE_SERVICE_PROVIDER && (
-                  <div>
-                    <label className="block text-sm font-medium mb-2 text-slate-700">
-                      Departments
-                    </label>
-
-                    {/* Selected Departments Chips */}
-                    {inviteFormData.departments.length > 0 && (
-                      <div className="mb-3 flex flex-wrap gap-2">
-                        {inviteFormData.departments.map((departmentId) => {
-                          const department = departments.find(d => d.id === departmentId);
-                          if (!department) return null;
-                          return (
-                            <span
-                              key={departmentId}
-                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium bg-indigo-100 text-indigo-800"
-                            >
-                              {department.name}
-                              <button
-                                type="button"
-                                onClick={() => toggleInviteDepartment(departmentId)}
-                                className="ml-1 inline-flex items-center justify-center w-4 h-4 rounded-full hover:bg-indigo-200 transition"
-                                aria-label={`Remove ${department.name}`}
-                              >
-                                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                                </svg>
-                              </button>
-                            </span>
-                          );
-                        })}
-                      </div>
-                    )}
-
-                    {/* Departments List */}
-                    {departments.length > 0 ? (
-                      <div className="border border-slate-300 rounded-lg p-3 max-h-48 overflow-y-auto">
-                        <div className="space-y-2">
-                          {departments.map((department) => (
-                            <button
-                              key={department.id}
-                              type="button"
-                              onClick={() => toggleInviteDepartment(department.id)}
-                              className={`w-full text-left px-3 py-2 rounded-md text-sm transition ${
-                                inviteFormData.departments.includes(department.id)
-                                  ? 'bg-indigo-100 text-indigo-700'
-                                  : 'text-slate-700 hover:bg-indigo-50 hover:text-indigo-700'
-                              }`}
-                            >
-                              <div className="flex items-center gap-2">
-                                {inviteFormData.departments.includes(department.id) ? (
-                                  <svg className="w-4 h-4 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                                  </svg>
-                                ) : (
-                                  <svg className="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                                  </svg>
-                                )}
-                                {department.name}
-                              </div>
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="text-sm text-slate-500 border border-slate-300 rounded-lg p-3">
-                        No departments available. Create departments first to assign them to team members.
-                      </div>
-                    )}
-                    <p className="mt-1 text-xs text-slate-500">Select departments for this team member (optional)</p>
-                  </div>
-                  )}
-
-                  <div className="flex gap-3 justify-end pt-6 border-t border-slate-200">
-                    <button
-                      type="button"
-                      onClick={handleInviteFormCancel}
-                      className="px-4 py-2 rounded-lg text-sm font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 transition"
-                      disabled={loading}
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="submit"
-                      className="px-4 py-2 rounded-lg text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
-                      disabled={loading}
-                    >
-                      {loading ? 'Creating Invite...' : 'Create Invite'}
-                    </button>
-                  </div>
-                </form>
-              )}
-            </div>
-          </section>
-        </div>
-      )}
+      <StaffInviteModal
+        open={showInviteForm}
+        loading={loading}
+        departments={departments}
+        inviteFormData={inviteFormData}
+        inviteUrl={inviteUrl}
+        onCancel={handleInviteFormCancel}
+        onSubmit={handleInviteFormSubmit}
+        onChange={setInviteFormData}
+        onToggleDepartment={toggleInviteDepartment}
+      />
 
       {confirmModal && (
         <ConfirmModal

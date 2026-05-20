@@ -4,7 +4,7 @@ import { createClient, type User } from '@supabase/supabase-js';
 function userCanManageAssignments(user: User): boolean {
   if (user.user_metadata?.is_workspace_owner === true) return true;
   const role = user.user_metadata?.role;
-  return role === 'workspace_admin' || role === 'manager';
+  return role === 'workspace_admin' || role === 'manager' || role === 'service_provider';
 }
 
 function createAuthenticatedClient(req: NextRequest) {

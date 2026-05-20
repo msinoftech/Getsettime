@@ -4,6 +4,36 @@ import { createClient } from '@supabase/supabase-js';
 import { appendActivityLog } from '@/lib/activity-log';
 import { workspace_meeting_options_to_location } from '@/src/utils/meeting_options';
 
+const LOCKED_INTAKE_FORM_KEYS = [
+  'name',
+  'email',
+  'phone',
+  'additional_description',
+] as const;
+
+type LockedIntakeFormKey = typeof LOCKED_INTAKE_FORM_KEYS[number];
+
+function lockIntakeFormFields(
+  existingIntakeForm: unknown,
+  mergedIntakeForm: unknown
+): Record<string, unknown> {
+  const existingObj =
+    typeof existingIntakeForm === 'object' && existingIntakeForm !== null
+      ? (existingIntakeForm as Record<string, unknown>)
+      : {};
+  const mergedObj =
+    typeof mergedIntakeForm === 'object' && mergedIntakeForm !== null
+      ? (mergedIntakeForm as Record<string, unknown>)
+      : {};
+
+  const locked: Record<string, unknown> = { ...mergedObj };
+  for (const key of LOCKED_INTAKE_FORM_KEYS) {
+    const existingValue = existingObj[key];
+    locked[key] = typeof existingValue === 'boolean' ? existingValue : true;
+  }
+  return locked;
+}
+
 async function getUserFromRequest(req: NextRequest) {
   const authHeader = req.headers.get('authorization');
   const token = authHeader?.replace('Bearer ', '') || null;
@@ -140,6 +170,10 @@ export async function POST(req: NextRequest) {
           : {}),
       },
     };
+    mergedSettings.intake_form = lockIntakeFormFields(
+      existingSettings.intake_form,
+      mergedSettings.intake_form
+    );
     // #region agent log
     fetch('http://127.0.0.1:7242/ingest/c18ea6a2-9a56-4a40-8939-326a1784f350',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'route.ts:122',message:'After merge',data:{mergedSettings},timestamp:Date.now(),sessionId:'debug-session',runId:'initial',hypothesisId:'H2'})}).catch(()=>{});
     // #endregion

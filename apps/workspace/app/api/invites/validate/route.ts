@@ -57,12 +57,26 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'Invite has already been used' }, { status: 400 });
     }
 
+    const inviteName = typeof invite.name === 'string' ? invite.name.trim() : '';
+    if (!inviteName) {
+      return NextResponse.json(
+        {
+          error:
+            'This invite is missing profile details. Ask your workspace admin to resend the invitation.',
+        },
+        { status: 400 }
+      );
+    }
+
     return NextResponse.json({
       valid: true,
       email: invite.email,
       role: invite.role,
       departments: invite.departments,
+      department_names: Array.isArray(invite.department_names) ? invite.department_names : [],
       workspace_id: invite.workspace_id,
+      name: typeof invite.name === 'string' ? invite.name : null,
+      phone: typeof invite.phone === 'string' ? invite.phone : null,
     });
   } catch (err: unknown) {
     const error = err as Error;

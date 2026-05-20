@@ -19,6 +19,7 @@ import {
   get_service_provider_display_name,
   get_service_provider_display_phone,
 } from '@/src/utils/service_provider_display';
+import { resolve_workspace_logo_src } from '@/src/utils/workspace_logo';
 
 type BookingPreviewData = Omit<Booking, 'id' | 'workspace_id' | 'host_user_id'>;
 
@@ -163,6 +164,7 @@ interface ApiResponse {
   intakeFormSettings: Record<string, unknown> | null;
   workspace_slug: string | null;
   workspace_name: string | null;
+  workspace_logo_url: string | null;
 }
 
 /** First HTTPS/HTTP URL found on common keys (location + metadata). */
@@ -238,15 +240,6 @@ function humanize_workspace_title(slug: string | null, name: string | null): str
     .join(' ');
 }
 
-function workspace_brand_initials(name: string | null, slug: string | null): string {
-  const source = (name?.trim() || slug?.replace(/-/g, ' ') || 'GS').slice(0, 48);
-  const parts = source.split(/\s+/).filter(Boolean);
-  if (parts.length >= 2) {
-    return (parts[0].charAt(0) + parts[1].charAt(0)).toUpperCase();
-  }
-  return source.slice(0, 2).toUpperCase() || 'GS';
-}
-
 function to_google_calendar_utc(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';
@@ -287,6 +280,7 @@ export default function BookingPreviewPage() {
         workspaceOwner: json.workspaceOwner ?? null,
         workspace_name: json.workspace_name ?? null,
         workspace_slug: json.workspace_slug ?? null,
+        workspace_logo_url: json.workspace_logo_url ?? null,
         booking_id: json.booking_id ?? '',
       });
     } catch {
@@ -377,6 +371,7 @@ export default function BookingPreviewPage() {
         booking_id={data.booking_id}
         workspace_name={data.workspace_name}
         workspace_slug={data.workspace_slug}
+        workspace_logo_url={data.workspace_logo_url}
         booking={booking}
         department={department}
         serviceProvider={serviceProvider}
@@ -426,6 +421,7 @@ function BookingPreviewContent({
   booking_id,
   workspace_name,
   workspace_slug,
+  workspace_logo_url,
   booking,
   department,
   serviceProvider,
@@ -441,6 +437,7 @@ function BookingPreviewContent({
   booking_id: string;
   workspace_name: string | null;
   workspace_slug: string | null;
+  workspace_logo_url: string | null;
   booking: BookingPreviewData;
   department: Department | null;
   serviceProvider: ServiceProvider | null;
@@ -539,7 +536,7 @@ function BookingPreviewContent({
   const physicalAddress = resolvePhysicalAddress(booking.location, booking.metadata);
 
   const workspaceTitle = humanize_workspace_title(workspace_slug, workspace_name);
-  const brandInitials = workspace_brand_initials(workspace_name, workspace_slug);
+  const resolvedWorkspaceBrandSrc = resolve_workspace_logo_src(workspace_logo_url);
   const appointmentRefDisplay = booking_id || previewCode;
 
   const durationMins = booking.event_types?.duration_minutes;
@@ -756,8 +753,13 @@ ${booking_preview_supplement_css()}
 
             <div className="bp-print-hero-row relative flex flex-col gap-6 xl:flex-row xl:items-start xl:justify-between">
               <div className="flex items-start gap-4">
-                <div className="bp-print-label flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl border border-white/15 bg-white/10 text-xl font-bold tracking-[0.2em] text-white shadow-lg backdrop-blur">
-                  {brandInitials}
+                <div className="bp-print-label flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-white/20 bg-white p-1.5 shadow-lg">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={resolvedWorkspaceBrandSrc}
+                    alt={workspaceTitle}
+                    className="max-h-full max-w-full object-contain"
+                  />
                 </div>
 
                 <div>

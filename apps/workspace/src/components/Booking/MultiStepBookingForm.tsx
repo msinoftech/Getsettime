@@ -149,6 +149,30 @@ const MultiStepBookingForm = ({ onSave, onCancel }: MultiStepBookingFormProps) =
     onAvailabilityChange,
   });
 
+  useEffect(() => {
+    if (
+      selectedDepartment &&
+      !departments.some((d) => d.id === selectedDepartment.id)
+    ) {
+      setSelectedDepartment(null);
+      setSelectedProvider(null);
+      setSelectedServiceIds([]);
+    }
+  }, [departments, selectedDepartment]);
+
+  useEffect(() => {
+    if (!selectedDepartment) return;
+    if (serviceProviders.length === 1) {
+      setSelectedProvider((prev) =>
+        prev?.id === serviceProviders[0].id ? prev : serviceProviders[0]
+      );
+      return;
+    }
+    setSelectedProvider((prev) =>
+      prev && serviceProviders.some((p) => p.id === prev.id) ? prev : null
+    );
+  }, [selectedDepartment, serviceProviders]);
+
   const sortedEventTypes = useMemo(() => sortEventTypesByDuration(eventTypes), [eventTypes]);
 
   const timeslots = useTimeslots(selectedType, selectedDate, availabilitySettings, existingBookings);

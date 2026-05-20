@@ -34,12 +34,44 @@ export function workspaceOnboardingResumeStep(
   return Math.min(WORKSPACE_ONBOARDING_STEP_COUNT, Math.max(1, lastDone + 1));
 }
 
+export const INVITE_WORKSPACE_STORAGE_KEY = "gst_invite_workspace_id";
+export const ONBOARDING_KIND_STORAGE_KEY = "gst_onboarding_kind";
+
+export function persistInviteOnboardingContext(workspaceId: number): void {
+  if (typeof window === "undefined") return;
+  sessionStorage.setItem(INVITE_WORKSPACE_STORAGE_KEY, String(workspaceId));
+  sessionStorage.setItem(ONBOARDING_KIND_STORAGE_KEY, "invite");
+}
+
+export function readInviteOnboardingContext(): { workspaceId: number } | null {
+  if (typeof window === "undefined") return null;
+  if (sessionStorage.getItem(ONBOARDING_KIND_STORAGE_KEY) !== "invite") return null;
+  const n = parseInt(sessionStorage.getItem(INVITE_WORKSPACE_STORAGE_KEY) ?? "", 10);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return { workspaceId: n };
+}
+
+export function clearInviteOnboardingContext(): void {
+  if (typeof window === "undefined") return;
+  sessionStorage.removeItem(INVITE_WORKSPACE_STORAGE_KEY);
+  sessionStorage.removeItem(ONBOARDING_KIND_STORAGE_KEY);
+}
+
 /** Register URL with `step` query for incomplete onboarding (uses metadata). */
 export function workspaceOnboardingRegisterUrl(
-  userMetadata: Record<string, unknown> | null | undefined
+  userMetadata: Record<string, unknown> | null | undefined,
+  options?: { inviteWorkspaceId?: number }
 ): string {
   const step = workspaceOnboardingResumeStep(userMetadata);
-  return `/register?onboarding=1&step=${step}`;
+  const params = new URLSearchParams({ onboarding: "1", step: String(step) });
+  if (
+    options?.inviteWorkspaceId != null &&
+    Number.isFinite(options.inviteWorkspaceId) &&
+    options.inviteWorkspaceId > 0
+  ) {
+    params.set("invite_workspace_id", String(options.inviteWorkspaceId));
+  }
+  return `/register?${params.toString()}`;
 }
 
 /**
@@ -102,7 +134,33 @@ export async function workspaceAdminIncompleteOnboarding(
   return workspaceAdminNeedsOnboardingWizard(meta, hasWorkspaceProfile);
 }
 
-/** Paths a workspace admin may open while onboarding is incomplete (pathname only; no query). */
+/**
+ * Invited service providers must finish onboarding while `onboarding_completed` is false.
+ * Legacy users without the flag are treated as complete (departments-only check lives in team UI).
+ */
+export function serviceProviderNeedsOnboardingWizard(
+  userMetadata: Record<string, unknown> | null | undefined
+): boolean {
+  const oc = userMetadata?.onboarding_completed;
+  if (oc === true) return false;
+  if (oc === false) return true;
+
+  const lastDone = workspaceOnboardingLastCompletedStep(userMetadata);
+  if (lastDone > 0 && lastDone < WORKSPACE_ONBOARDING_STEP_COUNT) return true;
+  if (lastDone >= WORKSPACE_ONBOARDING_STEP_COUNT) return true;
+
+  return false;
+}
+
+/** True when this service_provider must stay on onboarding until `onboarding_completed` is true. */
+export function serviceProviderIncompleteOnboarding(user: User): boolean {
+  const role = user.user_metadata?.role as string | undefined;
+  if (role !== "service_provider") return false;
+  const meta = user.user_metadata as Record<string, unknown> | undefined;
+  return serviceProviderNeedsOnboardingWizard(meta);
+}
+
+/** Paths users may open while onboarding is incomplete (pathname only; no query). */
 export function isAllowedPathDuringWorkspaceOnboarding(pathname: string): boolean {
   if (pathname.startsWith("/register")) return true;
   if (pathname === "/auth/callback") return true;
@@ -122,6 +180,17 @@ export async function resolvePostAuthNavigationPath(
 
   if (role === "customer") {
     return "/my-bookings";
+  }
+
+  if (role === "service_provider") {
+    if (serviceProviderIncompleteOnboarding(user)) {
+      const meta = user.user_metadata as Record<string, unknown> | undefined;
+      return workspaceOnboardingRegisterUrl(meta ?? {});
+    }
+    if (requestedNext.includes("onboarding=1")) {
+      return "/";
+    }
+    return requestedNext.startsWith("/") ? requestedNext : "/";
   }
 
   if (role !== "workspace_admin") {

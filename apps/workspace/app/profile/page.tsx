@@ -4,11 +4,18 @@ import Link from "next/link";
 import { useAuth } from "../../src/providers/AuthProvider";
 import { supabase } from "@/lib/supabaseClient";
 import { useDepartments, useServices } from "@/src/hooks/useBookingLookups";
+import { useWorkspaceSettings } from "@/src/hooks/useWorkspaceSettings";
+import { WorkspaceBrandLogo } from "@/src/components/molecules/WorkspaceBrandLogo";
 
 export default function ProfileCreative({ }) {
   const PROFILE_IMAGE_STORAGE_KEY = "workspace_profile_image";
   const PROFILE_IMAGE_EVENT = "workspace-profile-image-updated";
-  const { user, loading } = useAuth(); 
+  const { user, loading } = useAuth();
+  const {
+    workspaceName: workspace_brand_name,
+    workspaceLogoResolved,
+    loading: workspaceBrandLoading,
+  } = useWorkspaceSettings();
   const { data: departments, loading: departmentsLoading } = useDepartments();
   const { data: services, loading: servicesLoading } = useServices();
   const [showPublic, setShowPublic] = useState(true);
@@ -317,6 +324,40 @@ export default function ProfileCreative({ }) {
         <div className="grid lg:grid-cols-3 gap-6">
             {/* Left Column - Profile Image & Preview */}
             <div className="lg:col-span-1 space-y-6">
+                <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Workspace
+                  </p>
+                  <div className="mt-3 flex items-center gap-3">
+                    {!workspaceBrandLoading ? (
+                      <div className="h-14 w-14 shrink-0 overflow-hidden rounded-xl border border-slate-100 bg-white p-1 grid place-items-center">
+                        <WorkspaceBrandLogo
+                          src={workspaceLogoResolved}
+                          alt={workspace_brand_name || "Workspace"}
+                          width={48}
+                          height={48}
+                          className="max-h-full max-w-full object-contain"
+                        />
+                      </div>
+                    ) : (
+                      <div className="h-14 w-14 shrink-0 animate-pulse rounded-xl bg-slate-100" />
+                    )}
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-slate-800 truncate">
+                        {workspace_brand_name || "Workspace"}
+                      </p>
+                      <p className="text-xs text-slate-500">
+                        Branding shown in the app and booking flows
+                      </p>
+                    </div>
+                  </div>
+                  <Link
+                    href="/settings"
+                    className="mt-4 inline-block text-xs font-medium text-indigo-600 hover:text-indigo-800"
+                  >
+                    Change workspace logo →
+                  </Link>
+                </div>
                 {/* Profile Image Card */}
                 <div className="bg-white rounded-2xl shadow-xl p-6 border border-gray-100">
                     <div className="text-center">

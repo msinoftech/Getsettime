@@ -4,6 +4,9 @@ import React, { useMemo, useRef, useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { TIMEZONE_OPTIONS } from "@/src/constants/timezone";
+import { useWorkspaceSettings } from "@/src/hooks/useWorkspaceSettings";
+import { WorkspaceBrandLogo } from "@/src/components/molecules/WorkspaceBrandLogo";
+import { resolve_workspace_logo_src } from "@/src/utils/workspace_logo";
 
 type settings_icon_name =
   | "palette"
@@ -66,6 +69,7 @@ type snapshot = {
 
 export default function SettingsPage() {
   const router = useRouter();
+  const { refetch: refetchWorkspaceShell } = useWorkspaceSettings();
   const bookingHost = useMemo(() => get_public_booking_host(), []);
 
   const [accountName, setAccountName] = useState("");
@@ -323,6 +327,7 @@ export default function SettingsPage() {
       }
       setSaveMessage({ type: "success", text: "Logo uploaded successfully." });
       setTimeout(() => setSaveMessage(null), 2500);
+      void refetchWorkspaceShell();
     } catch (error) {
       console.error("Error uploading logo:", error);
       setSaveMessage({
@@ -418,6 +423,7 @@ export default function SettingsPage() {
 
       setSaveMessage({ type: "success", text: "Settings saved successfully!" });
       setTimeout(() => setSaveMessage(null), 3000);
+      void refetchWorkspaceShell();
       snapshotRef.current = {
         accountName,
         workspaceSlug,
@@ -752,23 +758,33 @@ export default function SettingsPage() {
                           />
                         </label>
                       </div>
-                      {logoUrl && (
-                        <div className="mt-3 flex items-center gap-3">
-                          <div className="h-16 w-16 shrink-0 overflow-hidden rounded-xl border border-slate-200 bg-white">
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img
-                              src={logoUrl}
-                              alt="Logo preview"
-                              className="h-full w-full object-contain"
-                            />
-                          </div>
-                          {logoPath ? (
-                            <span className="truncate text-xs text-slate-500">
-                              {logoPath}
-                            </span>
-                          ) : null}
+                      <div className="mt-3 flex items-center gap-3">
+                        <div className="h-16 w-16 shrink-0 overflow-hidden rounded-xl border border-slate-200 bg-white p-1 grid place-items-center">
+                          <WorkspaceBrandLogo
+                            src={resolve_workspace_logo_src(logoUrl)}
+                            alt="Logo preview"
+                            width={56}
+                            height={56}
+                            className="max-h-full max-w-full object-contain"
+                          />
                         </div>
-                      )}
+                        <div className="min-w-0 text-xs text-slate-500">
+                          {logoUrl ? (
+                            <>
+                              {logoPath ? (
+                                <span className="block truncate">{logoPath}</span>
+                              ) : null}
+                              {!logoPath ? (
+                                <span className="text-slate-400">Custom workspace logo</span>
+                              ) : null}
+                            </>
+                          ) : (
+                            <span className="text-slate-400">
+                              Default GetSetTime logo (upload to replace)
+                            </span>
+                          )}
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>

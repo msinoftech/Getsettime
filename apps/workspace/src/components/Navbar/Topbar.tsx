@@ -2,12 +2,12 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { signOutWithAuthLog } from "@/src/lib/auth_activity_log_client";
 import { useAuth } from "../../providers/AuthProvider";
 import { useWorkspaceSettings } from "../../hooks/useWorkspaceSettings";
+import { WorkspaceBrandLogo } from "../molecules/WorkspaceBrandLogo";
 
 interface TopbarProps {
   toggleSidebar: () => void;
@@ -43,11 +43,16 @@ export default function Topbar({ toggleSidebar, isSidebarOpen }: TopbarProps) {
   const [notificationsError, setNotificationsError] = useState<string | null>(null);
   const router = useRouter();
   const { user } = useAuth();
-  const { general, loading: loadingSettings, workspaceProfessionLabel } = useWorkspaceSettings();
+  const {
+    general,
+    loading: loadingSettings,
+    workspaceProfessionLabel,
+    workspaceLogoResolved,
+    workspaceName,
+  } = useWorkspaceSettings();
 
-  const logoUrl = general.logoUrl || "/getsettime-logo.svg";
-  const accountName = general.accountName || "GetSetTime";
-  const isExternalUrl = logoUrl?.startsWith('http://') || logoUrl?.startsWith('https://');
+  const accountName =
+    workspaceName?.trim() || general.accountName || "GetSetTime";
   
   const handleSignOut = async () => {
     await signOutWithAuthLog("manual");
@@ -185,21 +190,13 @@ export default function Topbar({ toggleSidebar, isSidebarOpen }: TopbarProps) {
             <Link href="/" className="flex items-center gap-1">
               {!loadingSettings && (
                 <>
-                  {isExternalUrl ? (
-                    <img 
-                      src={logoUrl} 
-                      alt={`${accountName} Logo`} 
-                      className="h-8 w-auto object-contain"
-                    />
-                  ) : (
-                    <Image 
-                      src={logoUrl} 
-                      alt={`${accountName} Logo`} 
-                      width={120} 
-                      height={30} 
-                      className="h-8 w-auto"
-                    />
-                  )}
+                  <WorkspaceBrandLogo
+                    src={workspaceLogoResolved}
+                    alt={`${accountName} Logo`}
+                    width={120}
+                    height={30}
+                    className="h-8 w-auto object-contain"
+                  />
                   {accountName && accountName !== "GetSetTime" && (
                     <span className="text-sm sm:text-md font-bold text-gray-700">
                       {accountName}
