@@ -22,12 +22,20 @@ function build_department(
   if (booking_department_id == null || booking_department_id === '') return null;
   const raw = list.find(
     (d) => String((d as { id: string | number }).id) === String(booking_department_id)
-  ) as { id: string | number; name: string } | undefined;
+  ) as
+    | {
+        id: string | number;
+        name: string;
+        description?: string | null;
+        status?: string;
+      }
+    | undefined;
   if (!raw) return null;
   return {
     id: typeof raw.id === 'number' ? raw.id : Number(raw.id),
     name: raw.name,
-    description: null,
+    description: raw.description ?? null,
+    status: raw.status ?? 'active',
   };
 }
 
