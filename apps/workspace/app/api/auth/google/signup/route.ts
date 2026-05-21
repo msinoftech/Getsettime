@@ -8,6 +8,7 @@ import {
   createUserSession,
   storeCallbackToken,
   saveGoogleCalendarIntegration,
+  updateUserGoogleMetadata,
 } from '@/lib/auth-service';
 import { workspaceAdminNeedsOnboardingWizard } from '@/lib/auth_onboarding';
 import { getPublicSiteOrigin } from '@/lib/request-site-origin';
