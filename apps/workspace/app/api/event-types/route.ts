@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { ROLE_SERVICE_PROVIDER } from '@/src/constants/roles';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { appendActivityLog } from '@/lib/activity-log';
 
@@ -177,7 +178,13 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    const event_types = data || [];
+    const role = user.user_metadata?.role as string | undefined;
+    let event_types = data || [];
+    if (role === ROLE_SERVICE_PROVIDER) {
+      event_types = event_types.filter(
+        (row: { owner_id?: string | null }) => row.owner_id === user.id
+      );
+    }
     const event_type_ids = event_types
       .map((row: { id: number | string | null }) => row.id)
       .filter((id: number | string | null): id is number | string => id !== null && id !== undefined);

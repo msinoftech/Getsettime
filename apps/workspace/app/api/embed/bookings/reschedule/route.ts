@@ -7,10 +7,9 @@ import {
   resolve_provider_notification_contact,
 } from '@/lib/booking_service_provider_phone';
 import { post_booking_whatsapp_notification } from '@/lib/post_booking_whatsapp_notification';
-import {
-  is_whatsapp_admin_enabled,
-  type workspace_notifications_settings,
-} from '@/lib/workspace-notification-flags';
+import { is_whatsapp_admin_enabled } from '@/lib/workspace-notification-flags';
+import { resolveAvailabilityForServiceProvider } from '@/src/utils/availabilityResolution';
+import { resolveNotificationsForServiceProvider } from '@/src/utils/providerSettingsResolution';
 
 type DayName = 'Sun' | 'Mon' | 'Tue' | 'Wed' | 'Thu' | 'Fri' | 'Sat';
 
@@ -82,19 +81,12 @@ export async function POST(req: NextRequest) {
       .single();
 
     const availabilityData: AvailabilitySettings = configData?.settings?.availability || {};
-
-    let availability: AvailabilitySettings = availabilityData;
-    if (booking.service_provider_id && availabilityData) {
-      const providers = (availabilityData as Record<string, unknown>).providers as Record<string, Record<string, unknown>> | undefined;
-      const providerOverrides = providers?.[booking.service_provider_id] || {};
-      const generalTimesheet = availabilityData.timesheet;
-      const generalIndividual = availabilityData.individual;
-      const finalTimesheet = generalTimesheet
-        ? { ...generalTimesheet, ...((providerOverrides.timesheet as Record<string, DaySchedule>) || {}) }
-        : (providerOverrides.timesheet as Record<DayName, DaySchedule> | undefined);
-      const finalIndividual = { ...(generalIndividual || {}), ...((providerOverrides.individual as Record<string, boolean>) || {}) };
-      availability = { timesheet: finalTimesheet, individual: finalIndividual };
-    }
+    const availability = resolveAvailabilityForServiceProvider(
+      availabilityData,
+      typeof booking.service_provider_id === 'string' && booking.service_provider_id.trim()
+        ? booking.service_provider_id.trim()
+        : null
+    );
 
     const tz = typeof clientTimezone === 'string' && clientTimezone.trim() ? clientTimezone.trim() : null;
     const startParts = tz ? getLocalTimePartsInTimezone(start_at, tz) : null;
@@ -139,7 +131,12 @@ export async function POST(req: NextRequest) {
     // Google Calendar busy check
     try {
       const { isSlotBusyInCalendar } = await import('@/lib/google-calendar-service');
-      const isBusy = await isSlotBusyInCalendar(booking.workspace_id, start_at, end_at || start_at);
+      const isBusy = await isSlotBusyInCalendar(
+        booking.workspace_id,
+        start_at,
+        end_at || start_at,
+        booking.service_provider_id || undefined
+      );
       if (isBusy) {
         return NextResponse.json({ error: 'This time slot is already blocked in calendar.' }, { status: 400 });
       }
@@ -268,10 +265,10 @@ export async function POST(req: NextRequest) {
 
     // WhatsApp notification
     try {
-      const notifications_settings =
-        configData?.settings?.notifications as
-          | workspace_notifications_settings
-          | undefined;
+      const notifications_settings = resolveNotificationsForServiceProvider(
+        configData?.settings?.notifications as Record<string, unknown> | undefined,
+        booking.service_provider_id || undefined
+      );
       const whatsapp_admin = is_whatsapp_admin_enabled(notifications_settings);
       if (booking.invitee_phone && whatsapp_admin) {
         let admin_whatsapp_phones: string[] = [];
@@ -324,6 +321,7 @@ export async function POST(req: NextRequest) {
         const calResult = await updateCalendarEvent(booking.workspace_id, gcalEventId, {
           startAt: start_at,
           endAt: end_at || start_at,
+          serviceProviderId: booking.service_provider_id || undefined,
         });
         if (!calResult.success) {
           console.warn('Google Calendar update failed (non-blocking):', calResult.error);

@@ -7,15 +7,18 @@ import type {
   Service,
   ServiceProvider,
 } from '@/src/types/bookingForm';
-import type { IntakeFormSettings } from '@/src/types/workspace';
+import type { IntakeFormSettings, meeting_options_settings } from '@/src/types/workspace';
+import type { workspace_notifications_settings } from '@/lib/workspace-notification-flags';
 import { getAllowedServiceIds, isServicesEnabled } from '@/src/utils/intakeForm';
 import { CALENDAR_BUFFER_DAYS, CALENDAR_BUFFER_DAYS_BEFORE } from '@/src/constants/booking';
 import { userActsAsServiceProviderFromMetadata } from '@/lib/service_provider_role';
 import { serviceIdsFromUserServiceAssignments } from '@/src/utils/bookingServiceAssignments';
 import {
   filterBookableDepartments,
+  filterEventTypesForServiceProvider,
   memberActsInDepartment,
 } from '@/src/utils/bookingFormUtils';
+import { resolveAvailabilityForServiceProvider } from '@/src/utils/availabilityResolution';
 
 interface TeamMemberRow {
   id: string;
@@ -64,6 +67,12 @@ export function useBookingFormData({
   const [loadingProviderScopedCatalog, setLoadingProviderScopedCatalog] = useState(false);
   const [workspaceName, setWorkspaceName] = useState<string>('Get Set Time');
   const [workspaceLogoUrl, setWorkspaceLogoUrl] = useState<string | null>(null);
+  const [providerMeetingOptions, setProviderMeetingOptions] = useState<
+    meeting_options_settings | undefined
+  >(undefined);
+  const [providerNotifications, setProviderNotifications] = useState<
+    workspace_notifications_settings | undefined
+  >(undefined);
 
   const providersActingInDepartment = useMemo((): ServiceProvider[] => {
     if (!selectedDepartment) return [];
@@ -112,6 +121,11 @@ export function useBookingFormData({
 
   const needsExplicitProvider =
     departments.length > 0 && selectedDepartment !== null && showProviderPicker;
+
+  const bookableEventTypes = useMemo(() => {
+    if (needsExplicitProvider && !effectiveProviderId) return [];
+    return filterEventTypesForServiceProvider(eventTypes, effectiveProviderId);
+  }, [eventTypes, effectiveProviderId, needsExplicitProvider]);
 
   useEffect(() => {
     const fetchInitial = async () => {
@@ -213,19 +227,12 @@ export function useBookingFormData({
         if (res.ok) {
           const result = await res.json();
           const availability = result.settings?.availability || {};
-          const generalTimesheet = availability.timesheet;
-          const generalIndividual = availability.individual;
-          let finalTimesheet = generalTimesheet;
-          let finalIndividual = generalIndividual || {};
-          if (effectiveProviderId) {
-            const providers = availability.providers || {};
-            const providerOverrides = providers[effectiveProviderId] || {};
-            finalTimesheet = generalTimesheet
-              ? { ...generalTimesheet, ...(providerOverrides.timesheet || {}) }
-              : providerOverrides.timesheet;
-            finalIndividual = { ...(generalIndividual || {}), ...(providerOverrides.individual || {}) };
-          }
-          setAvailabilitySettings({ timesheet: finalTimesheet, individual: finalIndividual });
+          setAvailabilitySettings(
+            resolveAvailabilityForServiceProvider(
+              availability,
+              effectiveProviderId
+            ) as AvailabilitySettings
+          );
         }
       } catch (e) {
         console.error('Error fetching availability settings:', e);
@@ -266,6 +273,34 @@ export function useBookingFormData({
     };
     fetchWorkspaceName();
   }, []);
+
+  useEffect(() => {
+    const fetchProviderSettings = async () => {
+      if (!effectiveProviderId) {
+        setProviderMeetingOptions(undefined);
+        setProviderNotifications(undefined);
+        return;
+      }
+      try {
+        const { supabase } = await import('@/lib/supabaseClient');
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+        if (!session?.access_token) return;
+        const res = await fetch(
+          `/api/settings?service_provider_id=${encodeURIComponent(effectiveProviderId)}`,
+          { headers: { Authorization: `Bearer ${session.access_token}` } }
+        );
+        if (!res.ok) return;
+        const result = await res.json();
+        setProviderMeetingOptions(result.settings?.meeting_options);
+        setProviderNotifications(result.settings?.notifications);
+      } catch (e) {
+        console.error('Error fetching provider settings:', e);
+      }
+    };
+    fetchProviderSettings();
+  }, [effectiveProviderId]);
 
   useEffect(() => {
     const hasReqs = departments.length === 0 || !needsExplicitProvider || effectiveProviderId;
@@ -403,7 +438,7 @@ export function useBookingFormData({
     needsExplicitProvider,
     serviceProviders: providersActingInDepartment,
     loadingProviders: false,
-    eventTypes,
+    eventTypes: bookableEventTypes,
     loadingEventTypes,
     availabilitySettings,
     setAvailabilitySettings,
@@ -419,5 +454,8 @@ export function useBookingFormData({
     showProviderPicker,
     workspaceName,
     workspaceLogoUrl,
+    effectiveProviderId,
+    providerMeetingOptions,
+    providerNotifications,
   };
 }

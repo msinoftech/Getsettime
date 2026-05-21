@@ -18,6 +18,8 @@ import {
 import AvailabilityTimesheet from '@/src/components/Settings/AvailabilityTimesheet';
 import { AvailabilityGeneralSkeleton } from '@/src/components/ui/AvailabilityGeneralSkeleton';
 import { useWorkspaceSettings } from '@/src/hooks/useWorkspaceSettings';
+import { ROLE_SERVICE_PROVIDER } from '@/src/constants/roles';
+import { resolveAvailabilityForServiceProvider } from '@/src/utils/availabilityResolution';
 import { supabase } from "@/lib/supabaseClient";
 
 type TabType = 'general' | 'availability';
@@ -347,23 +349,49 @@ export default function Availability() {
 
       let updatedSettings;
 
-      // If a specific provider is selected, save as provider-specific override
-      if (selectedProviderId) {
+      const saveProviderId =
+        currentUserRole === ROLE_SERVICE_PROVIDER && currentUserId
+          ? currentUserId
+          : selectedProviderId;
+
+      if (saveProviderId && currentUserRole === ROLE_SERVICE_PROVIDER) {
+        const providerRes = await fetch('/api/settings/provider-availability', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ timesheet, individual: timeSlots }),
+        });
+        if (!providerRes.ok) {
+          const err = await providerRes.json().catch(() => ({}));
+          throw new Error(
+            (err as { error?: string }).error || 'Failed to save provider availability'
+          );
+        }
+        setSaveMessage({
+          type: 'success',
+          text: 'Availability saved successfully for your profile!',
+        });
+        setTimeout(() => setSaveMessage(null), 3000);
+        setIsSaving(false);
+        return;
+      }
+
+      if (saveProviderId) {
         const providerAvailabilityData = {
           timesheet: timesheet,
           individual: timeSlots,
           lastUpdated: new Date().toISOString(),
         };
-
         const existingProviders = existingAvailability.providers ?? {};
-
         updatedSettings = {
           ...existingSettings,
           availability: {
             ...existingAvailability,
             providers: {
               ...existingProviders,
-              [selectedProviderId]: providerAvailabilityData,
+              [saveProviderId]: providerAvailabilityData,
             },
           },
         };
@@ -457,26 +485,34 @@ export default function Availability() {
     };
   }, [calendarOpen]);
 
-  // Apply merged availability from cached settings for a given providerId (no fetch)
+  const isServiceProviderUser = currentUserRole === ROLE_SERVICE_PROVIDER;
+
+  const effectiveProviderIdForView = useMemo(() => {
+    if (isServiceProviderUser && currentUserId) return currentUserId;
+    return selectedProviderId;
+  }, [isServiceProviderUser, currentUserId, selectedProviderId]);
+
+  // Resolve provider-specific availability (or workspace general when none configured)
   const applyAvailabilityForProvider = (avail: NonNullable<typeof settingsAvailability>, providerId: string) => {
-    const generalTimesheet = avail.timesheet;
-    const generalIndividual = avail.individual;
-    const providerOverrides = avail.providers[providerId] ?? {};
-    const providerTimesheet = providerOverrides.timesheet as Record<DayName, DaySchedule> | null;
-    const providerIndividual = providerOverrides.individual as Record<string, boolean> | undefined;
-    const finalTimesheet = generalTimesheet ? { ...generalTimesheet, ...(providerTimesheet || {}) } : providerTimesheet;
-    const finalIndividual = { ...(generalIndividual || {}), ...(providerIndividual || {}) };
+    const resolved = resolveAvailabilityForServiceProvider(
+      avail,
+      providerId.trim() ? providerId : null
+    );
+    const finalTimesheet = resolved.timesheet as Record<DayName, DaySchedule> | undefined;
+    const finalIndividual = resolved.individual ?? {};
 
     if (finalTimesheet) {
       setTimesheet(finalTimesheet);
       const derived = deriveAvailabilityFromTimesheet(finalTimesheet);
       setHours(derived.hours);
       setEnabled(derived.enabled);
-      setTimeSlots(Object.keys(finalIndividual).length ? finalIndividual : derived.timeSlots);
+      setTimeSlots(
+        Object.keys(finalIndividual).length > 0 ? finalIndividual : derived.timeSlots
+      );
     } else {
       setTimesheet(null);
       setEnabled({ Mon: true, Tue: true, Wed: true, Thu: true, Fri: true, Sat: false, Sun: false });
-      setTimeSlots(finalIndividual || {});
+      setTimeSlots(finalIndividual);
       setHours(Array.from({ length: 12 }, (_, i) => i + 8));
     }
   };
@@ -520,13 +556,13 @@ export default function Availability() {
             (m: { role: string; deactivated?: boolean }) => m.role === 'service_provider' && !m.deactivated
           ) as ServiceProvider[];
           setServiceProviders(providersList);
-          if (userRole === 'service_provider') {
+          if (userRole === ROLE_SERVICE_PROVIDER) {
             initialProviderId = userId;
           } else if (providersList.length > 0 && !initialProviderId) {
             initialProviderId = providersList[0].id;
           }
         }
-        if (userRole === 'service_provider') {
+        if (userRole === ROLE_SERVICE_PROVIDER) {
           initialProviderId = userId;
         }
 
@@ -543,15 +579,19 @@ export default function Availability() {
     return () => { cancelled = true; };
   }, []);
 
-  // Re-derive when selectedProviderId or settingsAvailability changes (no fetch)
+  // Re-derive when provider context or settingsAvailability changes (no fetch)
   useEffect(() => {
     if (!settingsAvailability) return;
-    applyAvailabilityForProvider(settingsAvailability, selectedProviderId);
-  }, [selectedProviderId, settingsAvailability]);
+    applyAvailabilityForProvider(settingsAvailability, effectiveProviderIdForView);
+  }, [effectiveProviderIdForView, settingsAvailability]);
 
   // Load bookings for the current view
   useEffect(() => {
-    if (activeTab !== 'availability' || !hasSelectedDate || !selectedProviderId) return;
+    const providerIdForBookings =
+      currentUserRole === ROLE_SERVICE_PROVIDER && currentUserId
+        ? currentUserId
+        : selectedProviderId;
+    if (activeTab !== 'availability' || !hasSelectedDate || !providerIdForBookings) return;
 
     const loadBookings = async () => {
       try {
@@ -572,7 +612,7 @@ export default function Availability() {
         const bookingPromises = datesToFetch.map(async (date) => {
           const params = new URLSearchParams({
             date: format(date, 'yyyy-MM-dd'),
-            service_provider_id: selectedProviderId, // Filter by selected provider
+            service_provider_id: providerIdForBookings,
           });
 
           const response = await fetch(`/api/bookings?${params.toString()}`, {
@@ -593,7 +633,7 @@ export default function Availability() {
         // Filter out cancelled bookings and format
         const filteredBookings = allBookings
           .filter((booking: { start_at: string; status: string | null; service_provider_id: string }) => {
-            return booking.status !== 'cancelled' && booking.service_provider_id === selectedProviderId;
+            return booking.status !== 'cancelled' && booking.service_provider_id === providerIdForBookings;
           })
           .map((booking: { start_at: string; end_at: string | null; status: string | null }) => ({
             start_at: booking.start_at,
@@ -608,7 +648,7 @@ export default function Availability() {
     };
 
     loadBookings();
-  }, [currentDate, viewMode, activeTab, hasSelectedDate, selectedProviderId]);
+  }, [currentDate, viewMode, activeTab, hasSelectedDate, selectedProviderId, currentUserId, currentUserRole]);
 
   const handleViewToggle = (mode: "week" | "day") => {
     if (mode === viewMode) {
@@ -675,7 +715,19 @@ export default function Availability() {
                 <AvailabilityGeneralSkeleton />
               ) : (
                 <AvailabilityTimesheet
-                  initialTimesheet={settingsAvailability?.timesheet ?? null}
+                  key={
+                    isServiceProviderUser && currentUserId
+                      ? `sp-${currentUserId}`
+                      : 'workspace-general'
+                  }
+                  providerUserId={
+                    isServiceProviderUser && currentUserId ? currentUserId : undefined
+                  }
+                  initialTimesheet={
+                    isServiceProviderUser
+                      ? undefined
+                      : settingsAvailability?.timesheet ?? null
+                  }
                 />
               )}
             </div>
@@ -747,10 +799,10 @@ export default function Availability() {
                     <select
                       value={selectedProviderId}
                       onChange={(e) => setSelectedProviderId(e.target.value)}
-                      disabled={currentUserRole === 'service_provider'}
+                      disabled={currentUserRole === ROLE_SERVICE_PROVIDER}
                       className="w-full px-3 py-2.5 sm:py-2 rounded-lg border border-slate-300 text-sm bg-white text-slate-700 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition disabled:opacity-60 disabled:cursor-not-allowed"
                     >
-                      {currentUserRole === 'service_provider' ? (
+                      {currentUserRole === ROLE_SERVICE_PROVIDER ? (
                         <option value={selectedProviderId}>
                           {serviceProviders.find(p => p.id === selectedProviderId)?.name || 'Your Availability'}
                         </option>
@@ -765,12 +817,12 @@ export default function Availability() {
                         </>
                       )}
                     </select>
-                    {currentUserRole !== 'service_provider' && !selectedProviderId && (
+                    {currentUserRole !== ROLE_SERVICE_PROVIDER && !selectedProviderId && (
                       <p className="text-xs text-slate-500 mt-1">
                         General availability applies to all providers unless individually overridden
                       </p>
                     )}
-                    {currentUserRole !== 'service_provider' && selectedProviderId && (
+                    {currentUserRole !== ROLE_SERVICE_PROVIDER && selectedProviderId && (
                       <p className="text-xs text-slate-500 mt-1">
                         Individual overrides for this provider only
                       </p>

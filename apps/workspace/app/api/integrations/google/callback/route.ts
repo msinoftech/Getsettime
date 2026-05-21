@@ -4,6 +4,7 @@ import { getGoogleOAuthClient } from '@/lib/googleClient';
 import { saveIntegration } from '@/lib/integrations';
 import { updateUserGoogleMetadata } from '@/lib/auth-service';
 import { getAuthFromRequest } from '@/lib/auth-helpers';
+import { ROLE_SERVICE_PROVIDER } from '@/src/constants/roles';
 
 export async function GET(req: Request) {
   try {
@@ -28,16 +29,29 @@ export async function GET(req: Request) {
     }
 
     let auth = await getAuthFromRequest(req);
-    if (!auth?.userId || !auth.workspaceId) {
-      try {
-        const decoded = JSON.parse(Buffer.from(state, 'base64').toString());
-        if (decoded?.userId && decoded?.workspaceId) {
-          auth = { userId: decoded.userId, workspaceId: Number(decoded.workspaceId) };
-        } else if (decoded?.userId) {
-          auth = { userId: decoded.userId, workspaceId: null };
-        }
-      } catch {
-        auth = auth ?? { userId: state, workspaceId: null };
+    let stateLinkedAuthUserId: string | null | undefined;
+    let stateReturnTo: string | undefined;
+    try {
+      const decoded = JSON.parse(Buffer.from(state, 'base64').toString()) as {
+        userId?: string;
+        workspaceId?: number;
+        linkedAuthUserId?: string | null;
+        returnTo?: string;
+      };
+      stateLinkedAuthUserId = decoded.linkedAuthUserId ?? null;
+      stateReturnTo =
+        typeof decoded.returnTo === 'string' && decoded.returnTo.startsWith('/')
+          ? decoded.returnTo
+          : undefined;
+      if (!auth?.userId && decoded?.userId) {
+        auth = {
+          userId: decoded.userId,
+          workspaceId: decoded.workspaceId != null ? Number(decoded.workspaceId) : null,
+        };
+      }
+    } catch {
+      if (!auth?.userId) {
+        auth = { userId: state, workspaceId: null };
       }
     }
     if (!auth?.userId) {
@@ -60,6 +74,15 @@ export async function GET(req: Request) {
       console.error('No workspace found');
       return NextResponse.redirect(new URL('/integrations?error=no_workspace', req.url));
     }
+
+    const supabaseUrl = (process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || '').trim();
+    const supabaseServiceKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim();
+    const supabaseAdmin =
+      supabaseUrl && supabaseServiceKey
+        ? createClient(supabaseUrl, supabaseServiceKey, {
+            auth: { autoRefreshToken: false, persistSession: false },
+          })
+        : null;
 
     // Construct redirect URI dynamically (must match the one used in connect route)
     const url = new URL(req.url);
@@ -100,6 +123,15 @@ export async function GET(req: Request) {
 
       const metadata = { scope: tokens.scope, email: googleEmail };
 
+      let linkedAuthUserId = stateLinkedAuthUserId ?? null;
+      if (linkedAuthUserId == null && supabaseAdmin) {
+        const { data: roleRow } = await supabaseAdmin.auth.admin.getUserById(auth.userId);
+        const role = roleRow?.user?.user_metadata?.role as string | undefined;
+        if (role === ROLE_SERVICE_PROVIDER) {
+          linkedAuthUserId = auth.userId;
+        }
+      }
+
       const result = await saveIntegration({
         workspace_id: auth.workspaceId,
         type: 'google_calendar',
@@ -108,6 +140,7 @@ export async function GET(req: Request) {
         expires_at: tokens.expiry_date ? Math.floor(tokens.expiry_date / 1000) : undefined,
         metadata,
         provider_user_id: googleId,
+        linked_auth_user_id: linkedAuthUserId,
       });
 
       if (!result.ok) {
@@ -116,13 +149,7 @@ export async function GET(req: Request) {
         return NextResponse.redirect(new URL(`/integrations?error=save_failed${errParam}`, req.url));
       }
 
-      // Sync to user_metadata (same as registration)
-      const supabaseUrl = (process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || '').trim();
-      const supabaseServiceKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim();
-      if (supabaseUrl && supabaseServiceKey) {
-        const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {
-          auth: { autoRefreshToken: false, persistSession: false },
-        });
+      if (supabaseAdmin) {
         await updateUserGoogleMetadata({
           userId: auth.userId,
           google_calendar_sync: true,
@@ -133,7 +160,10 @@ export async function GET(req: Request) {
       }
 
       console.log('Google Calendar connected successfully for workspace:', auth.workspaceId);
-      return NextResponse.redirect(new URL('/integrations?success=google_connected', req.url));
+      const successUrl = stateReturnTo
+        ? stateReturnTo
+        : '/integrations?success=google_connected';
+      return NextResponse.redirect(new URL(successUrl, req.url));
     } catch (tokenError: any) {
       console.error('Error exchanging code for token:', tokenError);
       // Check for specific Google OAuth errors

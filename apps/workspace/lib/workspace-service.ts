@@ -1,5 +1,7 @@
 import { SupabaseClient } from '@supabase/supabase-js';
 import { ROLE_SERVICE_PROVIDER } from '@/src/constants/roles';
+import { resolveMeetingOptionsForServiceProvider } from '@/src/utils/providerSettingsResolution';
+import { workspace_meeting_options_to_location } from '@/src/utils/meeting_options';
 
 export function getDefaultConfigurationSettings(workspaceName: string) {
   return {
@@ -32,6 +34,11 @@ export function getDefaultConfigurationSettings(workspaceName: string) {
   };
 }
 
+/** Default notification flags for new workspaces and service providers (onboarding). */
+export function getDefaultNotificationSettings(): Record<string, boolean> {
+  return { ...getDefaultConfigurationSettings('').notifications };
+}
+
 export interface CreateWorkspaceParams {
   userId: string;
   userName: string;
@@ -42,6 +49,62 @@ export interface CreateWorkspaceParams {
 export interface WorkspaceResult {
   workspaceId: number;
   isNewWorkspace: boolean;
+}
+
+export const DEFAULT_EVENT_TYPE_SLUG = '30mins-chat';
+
+/** Canonical onboarding default: `30mins-chat`, else earliest event type in the workspace. */
+export async function resolveDefaultEventTypeId(
+  supabase: SupabaseClient,
+  workspaceId: number
+): Promise<number | null> {
+  const wid = typeof workspaceId === 'number' ? workspaceId : Number(workspaceId);
+  if (!Number.isFinite(wid)) return null;
+
+  const { data: slugRow } = await supabase
+    .from('event_types')
+    .select('id')
+    .eq('workspace_id', wid)
+    .eq('slug', DEFAULT_EVENT_TYPE_SLUG)
+    .maybeSingle();
+
+  if (slugRow && typeof (slugRow as { id?: unknown }).id === 'number') {
+    return (slugRow as { id: number }).id;
+  }
+
+  const { data: firstRow } = await supabase
+    .from('event_types')
+    .select('id')
+    .eq('workspace_id', wid)
+    .order('id', { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (firstRow && typeof (firstRow as { id?: unknown }).id === 'number') {
+    return (firstRow as { id: number }).id;
+  }
+
+  return null;
+}
+
+/** Onboarding default event types must be bookable (public). */
+export async function ensureDefaultEventTypePublic(
+  supabase: SupabaseClient,
+  workspaceId: number
+): Promise<void> {
+  const eventId = await resolveDefaultEventTypeId(supabase, workspaceId);
+  if (eventId == null) return;
+
+  const wid = typeof workspaceId === 'number' ? workspaceId : Number(workspaceId);
+  const { error } = await supabase
+    .from('event_types')
+    .update({ is_public: true })
+    .eq('id', eventId)
+    .eq('workspace_id', wid);
+
+  if (error) {
+    console.warn('ensureDefaultEventTypePublic (non-critical):', error);
+  }
 }
 
 export type accepted_invite_resolution = {
@@ -189,6 +252,7 @@ export async function getOrCreateWorkspace(
       .maybeSingle();
 
     if (existingWorkspace?.id) {
+      await ensureDefaultEventTypePublic(supabaseAdmin, existingWorkspace.id);
       return {
         data: { workspaceId: existingWorkspace.id, isNewWorkspace: false },
         error: null,
@@ -236,8 +300,8 @@ export async function getOrCreateWorkspace(
     const { error: eventTypeError } = await supabaseAdmin.from('event_types').insert({
       workspace_id: workspace.id,
       owner_id: userId,
-      title: '30mins-chat',
-      slug: '30mins-chat',
+      title: DEFAULT_EVENT_TYPE_SLUG,
+      slug: DEFAULT_EVENT_TYPE_SLUG,
       duration_minutes: 30,
       buffer_before: null,
       buffer_after: null,
@@ -262,6 +326,219 @@ export async function getOrCreateWorkspace(
       error: err instanceof Error ? err.message : 'Unknown error',
     };
   }
+}
+
+async function resolveUniqueEventTypeSlugForWorkspace(
+  supabase: SupabaseClient,
+  workspaceId: number,
+  baseSlug: string
+): Promise<string> {
+  const { data: rows, error } = await supabase
+    .from('event_types')
+    .select('slug')
+    .eq('workspace_id', workspaceId);
+
+  if (error) {
+    console.warn('resolveUniqueEventTypeSlugForWorkspace:', error);
+    return baseSlug;
+  }
+
+  const taken = new Set<string>();
+  for (const row of rows ?? []) {
+    const s = (row as { slug?: string }).slug;
+    if (typeof s === 'string' && s.length > 0) taken.add(s);
+  }
+
+  let candidate = baseSlug;
+  let n = 0;
+  while (taken.has(candidate)) {
+    n += 1;
+    candidate = `${baseSlug}-${n}`;
+  }
+  return candidate;
+}
+
+/**
+ * Creates a dedicated public event type for a service provider (onboarding completion).
+ * Never reuses workspace-default rows owned by another user.
+ */
+export async function createServiceProviderEventType(
+  supabase: SupabaseClient,
+  params: { workspaceId: number; ownerId: string }
+): Promise<{ data: { id: number } | null; error: string | null }> {
+  const wid = params.workspaceId;
+  const ownerId = params.ownerId.trim();
+  if (!Number.isFinite(wid) || wid <= 0 || !ownerId) {
+    return { data: null, error: 'Invalid workspace or owner' };
+  }
+
+  const { data: existing, error: existingErr } = await supabase
+    .from('event_types')
+    .select('id')
+    .eq('workspace_id', wid)
+    .eq('owner_id', ownerId)
+    .order('id', { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (existingErr) {
+    console.error('createServiceProviderEventType lookup:', existingErr);
+    return { data: null, error: existingErr.message };
+  }
+
+  if (existing && typeof (existing as { id?: unknown }).id === 'number') {
+    return { data: { id: (existing as { id: number }).id }, error: null };
+  }
+
+  const slugBase = `${DEFAULT_EVENT_TYPE_SLUG}-${ownerId.replace(/-/g, '').slice(0, 8)}`;
+  const slug = await resolveUniqueEventTypeSlugForWorkspace(supabase, wid, slugBase);
+
+  const { data, error } = await supabase
+    .from('event_types')
+    .insert({
+      workspace_id: wid,
+      owner_id: ownerId,
+      title: DEFAULT_EVENT_TYPE_SLUG,
+      slug,
+      duration_minutes: 30,
+      buffer_before: null,
+      buffer_after: null,
+      location_type: null,
+      location_value: null,
+      is_public: true,
+      settings: null,
+    })
+    .select('id')
+    .single();
+
+  if (error || !data) {
+    console.error('createServiceProviderEventType insert:', error);
+    return { data: null, error: error?.message ?? 'Failed to create event type' };
+  }
+
+  const id = (data as { id: number }).id;
+  return { data: { id }, error: null };
+}
+
+/**
+ * Sets location_type on the service provider's event type from meeting_options.providers[ownerId].
+ */
+export async function syncServiceProviderEventTypeLocation(
+  supabase: SupabaseClient,
+  workspaceId: number,
+  ownerId: string
+): Promise<{ error: string | null }> {
+  const wid = typeof workspaceId === 'number' ? workspaceId : Number(workspaceId);
+  const providerId = ownerId.trim();
+  if (!Number.isFinite(wid) || wid <= 0 || !providerId) {
+    return { error: 'Invalid workspace or owner' };
+  }
+
+  const { data: configRow, error: configErr } = await supabase
+    .from('configurations')
+    .select('settings')
+    .eq('workspace_id', wid)
+    .maybeSingle();
+
+  if (configErr && configErr.code !== 'PGRST116') {
+    return { error: configErr.message };
+  }
+
+  const settings = (configRow?.settings ?? {}) as Record<string, unknown>;
+  const meetingOptions = resolveMeetingOptionsForServiceProvider(
+    settings.meeting_options as Record<string, unknown> | undefined,
+    providerId
+  );
+  const location_type = workspace_meeting_options_to_location(meetingOptions);
+  if (!location_type) {
+    return { error: null };
+  }
+
+  const { error: updateErr } = await supabase
+    .from('event_types')
+    .update({ location_type, is_public: true })
+    .eq('workspace_id', wid)
+    .eq('owner_id', providerId);
+
+  if (updateErr) {
+    console.warn('syncServiceProviderEventTypeLocation:', updateErr);
+    return { error: updateErr.message };
+  }
+
+  return { error: null };
+}
+
+/**
+ * Ensures default per-provider notifications (and optional meeting_options) exist under settings.*.providers[userId].
+ */
+export async function ensureServiceProviderSettingsDefaults(
+  supabase: SupabaseClient,
+  workspaceId: number,
+  providerUserId: string,
+  options?: { meeting_options?: Record<string, boolean> }
+): Promise<{ error: string | null }> {
+  const wid = typeof workspaceId === 'number' ? workspaceId : Number(workspaceId);
+  const ownerId = providerUserId.trim();
+  if (!Number.isFinite(wid) || wid <= 0 || !ownerId) {
+    return { error: 'Invalid workspace or provider' };
+  }
+
+  const { data: existingConfig, error: fetchError } = await supabase
+    .from('configurations')
+    .select('settings')
+    .eq('workspace_id', wid)
+    .maybeSingle();
+
+  if (fetchError && fetchError.code !== 'PGRST116') {
+    return { error: fetchError.message };
+  }
+
+  const existingSettings = (existingConfig?.settings ?? {}) as Record<string, unknown>;
+  const existingNotifications = (existingSettings.notifications ?? {}) as Record<string, unknown>;
+  const existingMeeting = (existingSettings.meeting_options ?? {}) as Record<string, unknown>;
+  const notifProviders = (existingNotifications.providers ?? {}) as Record<string, unknown>;
+  const meetingProviders = (existingMeeting.providers ?? {}) as Record<string, unknown>;
+
+  const defaultNotifications = getDefaultNotificationSettings();
+  const now = new Date().toISOString();
+  let changed = false;
+
+  const nextNotifProviders = { ...notifProviders };
+  if (!nextNotifProviders[ownerId]) {
+    nextNotifProviders[ownerId] = { ...defaultNotifications, lastUpdated: now };
+    changed = true;
+  }
+
+  const nextMeetingProviders = { ...meetingProviders };
+  if (options?.meeting_options && !nextMeetingProviders[ownerId]) {
+    nextMeetingProviders[ownerId] = {
+      ...options.meeting_options,
+      lastUpdated: now,
+    };
+    changed = true;
+  }
+
+  if (!changed) return { error: null };
+
+  const mergedSettings = {
+    ...existingSettings,
+    notifications: { ...existingNotifications, providers: nextNotifProviders },
+    meeting_options: { ...existingMeeting, providers: nextMeetingProviders },
+  };
+
+  if (existingConfig) {
+    const { error } = await supabase
+      .from('configurations')
+      .update({ settings: mergedSettings })
+      .eq('workspace_id', wid);
+    return { error: error?.message ?? null };
+  }
+
+  const { error } = await supabase.from('configurations').insert({
+    workspace_id: wid,
+    settings: mergedSettings,
+  });
+  return { error: error?.message ?? null };
 }
 
 /**

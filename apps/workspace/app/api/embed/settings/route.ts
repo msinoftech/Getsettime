@@ -1,11 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createSupabaseServerClient } from '@app/db';
+import {
+  resolveNotificationsForServiceProvider,
+  resolveMeetingOptionsForServiceProvider,
+} from '@/src/utils/providerSettingsResolution';
 
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const workspaceSlug = searchParams.get('workspace_slug');
     const workspaceId = searchParams.get('workspace_id');
+    const serviceProviderId = searchParams.get('service_provider_id')?.trim() || '';
 
     if (!workspaceSlug && !workspaceId) {
       return NextResponse.json(
@@ -56,8 +61,23 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    // If no configuration exists, return empty settings
-    const settings = data?.settings || {};
+    const settings = (data?.settings || {}) as Record<string, unknown>;
+
+    if (serviceProviderId) {
+      return NextResponse.json({
+        settings: {
+          ...settings,
+          notifications: resolveNotificationsForServiceProvider(
+            settings.notifications as Record<string, unknown>,
+            serviceProviderId
+          ),
+          meeting_options: resolveMeetingOptionsForServiceProvider(
+            settings.meeting_options as Record<string, unknown>,
+            serviceProviderId
+          ),
+        },
+      });
+    }
 
     return NextResponse.json({ settings });
   } catch (err: unknown) {

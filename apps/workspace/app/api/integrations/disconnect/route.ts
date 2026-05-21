@@ -3,6 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 import { deleteIntegration, IntegrationType } from '@/lib/integrations';
 import { updateUserGoogleMetadata } from '@/lib/auth-service';
 import { getAuthFromRequest } from '@/lib/auth-helpers';
+import { ROLE_SERVICE_PROVIDER } from '@/src/constants/roles';
 
 export async function POST(req: Request) {
   try {
@@ -21,35 +22,47 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Invalid integration type' }, { status: 400 });
     }
 
-    const deleted = await deleteIntegration(auth.workspaceId, type as IntegrationType);
+    const supabaseUrl = (process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || '').trim();
+    const supabaseServiceKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim();
+    let linkedAuthUserId: string | null | undefined = undefined;
+    if (type === 'google_calendar' && supabaseUrl && supabaseServiceKey) {
+      const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {
+        auth: { autoRefreshToken: false, persistSession: false },
+      });
+      const { data: userData } = await supabaseAdmin.auth.admin.getUserById(auth.userId);
+      const role = userData?.user?.user_metadata?.role as string | undefined;
+      if (role === ROLE_SERVICE_PROVIDER) {
+        linkedAuthUserId = auth.userId;
+      } else {
+        linkedAuthUserId = null;
+      }
+    }
+
+    const deleted = await deleteIntegration(auth.workspaceId, type as IntegrationType, {
+      linkedAuthUserId,
+    });
 
     if (!deleted) {
       return NextResponse.json({ error: 'Failed to disconnect' }, { status: 500 });
     }
 
-    // Sync user_metadata when disconnecting Google Calendar
-    if (type === 'google_calendar') {
-      const supabaseUrl = (process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || '').trim();
-      const supabaseServiceKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim();
-      if (supabaseUrl && supabaseServiceKey) {
-        const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {
-          auth: { autoRefreshToken: false, persistSession: false },
-        });
-        await updateUserGoogleMetadata({
-          userId: auth.userId,
-          google_calendar_sync: false,
-          supabaseAdmin,
-        });
-      }
+    if (type === 'google_calendar' && supabaseUrl && supabaseServiceKey) {
+      const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {
+        auth: { autoRefreshToken: false, persistSession: false },
+      });
+      await updateUserGoogleMetadata({
+        userId: auth.userId,
+        google_calendar_sync: false,
+        supabaseAdmin,
+      });
     }
 
     return NextResponse.json({ success: true });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Disconnect integration error:', error);
     return NextResponse.json(
-      { error: error.message || 'Failed to disconnect' },
+      { error: error instanceof Error ? error.message : 'Failed to disconnect' },
       { status: 500 }
     );
   }
 }
-

@@ -2,7 +2,12 @@
 
 import React from 'react';
 import type { EventType } from '@/src/types/bookingForm';
-import { BOOKING_EMPTY_MESSAGES, BOOKING_LOADING_MESSAGES, DEFAULT_ACCENT_COLOR } from '@/src/constants/booking';
+import {
+  BOOKING_BUTTON_LABELS,
+  BOOKING_EMPTY_MESSAGES,
+  BOOKING_LOADING_MESSAGES,
+  DEFAULT_ACCENT_COLOR,
+} from '@/src/constants/booking';
 import { getServiceIcon, getServiceSubtitle } from './serviceIcons';
 
 interface Step2ServiceSelectionProps {
@@ -10,6 +15,8 @@ interface Step2ServiceSelectionProps {
   selectedType: EventType | null;
   loadingEventTypes: boolean;
   onSelectType: (eventType: EventType) => void;
+  onBack?: () => void;
+  onContinue: () => void;
 }
 
 export function Step2ServiceSelection({
@@ -17,6 +24,8 @@ export function Step2ServiceSelection({
   selectedType,
   loadingEventTypes,
   onSelectType,
+  onBack,
+  onContinue,
 }: Step2ServiceSelectionProps) {
   return (
     <div className="space-y-4 sm:space-y-6 animate-fadeIn">
@@ -102,6 +111,30 @@ export function Step2ServiceSelection({
           })}
         </div>
       )}
+
+      <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 mt-6 sm:mt-8 lg:mt-10 pt-6 sm:pt-8 border-t border-gray-200">
+        {onBack && (
+          <button
+            type="button"
+            onClick={onBack}
+            className="w-full sm:w-auto px-6 sm:px-8 py-3 sm:py-3.5 rounded-xl border-2 border-gray-200 hover:border-gray-300 hover:bg-gray-50 transition-all font-semibold text-gray-700 hover:shadow-md"
+          >
+            {BOOKING_BUTTON_LABELS.back}
+          </button>
+        )}
+        <button
+          type="button"
+          disabled={!selectedType || loadingEventTypes}
+          onClick={onContinue}
+          className={`w-full sm:w-auto sm:ml-auto px-6 sm:px-10 py-3 sm:py-3.5 rounded-xl text-white transition-all font-semibold ${
+            !selectedType || loadingEventTypes
+              ? 'bg-gray-300 cursor-not-allowed'
+              : 'bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-700 hover:to-indigo-800 shadow-xl hover:shadow-2xl hover:scale-105'
+          }`}
+        >
+          {BOOKING_BUTTON_LABELS.continue}
+        </button>
+      </div>
     </div>
   );
 }

@@ -182,12 +182,18 @@ export default function AvailabilityTimesheet({
       if (response.ok) {
         const data = await response.json();
         const availability = data?.settings?.availability;
-        if (providerUserId && availability?.providers?.[providerUserId]?.timesheet) {
-          const general = availability.timesheet ?? {};
-          const provider = availability.providers[providerUserId].timesheet ?? {};
-          setSchedules((prev) => ({ ...prev, ...general, ...provider }));
+        const providerEntry = providerUserId
+          ? availability?.providers?.[providerUserId]
+          : undefined;
+        const providerTimesheet = providerEntry?.timesheet;
+        if (
+          providerUserId &&
+          providerTimesheet &&
+          Object.keys(providerTimesheet).length > 0
+        ) {
+          setSchedules((prev) => ({ ...prev, ...providerTimesheet }));
         } else if (availability?.timesheet) {
-          setSchedules(availability.timesheet);
+          setSchedules((prev) => ({ ...prev, ...availability.timesheet }));
         }
       } else if (response.status === 404) {
         // API route doesn't exist yet, use default schedules
@@ -243,32 +249,32 @@ export default function AvailabilityTimesheet({
       let settingsPayload: Record<string, unknown>;
 
       if (providerUserId) {
-        const getResponse = await fetch('/api/settings', {
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
-        });
-        let existingSettings: Record<string, unknown> = {};
-        if (getResponse.ok) {
-          const payload = await getResponse.json();
-          existingSettings = payload?.settings ?? {};
-        }
-        const existingAvailability =
-          (existingSettings.availability as Record<string, unknown> | undefined) ?? {};
-        const existingProviders =
-          (existingAvailability.providers as Record<string, unknown> | undefined) ?? {};
-        settingsPayload = {
-          ...existingSettings,
-          availability: {
-            ...existingAvailability,
-            providers: {
-              ...existingProviders,
-              [providerUserId]: {
-                ...(existingProviders[providerUserId] as Record<string, unknown> | undefined),
-                timesheet: schedules,
-                lastUpdated: new Date().toISOString(),
-              },
-            },
+        const response = await fetch('/api/settings/provider-availability', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
           },
-        };
+          body: JSON.stringify({ timesheet: schedules }),
+        });
+
+        if (!response.ok) {
+          const result = await response.json().catch(() => ({}));
+          throw new Error(
+            (result as { error?: string }).error || 'Failed to save provider availability'
+          );
+        }
+
+        const successText = 'Availability timesheet saved successfully!';
+        if (onSaveFeedback) {
+          onSaveFeedback({ type: 'success', text: successText });
+          setTimeout(() => onSaveFeedback(null), 3000);
+        } else {
+          setSaveMessage({ type: 'success', text: successText });
+          setTimeout(() => setSaveMessage(null), 3000);
+        }
+        onSave?.(schedules);
+        return;
       } else {
         settingsPayload = {
           availability: {

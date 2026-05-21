@@ -202,7 +202,11 @@ export async function POST(
       const gcalEventId = (booking.metadata as Record<string, unknown>)?.google_calendar_event_id as string | undefined;
       if (gcalEventId) {
         const { deleteCalendarEvent } = await import('@/lib/google-calendar-service');
-        const calResult = await deleteCalendarEvent(booking.workspace_id, gcalEventId);
+        const calResult = await deleteCalendarEvent(
+          booking.workspace_id,
+          gcalEventId,
+          booking.service_provider_id || undefined
+        );
         if (!calResult.success) {
           console.warn('Google Calendar delete failed (non-blocking):', calResult.error);
         }

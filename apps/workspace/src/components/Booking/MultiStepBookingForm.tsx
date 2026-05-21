@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useMemo, useCallback, lazy, Suspense } from 'react';
 import { useWorkspaceSettings } from '../../hooks/useWorkspaceSettings';
 import { useBookingFormData } from '../../hooks/useBookingFormData';
+import { useAutoAdvanceStep1 } from '../../hooks/useAutoAdvanceStep1';
 import { useTimeslots } from '../../hooks/useTimeslots';
 import { useIntakeValidation } from '../../hooks/useIntakeValidation';
 import type { Department, EventType, IntakeValues, ServiceProvider } from '../../types/bookingForm';
@@ -88,9 +89,12 @@ const MultiStepBookingForm = ({ onSave, onCancel }: MultiStepBookingFormProps) =
 
   const intakeForm = settings.intake_form;
 
+  const resolvedMeetingOptions = providerMeetingOptions ?? settings.meeting_options;
+  const resolvedNotifications = providerNotifications ?? settings.notifications;
+
   const enabledMeetingOptionKeys = useMemo(
-    () => list_enabled_meeting_option_keys(settings.meeting_options),
-    [settings.meeting_options]
+    () => list_enabled_meeting_option_keys(resolvedMeetingOptions),
+    [resolvedMeetingOptions]
   );
 
   const intakeMeetingValidation = useMemo(
@@ -141,6 +145,9 @@ const MultiStepBookingForm = ({ onSave, onCancel }: MultiStepBookingFormProps) =
     showProviderPicker,
     workspaceName,
     workspaceLogoUrl,
+    effectiveProviderId,
+    providerMeetingOptions,
+    providerNotifications,
   } = useBookingFormData({
     selectedDepartment,
     selectedProvider,
@@ -172,6 +179,21 @@ const MultiStepBookingForm = ({ onSave, onCancel }: MultiStepBookingFormProps) =
       prev && serviceProviders.some((p) => p.id === prev.id) ? prev : null
     );
   }, [selectedDepartment, serviceProviders]);
+
+  useAutoAdvanceStep1({
+    enabled: true,
+    step,
+    loadingDepartments,
+    departments,
+    selectedDepartment,
+    setSelectedDepartment,
+    setSelectedProvider,
+    selectedProvider,
+    showProviderPicker,
+    serviceProviders,
+    onClearOptionalServices: () => setSelectedServiceIds([]),
+    advanceToNextStep: () => setStep(2),
+  });
 
   const sortedEventTypes = useMemo(() => sortEventTypesByDuration(eventTypes), [eventTypes]);
 
@@ -337,12 +359,9 @@ const MultiStepBookingForm = ({ onSave, onCancel }: MultiStepBookingFormProps) =
       const { data: { session } } = await supabase.auth.getSession();
       if (!session?.access_token) throw new Error('Not authenticated');
 
-      const { data: { user } } = await supabase.auth.getUser();
-      const workspaceId = user?.user_metadata?.workspace_id;
       let bookingStatus = 'pending';
-      if (workspaceId) {
-        const { data: configData } = await supabase.from('configurations').select('settings').eq('workspace_id', workspaceId).single();
-        if (configData?.settings?.notifications?.['auto-confirm-booking'] === true) bookingStatus = 'confirmed';
+      if (resolvedNotifications?.['auto-confirm-booking'] === true) {
+        bookingStatus = 'confirmed';
       }
 
       const parsed = parseTimeStringTo24h(selectedTime);
@@ -538,10 +557,13 @@ const MultiStepBookingForm = ({ onSave, onCancel }: MultiStepBookingFormProps) =
                   eventTypes={sortedEventTypes}
                   selectedType={selectedType}
                   loadingEventTypes={loadingEventTypes}
-                  onSelectType={(t) => {
-                    setSelectedType(t);
-                    setStep(3);
-                  }}
+                  onSelectType={setSelectedType}
+                  onBack={
+                    departments.length > 0
+                      ? () => setStep(1)
+                      : undefined
+                  }
+                  onContinue={() => setStep(3)}
                 />
               )}
               {step === 3 && (

@@ -30,6 +30,7 @@ type IconName =
 interface Department {
   id: string | number;
   name: string;
+  status?: "active" | "inactive";
 }
 
 interface EventType {
@@ -69,6 +70,8 @@ type FieldErrors = Partial<Record<"name" | "email" | "phone" | "department_id" |
 export default function EmergencyBookingForm() {
   const router = useRouter();
   const footerRef = useRef<HTMLDivElement>(null);
+  const autoSelectDeptDoneRef = useRef(false);
+  const autoSelectProviderDoneRef = useRef(false);
   const [formData, setFormData] = useState({
     name: "",
     email: "",
@@ -154,7 +157,8 @@ export default function EmergencyBookingForm() {
         });
         if (res.ok) {
           const json = await res.json();
-          setDepartments(json.departments || []);
+          const list = (json.departments || []) as Department[];
+          setDepartments(list.filter((d) => d.status !== "inactive"));
         }
       } catch (err) {
         console.error("Error fetching departments:", err);
@@ -284,6 +288,9 @@ export default function EmergencyBookingForm() {
             sp.departments.some((x) => String(x) === String(newDept))
         );
         next.service_provider_id = still ? prev.service_provider_id : "";
+        if (String(newDept) !== String(prev.department_id)) {
+          autoSelectProviderDoneRef.current = false;
+        }
       }
       return next;
     });
@@ -299,6 +306,51 @@ export default function EmergencyBookingForm() {
     setError(null);
     setSuccess(false);
   };
+
+  useEffect(() => {
+    if (loadingDepts || loadingProviders || loading) return;
+
+    if (
+      !autoSelectDeptDoneRef.current &&
+      !formData.department_id &&
+      departments.length === 1
+    ) {
+      autoSelectDeptDoneRef.current = true;
+      const deptId = String(departments[0].id);
+      const providersInDept = serviceProviders.filter((p) =>
+        p.departments.some((x) => String(x) === deptId)
+      );
+      if (providersInDept.length === 1) {
+        autoSelectProviderDoneRef.current = true;
+      }
+      setField({
+        department_id: deptId,
+        ...(providersInDept.length === 1
+          ? { service_provider_id: providersInDept[0].id }
+          : {}),
+      });
+      return;
+    }
+
+    if (
+      !autoSelectProviderDoneRef.current &&
+      formData.department_id &&
+      !formData.service_provider_id &&
+      filteredProviders.length === 1
+    ) {
+      autoSelectProviderDoneRef.current = true;
+      setField({ service_provider_id: filteredProviders[0].id });
+    }
+  }, [
+    departments,
+    serviceProviders,
+    filteredProviders,
+    formData.department_id,
+    formData.service_provider_id,
+    loadingDepts,
+    loadingProviders,
+    loading,
+  ]);
 
   const appendReason = (reason: string) => {
     setFormData((prev) => ({
@@ -382,6 +434,8 @@ export default function EmergencyBookingForm() {
 
       setSuccess(true);
       window.dispatchEvent(new Event("bookings-viewed-update"));
+      autoSelectDeptDoneRef.current = false;
+      autoSelectProviderDoneRef.current = false;
       setFormData((prev) => ({
         ...prev,
         name: "",

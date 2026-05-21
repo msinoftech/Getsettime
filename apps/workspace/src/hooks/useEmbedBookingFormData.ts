@@ -14,8 +14,10 @@ import { CALENDAR_BUFFER_DAYS, CALENDAR_BUFFER_DAYS_BEFORE } from '@/src/constan
 import { userActsAsServiceProviderFromMetadata } from '@/lib/service_provider_role';
 import {
   filterBookableDepartments,
+  filterEventTypesForServiceProvider,
   memberActsInDepartment,
 } from '@/src/utils/bookingFormUtils';
+import { resolveAvailabilityForServiceProvider } from '@/src/utils/availabilityResolution';
 
 interface TeamMemberRow {
   id: string;
@@ -127,10 +129,21 @@ export function useEmbedBookingFormData({
   const needsExplicitProvider =
     departments.length > 0 && selectedDepartment !== null && showProviderPicker;
 
+  const bookableEventTypes = useMemo(() => {
+    if (needsExplicitProvider && !effectiveProviderId) return [];
+    return filterEventTypesForServiceProvider(eventTypes, effectiveProviderId);
+  }, [eventTypes, effectiveProviderId, needsExplicitProvider]);
+
   useEffect(() => {
     const fetchSettings = async () => {
       try {
-        const res = await fetch(`/api/embed/settings?workspace_id=${workspace.id}`);
+        const providerQuery =
+          effectiveProviderId != null
+            ? `&service_provider_id=${encodeURIComponent(effectiveProviderId)}`
+            : '';
+        const res = await fetch(
+          `/api/embed/settings?workspace_id=${workspace.id}${providerQuery}`
+        );
         if (!res.ok) return;
         const data: {
           settings?: {
@@ -147,7 +160,7 @@ export function useEmbedBookingFormData({
       }
     };
     fetchSettings();
-  }, [workspace.id]);
+  }, [workspace.id, effectiveProviderId]);
 
   useEffect(() => {
     const fetchDepartmentsAndTeam = async () => {
@@ -195,8 +208,13 @@ export function useEmbedBookingFormData({
 
   useEffect(() => {
     const fetchEventTypes = async () => {
+      setLoadingEventTypes(true);
       try {
-        const res = await fetch(`/api/embed/event-types?workspace_slug=${workspace.slug}`);
+        const params = new URLSearchParams({ workspace_slug: workspace.slug });
+        if (effectiveProviderId) {
+          params.set('service_provider_id', effectiveProviderId);
+        }
+        const res = await fetch(`/api/embed/event-types?${params.toString()}`);
         if (res.ok) {
           const result = await res.json();
           setEventTypes(result.data || []);
@@ -208,7 +226,7 @@ export function useEmbedBookingFormData({
       }
     };
     fetchEventTypes();
-  }, [workspace.slug]);
+  }, [workspace.slug, effectiveProviderId]);
 
   useEffect(() => {
     if (!effectiveProviderId && needsExplicitProvider) {
@@ -233,19 +251,12 @@ export function useEmbedBookingFormData({
         }
         const result = await res.json();
         const availability = result.settings?.availability || {};
-        const generalTimesheet = availability.timesheet;
-        const generalIndividual = availability.individual;
-        let finalTimesheet = generalTimesheet;
-        let finalIndividual = generalIndividual || {};
-        if (effectiveProviderId) {
-          const providers = availability.providers || {};
-          const overrides = providers[effectiveProviderId] || {};
-          finalTimesheet = generalTimesheet
-            ? { ...generalTimesheet, ...(overrides.timesheet || {}) }
-            : overrides.timesheet;
-          finalIndividual = { ...(generalIndividual || {}), ...(overrides.individual || {}) };
-        }
-        setAvailabilitySettings({ timesheet: finalTimesheet, individual: finalIndividual });
+        setAvailabilitySettings(
+          resolveAvailabilityForServiceProvider(
+            availability,
+            effectiveProviderId
+          ) as AvailabilitySettings
+        );
       } catch (e) {
         console.error('Error fetching embed availability:', e);
       } finally {
@@ -363,7 +374,7 @@ export function useEmbedBookingFormData({
     loadingDepartments,
     serviceProviders: providersActingInDepartment,
     loadingProviders: false,
-    eventTypes,
+    eventTypes: bookableEventTypes,
     loadingEventTypes,
     availabilitySettings,
     existingBookings,

@@ -92,3 +92,12 @@ export function getSortedFilteredEventTypes(
   else if (opts.duration != null) filtered = filterEventTypesByDuration(filtered, opts.duration);
   return sortEventTypesByDuration(filtered);
 }
+
+/** Event types owned by the selected provider (or workspace owner when no picker). */
+export function filterEventTypesForServiceProvider(
+  eventTypes: EventType[],
+  serviceProviderId: string | null | undefined
+): EventType[] {
+  if (!serviceProviderId) return eventTypes;
+  return eventTypes.filter((et) => et.owner_id === serviceProviderId);
+}

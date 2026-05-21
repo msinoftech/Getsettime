@@ -11,7 +11,6 @@ import {
 } from '@/lib/booking_service_provider_phone';
 import { post_booking_whatsapp_notification } from '@/lib/post_booking_whatsapp_notification';
 import {
-  type workspace_notifications_settings,
   is_whatsapp_admin_enabled,
   is_whatsapp_user_enabled,
 } from '@/lib/workspace-notification-flags';
@@ -19,6 +18,11 @@ import {
   list_enabled_meeting_option_keys,
   type meeting_option_key,
 } from '@/src/utils/meeting_options';
+import { resolveAvailabilityForServiceProvider } from '@/src/utils/availabilityResolution';
+import {
+  resolveNotificationsForServiceProvider,
+  resolveMeetingOptionsForServiceProvider,
+} from '@/src/utils/providerSettingsResolution';
 
 type DayName = "Sun" | "Mon" | "Tue" | "Wed" | "Thu" | "Fri" | "Sat";
 
@@ -147,7 +151,8 @@ export async function GET(req: NextRequest) {
         calendarBusy = await getBusySlots(
           Number(workspaceId),
           rangeStart.toISOString(),
-          rangeEnd.toISOString()
+          rangeEnd.toISOString(),
+          serviceProviderId || undefined
         );
       } catch {
         // Non-blocking
@@ -269,25 +274,23 @@ export async function POST(req: NextRequest) {
       .eq('workspace_id', workspace_id)
       .single();
 
+    const bookingServiceProviderId =
+      typeof service_provider_id === 'string' && service_provider_id.trim()
+        ? service_provider_id.trim()
+        : null;
     const availabilityData: AvailabilitySettings = configData?.settings?.availability || {};
-    
-    // Get provider-specific availability if service_provider_id is provided
-    let availability: AvailabilitySettings = availabilityData;
-    if (service_provider_id && availabilityData) {
-      const providers = (availabilityData as any).providers || {};
-      const providerOverrides = providers[service_provider_id] || {};
-      
-      // Merge general availability with provider-specific overrides
-      const generalTimesheet = availabilityData.timesheet;
-      const generalIndividual = availabilityData.individual;
-      const finalTimesheet = generalTimesheet ? { ...generalTimesheet, ...(providerOverrides.timesheet || {}) } : providerOverrides.timesheet;
-      const finalIndividual = { ...(generalIndividual || {}), ...(providerOverrides.individual || {}) };
-      
-      availability = {
-        timesheet: finalTimesheet,
-        individual: finalIndividual,
-      };
-    }
+    const availability = resolveAvailabilityForServiceProvider(
+      availabilityData,
+      bookingServiceProviderId
+    );
+    const resolvedNotifications = resolveNotificationsForServiceProvider(
+      configData?.settings?.notifications as Record<string, unknown> | undefined,
+      bookingServiceProviderId
+    );
+    const resolvedMeetingOptions = resolveMeetingOptionsForServiceProvider(
+      configData?.settings?.meeting_options as Record<string, unknown> | undefined,
+      bookingServiceProviderId
+    );
     
     // Use timezone-aware parsing when client sends timezone (fixes Vercel UTC vs local mismatch)
     const tz = typeof clientTimezone === 'string' && clientTimezone.trim() ? clientTimezone.trim() : null;
@@ -347,7 +350,12 @@ export async function POST(req: NextRequest) {
     try {
       const { isSlotBusyInCalendar } = await import('@/lib/google-calendar-service');
       const endAt = end_at || start_at;
-      const isBusy = await isSlotBusyInCalendar(workspace_id, start_at, endAt);
+      const isBusy = await isSlotBusyInCalendar(
+        workspace_id,
+        start_at,
+        endAt,
+        service_provider_id || undefined
+      );
       if (isBusy) {
         return NextResponse.json({
           error: 'This time slot is already booked or blocked in calendar. Please select another time.',
@@ -390,7 +398,7 @@ export async function POST(req: NextRequest) {
 
     // Check auto-confirm setting (reuse configData from availability check)
     let bookingStatus = 'pending';
-    const autoConfirm = configData?.settings?.notifications?.['auto-confirm-booking'];
+    const autoConfirm = resolvedNotifications['auto-confirm-booking'];
     if (autoConfirm === true) {
       bookingStatus = 'confirmed';
     }
@@ -428,7 +436,7 @@ export async function POST(req: NextRequest) {
       if (mo === null) {
         return NextResponse.json({ error: 'Invalid location' }, { status: 400 });
       }
-      const allowed = list_enabled_meeting_option_keys(configData?.settings?.meeting_options);
+      const allowed = list_enabled_meeting_option_keys(resolvedMeetingOptions);
       if (!allowed.includes(mo)) {
         return NextResponse.json(
           { error: 'Meeting option is not available for this workspace' },
@@ -580,8 +588,7 @@ export async function POST(req: NextRequest) {
     // whatsappOptIn + notifications["whatsapp-user"] control invitee messages;
     // notifications.whatsapp controls admin messages.
     const whatsappOptIn = Boolean(intake_form && (intake_form as any).whatsapp_opt_in);
-    const notifications_settings =
-      configData?.settings?.notifications as workspace_notifications_settings | undefined;
+    const notifications_settings = resolvedNotifications;
     const whatsapp_admin = is_whatsapp_admin_enabled(notifications_settings);
     const whatsapp_user = is_whatsapp_user_enabled(notifications_settings);
 
@@ -665,6 +672,7 @@ export async function POST(req: NextRequest) {
       const endAt = end_at || start_at;
       const { eventId } = await createCalendarEvent({
         workspaceId: workspace_id,
+        serviceProviderId: service_provider_id || undefined,
         summary: `${eventTypeName}: ${invitee_name.trim()}`,
         description: metadataPayload.notes ? String(metadataPayload.notes) : undefined,
         startAt: start_at,

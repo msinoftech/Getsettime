@@ -11,6 +11,7 @@ import {
 } from '@/lib/auth-service';
 import { workspaceAdminNeedsOnboardingWizard } from '@/lib/auth_onboarding';
 import { getPublicSiteOrigin } from '@/lib/request-site-origin';
+import { ROLE_SERVICE_PROVIDER } from '@/src/constants/roles';
 
 interface GoogleSignupData {
   access_token: string;
@@ -126,8 +127,12 @@ export async function GET(req: Request) {
         console.warn('Failed to update user metadata (non-critical):', metaError);
       }
 
-      // Save Google Calendar integration if enabled
+      const { data: freshUserData } = await supabaseAdmin.auth.admin.getUserById(userId);
+      const metaNow = (freshUserData?.user?.user_metadata ?? {}) as Record<string, unknown>;
+      const role = metaNow.role as string | undefined;
+
       if (enableCalendarSync && refresh_token) {
+        const isServiceProvider = role === ROLE_SERVICE_PROVIDER;
         await saveGoogleCalendarIntegration({
           workspaceId: workspaceResult.workspaceId,
           accessToken: access_token,
@@ -136,13 +141,17 @@ export async function GET(req: Request) {
           scope: data.scope,
           email,
           googleId: data.google_id,
+          linkedAuthUserId: isServiceProvider ? userId : null,
+          supabaseAdmin,
+        });
+        await updateUserGoogleMetadata({
+          userId,
+          google_calendar_sync: true,
+          google_id: data.google_id,
+          google_email: email,
           supabaseAdmin,
         });
       }
-
-      const { data: freshUserData } = await supabaseAdmin.auth.admin.getUserById(userId);
-      const metaNow = (freshUserData?.user?.user_metadata ?? {}) as Record<string, unknown>;
-      const role = metaNow.role as string | undefined;
       const { data: wsRow } = await supabaseAdmin
         .from('workspaces')
         .select('type, profession_id')
@@ -256,7 +265,6 @@ export async function GET(req: Request) {
         return NextResponse.redirect(new URL('/register?error=user_update_failed', req.url));
       }
 
-      // Save Google Calendar integration if enabled
       if (enableCalendarSync && refresh_token) {
         await saveGoogleCalendarIntegration({
           workspaceId: workspaceResult.workspaceId,
@@ -266,6 +274,7 @@ export async function GET(req: Request) {
           scope: data.scope,
           email,
           googleId: data.google_id,
+          linkedAuthUserId: null,
           supabaseAdmin,
         });
       }

@@ -4,6 +4,7 @@ import React, { useState, useEffect, useCallback, useMemo, lazy, Suspense } from
 import type { Workspace } from '@app/db';
 import type { Department, EventType, IntakeValues, ServiceProvider } from '@/src/types/bookingForm';
 import { useEmbedBookingFormData } from '@/src/hooks/useEmbedBookingFormData';
+import { useAutoAdvanceStep1 } from '@/src/hooks/useAutoAdvanceStep1';
 import { useTimeslots } from '@/src/hooks/useTimeslots';
 import { useIntakeValidation } from '@/src/hooks/useIntakeValidation';
 import {
@@ -151,6 +152,21 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
       prev && serviceProviders.some((p) => p.id === prev.id) ? prev : null
     );
   }, [selectedDepartment, serviceProviders]);
+
+  useAutoAdvanceStep1({
+    enabled: !isRescheduleMode,
+    step,
+    loadingDepartments,
+    departments,
+    selectedDepartment,
+    setSelectedDepartment,
+    setSelectedProvider,
+    selectedProvider,
+    showProviderPicker,
+    serviceProviders,
+    onClearOptionalServices: () => setSelectedServiceIds([]),
+    advanceToNextStep: () => setStep(2),
+  });
 
   const sortedEventTypes = getSortedFilteredEventTypes(eventTypes, {
     slug: eventTypeSlug,
@@ -640,10 +656,13 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
                   eventTypes={sortedEventTypes}
                   selectedType={selectedType}
                   loadingEventTypes={loadingEventTypes}
-                  onSelectType={(t) => {
-                    setSelectedType(t);
-                    setStep(3);
-                  }}
+                  onSelectType={setSelectedType}
+                  onBack={
+                    isRescheduleMode || departments.length === 0
+                      ? undefined
+                      : () => setStep(1)
+                  }
+                  onContinue={() => setStep(3)}
                 />
               )}
               {step === 3 && (

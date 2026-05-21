@@ -157,60 +157,43 @@ export interface SaveGoogleIntegrationParams {
   scope?: string;
   email: string;
   googleId?: string;
+  /** When set, stores integration for this service provider only (not workspace-level). */
+  linkedAuthUserId?: string | null;
   supabaseAdmin: SupabaseClient;
 }
 
 /**
- * Save Google Calendar integration (workspace-scoped schema)
+ * Save Google Calendar integration (workspace-level or per service-provider).
  */
 export async function saveGoogleCalendarIntegration(
   params: SaveGoogleIntegrationParams
 ): Promise<{ error: string | null }> {
-  const { workspaceId, accessToken, refreshToken, expiresAt, scope, email, googleId, supabaseAdmin } = params;
+  const {
+    workspaceId,
+    accessToken,
+    refreshToken,
+    expiresAt,
+    scope,
+    email,
+    googleId,
+    linkedAuthUserId,
+  } = params;
 
-  try {
-    const credentials = {
-      access_token: accessToken,
-      refresh_token: refreshToken,
-      expires_at: expiresAt != null ? Math.floor(expiresAt / 1000) : undefined,
-    };
-    const config = { scope, email };
+  const { saveIntegration } = await import('@/lib/integrations');
 
-    const { data: existing } = await supabaseAdmin
-      .from('integrations')
-      .select('id')
-      .eq('workspace_id', workspaceId)
-      .eq('provider', 'google_calendar')
-      .maybeSingle();
+  const result = await saveIntegration({
+    workspace_id: workspaceId,
+    type: 'google_calendar',
+    access_token: accessToken,
+    refresh_token: refreshToken,
+    expires_at: expiresAt != null ? Math.floor(expiresAt / 1000) : undefined,
+    metadata: { scope, email },
+    provider_user_id: googleId,
+    linked_auth_user_id: linkedAuthUserId ?? null,
+  });
 
-    if (existing) {
-      const { error } = await supabaseAdmin
-        .from('integrations')
-        .update({ provider_user_id: googleId ?? null, credentials, config })
-        .eq('id', existing.id);
-
-      if (error) {
-        console.warn('Failed to save Google Calendar integration:', error);
-        return { error: 'Failed to save calendar integration' };
-      }
-    } else {
-      const { error } = await supabaseAdmin.from('integrations').insert({
-        workspace_id: workspaceId,
-        provider: 'google_calendar',
-        provider_user_id: googleId ?? null,
-        credentials,
-        config,
-      });
-
-      if (error) {
-        console.warn('Failed to save Google Calendar integration:', error);
-        return { error: 'Failed to save calendar integration' };
-      }
-    }
-
-    return { error: null };
-  } catch (err) {
-    console.error('saveGoogleCalendarIntegration error:', err);
-    return { error: err instanceof Error ? err.message : 'Unknown error' };
+  if (!result.ok) {
+    return { error: result.error ?? 'Failed to save calendar integration' };
   }
+  return { error: null };
 }

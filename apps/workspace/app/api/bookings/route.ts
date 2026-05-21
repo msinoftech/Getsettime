@@ -11,10 +11,14 @@ import {
 } from '@/lib/booking_service_provider_phone';
 import { post_booking_whatsapp_notification } from '@/lib/post_booking_whatsapp_notification';
 import {
-  type workspace_notifications_settings,
   is_whatsapp_admin_enabled,
   is_whatsapp_user_enabled,
 } from '@/lib/workspace-notification-flags';
+import { resolveAvailabilityForServiceProvider } from '@/src/utils/availabilityResolution';
+import {
+  resolveNotificationsForServiceProvider,
+  resolveMeetingOptionsForServiceProvider,
+} from '@/src/utils/providerSettingsResolution';
 
 type DayName = "Sun" | "Mon" | "Tue" | "Wed" | "Thu" | "Fri" | "Sat";
 
@@ -289,7 +293,8 @@ export async function GET(req: NextRequest) {
         calendarBusy = await getBusySlots(
           Number(workspaceId),
           startOfRange.toISOString(),
-          endOfRange.toISOString()
+          endOfRange.toISOString(),
+          serviceProviderId || undefined
         );
       } catch {
         // Non-blocking
@@ -406,25 +411,19 @@ export async function POST(req: NextRequest) {
       .eq('workspace_id', workspaceId)
       .single();
 
+    const bookingServiceProviderId =
+      typeof service_provider_id === 'string' && service_provider_id.trim()
+        ? service_provider_id.trim()
+        : null;
     const availabilityData: AvailabilitySettings = configData?.settings?.availability || {};
-    
-    // Get provider-specific availability if service_provider_id is provided
-    let availability: AvailabilitySettings = availabilityData;
-    if (service_provider_id && availabilityData) {
-      const providers = (availabilityData as any).providers || {};
-      const providerOverrides = providers[service_provider_id] || {};
-      
-      // Merge general availability with provider-specific overrides
-      const generalTimesheet = availabilityData.timesheet;
-      const generalIndividual = availabilityData.individual;
-      const finalTimesheet = generalTimesheet ? { ...generalTimesheet, ...(providerOverrides.timesheet || {}) } : providerOverrides.timesheet;
-      const finalIndividual = { ...(generalIndividual || {}), ...(providerOverrides.individual || {}) };
-      
-      availability = {
-        timesheet: finalTimesheet,
-        individual: finalIndividual,
-      };
-    }
+    const availability = resolveAvailabilityForServiceProvider(
+      availabilityData,
+      bookingServiceProviderId
+    );
+    const resolvedNotifications = resolveNotificationsForServiceProvider(
+      configData?.settings?.notifications as Record<string, unknown> | undefined,
+      bookingServiceProviderId
+    );
     
     // Use timezone-aware parsing when client sends timezone (fixes Vercel UTC vs local mismatch)
     const tz = typeof clientTimezone === 'string' && clientTimezone.trim() ? clientTimezone.trim() : null;
@@ -483,7 +482,12 @@ export async function POST(req: NextRequest) {
     // Check Google Calendar for busy slots (if integrated)
     try {
       const { isSlotBusyInCalendar } = await import('@/lib/google-calendar-service');
-      const isBusy = await isSlotBusyInCalendar(Number(workspaceId), start_at, end_at || start_at);
+      const isBusy = await isSlotBusyInCalendar(
+        Number(workspaceId),
+        start_at,
+        end_at || start_at,
+        service_provider_id || undefined
+      );
       if (isBusy) {
         return NextResponse.json({
           error: 'This time slot is already booked or blocked in calendar. Please select another time.',
@@ -672,8 +676,7 @@ export async function POST(req: NextRequest) {
     // Send WhatsApp notification (best-effort; don't fail booking)
     // metadata.whatsapp_opt_in + notifications["whatsapp-user"] control invitee messages;
     // notifications.whatsapp controls admin messages.
-    const notifications_settings =
-      configData?.settings?.notifications as workspace_notifications_settings | undefined;
+    const notifications_settings = resolvedNotifications;
     const whatsapp_admin = is_whatsapp_admin_enabled(notifications_settings);
     const whatsapp_user = is_whatsapp_user_enabled(notifications_settings);
 
@@ -758,6 +761,7 @@ export async function POST(req: NextRequest) {
       const { createCalendarEvent } = await import('@/lib/google-calendar-service');
       const { eventId } = await createCalendarEvent({
         workspaceId,
+        serviceProviderId: service_provider_id || undefined,
         summary: `${eventTypeName}: ${invitee_name.trim()}`,
         description: metadata?.notes ? String(metadata.notes) : undefined,
         startAt: start_at,
@@ -1083,10 +1087,14 @@ export async function PATCH(req: NextRequest) {
           .select('settings')
           .eq('workspace_id', workspaceId)
           .single();
-        const reschedule_notifications =
-          rescheduleConfig?.settings?.notifications as
-            | workspace_notifications_settings
-            | undefined;
+        const rescheduleSpId =
+          typeof data.service_provider_id === 'string' && data.service_provider_id.trim()
+            ? data.service_provider_id.trim()
+            : null;
+        const reschedule_notifications = resolveNotificationsForServiceProvider(
+          rescheduleConfig?.settings?.notifications as Record<string, unknown> | undefined,
+          rescheduleSpId
+        );
         const reschedule_whatsapp_admin =
           is_whatsapp_admin_enabled(reschedule_notifications);
         const reschedule_whatsapp_user =
@@ -1289,7 +1297,11 @@ export async function PATCH(req: NextRequest) {
               const { deleteCalendarEvent } = await import('@/lib/google-calendar-service');
               const calResult = await deleteCalendarEvent(
                 Number(workspaceId),
-                gcalEventId
+                gcalEventId,
+                (data.service_provider_id ?? existingRow.service_provider_id) as
+                  | string
+                  | null
+                  | undefined
               );
               if (!calResult.success) {
                 console.warn('Google Calendar delete failed (PATCH cancel):', calResult.error);
@@ -1324,10 +1336,17 @@ export async function PATCH(req: NextRequest) {
           .eq('workspace_id', workspaceId)
           .single();
 
-        const status_notifications =
-          configRow?.settings?.notifications as
-            | workspace_notifications_settings
-            | undefined;
+        const statusSpId =
+          typeof data.service_provider_id === 'string' && data.service_provider_id.trim()
+            ? data.service_provider_id.trim()
+            : typeof existingRow.service_provider_id === 'string' &&
+                existingRow.service_provider_id.trim()
+              ? existingRow.service_provider_id.trim()
+              : null;
+        const status_notifications = resolveNotificationsForServiceProvider(
+          configRow?.settings?.notifications as Record<string, unknown> | undefined,
+          statusSpId
+        );
         const whatsapp_admin = is_whatsapp_admin_enabled(status_notifications);
         const whatsapp_user = is_whatsapp_user_enabled(status_notifications);
 

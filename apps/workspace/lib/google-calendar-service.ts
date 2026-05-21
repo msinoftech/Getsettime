@@ -1,10 +1,11 @@
 import { google } from 'googleapis';
-import { getIntegration } from '@/lib/integrations';
-import { saveIntegration } from '@/lib/integrations';
+import { getIntegration, saveIntegration } from '@/lib/integrations';
 import { getGoogleOAuthClient } from '@/lib/googleClient';
 
 export interface CreateCalendarEventParams {
   workspaceId: number;
+  /** When set, uses that service provider's Google Calendar integration only. */
+  serviceProviderId?: string | null;
   summary: string;
   description?: string;
   startAt: string;
@@ -19,11 +20,24 @@ export interface BusySlot {
   end_at: string;
 }
 
+type CalendarClientOptions = {
+  workspaceId: number;
+  serviceProviderId?: string | null;
+};
+
 /**
- * Get authorized Calendar API client for a workspace
+ * Get authorized Calendar API client for workspace or a specific service provider.
  */
-async function getCalendarClient(workspaceId: number) {
-  const integration = await getIntegration(workspaceId, 'google_calendar');
+async function getCalendarClient(options: CalendarClientOptions) {
+  const { workspaceId, serviceProviderId } = options;
+  const linkedAuthUserId =
+    typeof serviceProviderId === 'string' && serviceProviderId.trim()
+      ? serviceProviderId.trim()
+      : null;
+
+  const integration = await getIntegration(workspaceId, 'google_calendar', {
+    linkedAuthUserId: linkedAuthUserId ?? null,
+  });
   if (!integration?.access_token) return null;
 
   const baseUrl = process.env.NEXT_PUBLIC_APP_URL?.trim() || '';
@@ -37,6 +51,9 @@ async function getCalendarClient(workspaceId: number) {
     expiry_date: creds.expires_at ? creds.expires_at * 1000 : undefined,
   });
 
+  const configSnapshot = (integration.config as Record<string, unknown>) ?? {};
+  const googleAccountId = integration.provider_user_id ?? undefined;
+
   oauth2Client.on('tokens', async (tokens) => {
     if (tokens.refresh_token) {
       await saveIntegration({
@@ -45,8 +62,9 @@ async function getCalendarClient(workspaceId: number) {
         access_token: tokens.access_token!,
         refresh_token: tokens.refresh_token,
         expires_at: tokens.expiry_date ? Math.floor(tokens.expiry_date / 1000) : undefined,
-        metadata: integration.config as Record<string, unknown>,
-        provider_user_id: integration.provider_user_id ?? undefined,
+        metadata: configSnapshot,
+        provider_user_id: googleAccountId,
+        linked_auth_user_id: linkedAuthUserId,
       });
     }
   });
@@ -60,13 +78,31 @@ async function getCalendarClient(workspaceId: number) {
 export async function createCalendarEvent(
   params: CreateCalendarEventParams
 ): Promise<{ eventId: string | null; error?: string }> {
-  const { workspaceId, summary, description, startAt, endAt, location, attendeeEmail, metadata } = params;
+  const {
+    workspaceId,
+    serviceProviderId,
+    summary,
+    description,
+    startAt,
+    endAt,
+    location,
+    attendeeEmail,
+    metadata,
+  } = params;
 
   try {
-    const calendar = await getCalendarClient(workspaceId);
+    const calendar = await getCalendarClient({ workspaceId, serviceProviderId });
     if (!calendar) return { eventId: null };
 
-    const event: { summary: string; description?: string; start: { dateTime: string }; end: { dateTime: string }; location?: string; attendees?: { email: string }[]; extendedProperties?: { shared: Record<string, string> } } = {
+    const event: {
+      summary: string;
+      description?: string;
+      start: { dateTime: string };
+      end: { dateTime: string };
+      location?: string;
+      attendees?: { email: string }[];
+      extendedProperties?: { shared: Record<string, string> };
+    } = {
       summary,
       start: { dateTime: startAt },
       end: { dateTime: endAt },
@@ -99,10 +135,13 @@ export async function createCalendarEvent(
 export async function updateCalendarEvent(
   workspaceId: number,
   eventId: string,
-  params: { startAt: string; endAt: string; summary?: string }
+  params: { startAt: string; endAt: string; summary?: string; serviceProviderId?: string | null }
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    const calendar = await getCalendarClient(workspaceId);
+    const calendar = await getCalendarClient({
+      workspaceId,
+      serviceProviderId: params.serviceProviderId,
+    });
     if (!calendar) return { success: false, error: 'Calendar not connected' };
 
     await calendar.events.patch({
@@ -129,10 +168,11 @@ export async function updateCalendarEvent(
  */
 export async function deleteCalendarEvent(
   workspaceId: number,
-  eventId: string
+  eventId: string,
+  serviceProviderId?: string | null
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    const calendar = await getCalendarClient(workspaceId);
+    const calendar = await getCalendarClient({ workspaceId, serviceProviderId });
     if (!calendar) return { success: false, error: 'Calendar not connected' };
 
     await calendar.events.delete({
@@ -155,10 +195,11 @@ export async function deleteCalendarEvent(
 export async function getBusySlots(
   workspaceId: number,
   timeMin: string,
-  timeMax: string
+  timeMax: string,
+  serviceProviderId?: string | null
 ): Promise<BusySlot[]> {
   try {
-    const calendar = await getCalendarClient(workspaceId);
+    const calendar = await getCalendarClient({ workspaceId, serviceProviderId });
     if (!calendar) return [];
 
     const res = await calendar.freebusy.query({
@@ -188,9 +229,10 @@ export async function getBusySlots(
 export async function isSlotBusyInCalendar(
   workspaceId: number,
   startAt: string,
-  endAt: string
+  endAt: string,
+  serviceProviderId?: string | null
 ): Promise<boolean> {
-  const slots = await getBusySlots(workspaceId, startAt, endAt);
+  const slots = await getBusySlots(workspaceId, startAt, endAt, serviceProviderId);
   const start = new Date(startAt);
   const end = new Date(endAt);
 

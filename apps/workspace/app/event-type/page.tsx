@@ -33,6 +33,8 @@ import {
   type event_type_form_state,
 } from "@/src/features/event-types/EventTypeFormLayout";
 import { workspace_meeting_options_to_location } from "@/src/utils/meeting_options";
+import { ROLE_SERVICE_PROVIDER } from "@/src/constants/roles";
+import { resolveMeetingOptionsForServiceProvider } from "@/src/utils/providerSettingsResolution";
 
 interface EventType {
   id: number;
@@ -234,12 +236,17 @@ export default function EventTypes() {
 
   const load_event_settings = async () => {
     try {
-      const from_meta = normalize_event_settings(
-        user?.user_metadata?.[USER_META_EVENT_TYPE_SETTINGS_KEY]
-      );
-      if (from_meta) {
-        set_event_settings(from_meta);
-        return;
+      const isServiceProvider =
+        user?.user_metadata?.role === ROLE_SERVICE_PROVIDER;
+
+      if (!isServiceProvider) {
+        const from_meta = normalize_event_settings(
+          user?.user_metadata?.[USER_META_EVENT_TYPE_SETTINGS_KEY]
+        );
+        if (from_meta) {
+          set_event_settings(from_meta);
+          return;
+        }
       }
 
       const { data: { session } } = await supabase.auth.getSession();
@@ -250,13 +257,21 @@ export default function EventTypes() {
       if (!response.ok) return;
       const body = await response.json();
       const workspace_settings = (body?.settings ?? {}) as Record<string, unknown>;
-      const location_from_workspace = workspace_meeting_options_to_location(
-        workspace_settings.meeting_options
-      );
-      if (location_from_workspace) {
+      const rawMeetingOptions = workspace_settings.meeting_options as
+        | Record<string, unknown>
+        | undefined;
+      const meeting_options = isServiceProvider
+        ? resolveMeetingOptionsForServiceProvider(
+            rawMeetingOptions,
+            user?.id ?? null
+          )
+        : rawMeetingOptions;
+      const location_from_meeting_options =
+        workspace_meeting_options_to_location(meeting_options);
+      if (location_from_meeting_options) {
         set_event_settings((prev) => ({
           ...prev,
-          default_location: location_from_workspace,
+          default_location: location_from_meeting_options,
         }));
       }
     } catch (err) {

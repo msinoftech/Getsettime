@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
+import { createClient } from '@supabase/supabase-js';
 import { getGoogleOAuthClient } from '@/lib/googleClient';
 import { getAuthFromRequest } from '@/lib/auth-helpers';
+import { ROLE_SERVICE_PROVIDER } from '@/src/constants/roles';
 
 export async function GET(req: Request) {
   try {
@@ -37,7 +39,29 @@ export async function GET(req: Request) {
       'https://www.googleapis.com/auth/calendar.events',
     ];
 
-    const state = Buffer.from(JSON.stringify({ userId: auth.userId, workspaceId: auth.workspaceId })).toString('base64');
+    let linkedAuthUserId: string | null = null;
+    const supabaseUrl = (process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || '').trim();
+    const supabaseServiceKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim();
+    if (supabaseUrl && supabaseServiceKey) {
+      const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {
+        auth: { autoRefreshToken: false, persistSession: false },
+      });
+      const { data: userRow } = await supabaseAdmin.auth.admin.getUserById(auth.userId);
+      const role = userRow?.user?.user_metadata?.role as string | undefined;
+      if (role === ROLE_SERVICE_PROVIDER) {
+        linkedAuthUserId = auth.userId;
+      }
+    }
+
+    const returnTo = new URL(req.url).searchParams.get('returnTo') ?? undefined;
+    const state = Buffer.from(
+      JSON.stringify({
+        userId: auth.userId,
+        workspaceId: auth.workspaceId,
+        linkedAuthUserId,
+        ...(returnTo ? { returnTo } : {}),
+      })
+    ).toString('base64');
 
     const authUrl = oauth2Client.generateAuthUrl({
       access_type: 'offline',

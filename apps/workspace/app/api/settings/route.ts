@@ -3,6 +3,29 @@ import { createSupabaseServerClient } from '@app/db';
 import { createClient } from '@supabase/supabase-js';
 import { appendActivityLog } from '@/lib/activity-log';
 import { workspace_meeting_options_to_location } from '@/src/utils/meeting_options';
+import { ROLE_SERVICE_PROVIDER } from '@/src/constants/roles';
+import {
+  ensureDefaultEventTypePublic,
+  resolveDefaultEventTypeId,
+  createServiceProviderEventType,
+  syncServiceProviderEventTypeLocation,
+} from '@/lib/workspace-service';
+import {
+  mergeAvailabilitySettings,
+  sanitizeServiceProviderAvailabilityPatch,
+} from '@/src/utils/mergeAvailabilitySettings';
+import {
+  mergeNotificationsSettings,
+  mergeMeetingOptionsSettings,
+  sanitizeServiceProviderNotificationsPatch,
+  sanitizeServiceProviderMeetingOptionsPatch,
+  wrapServiceProviderTopLevelNotifications,
+  wrapServiceProviderTopLevelMeetingOptions,
+} from '@/src/utils/mergeProviderSettings';
+import {
+  resolveNotificationsForServiceProvider,
+  resolveMeetingOptionsForServiceProvider,
+} from '@/src/utils/providerSettingsResolution';
 
 const LOCKED_INTAKE_FORM_KEYS = [
   'name',
@@ -89,8 +112,29 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    // If no configuration exists, return empty settings
-    const settings = data?.settings || {};
+    const settings = (data?.settings || {}) as Record<string, unknown>;
+    const userRole = user.user_metadata?.role as string | undefined;
+    const { searchParams } = new URL(req.url);
+    const providerParam = searchParams.get('service_provider_id')?.trim() || '';
+    const resolveProviderId =
+      userRole === ROLE_SERVICE_PROVIDER
+        ? user.id
+        : providerParam || null;
+
+    if (resolveProviderId) {
+      const resolved = {
+        ...settings,
+        notifications: resolveNotificationsForServiceProvider(
+          settings.notifications as Record<string, unknown>,
+          resolveProviderId
+        ),
+        meeting_options: resolveMeetingOptionsForServiceProvider(
+          settings.meeting_options as Record<string, unknown>,
+          resolveProviderId
+        ),
+      };
+      return NextResponse.json({ settings: resolved });
+    }
 
     return NextResponse.json({ settings });
   } catch (err: unknown) {
@@ -114,10 +158,65 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json();
-    const { settings: newSettings } = body;
+    let newSettings = body?.settings;
 
     if (!newSettings || typeof newSettings !== 'object') {
       return NextResponse.json({ error: 'Invalid settings data' }, { status: 400 });
+    }
+
+    const userRole = user.user_metadata?.role as string | undefined;
+    if (userRole === ROLE_SERVICE_PROVIDER) {
+      if (newSettings.availability && typeof newSettings.availability === 'object') {
+        const sanitized = sanitizeServiceProviderAvailabilityPatch(
+          newSettings.availability as Record<string, unknown>,
+          user.id
+        );
+        if (!sanitized) {
+          return NextResponse.json(
+            {
+              error:
+                'Service providers must save working hours via Save Timesheet during onboarding (provider availability only).',
+            },
+            { status: 403 }
+          );
+        }
+        newSettings = { ...newSettings, availability: sanitized };
+      }
+
+      if (newSettings.notifications && typeof newSettings.notifications === 'object') {
+        const raw = newSettings.notifications as Record<string, unknown>;
+        const sanitized =
+          sanitizeServiceProviderNotificationsPatch(raw, user.id) ??
+          wrapServiceProviderTopLevelNotifications(raw, user.id);
+        if (!sanitized) {
+          return NextResponse.json(
+            { error: 'Invalid service provider notification settings' },
+            { status: 400 }
+          );
+        }
+        newSettings = { ...newSettings, notifications: sanitized };
+      }
+
+      if (newSettings.meeting_options && typeof newSettings.meeting_options === 'object') {
+        const raw = newSettings.meeting_options as Record<string, unknown>;
+        const sanitized =
+          sanitizeServiceProviderMeetingOptionsPatch(raw, user.id) ??
+          wrapServiceProviderTopLevelMeetingOptions(raw, user.id);
+        if (!sanitized) {
+          return NextResponse.json(
+            { error: 'Invalid service provider meeting options' },
+            { status: 400 }
+          );
+        }
+        newSettings = { ...newSettings, meeting_options: sanitized };
+      }
+
+      const blockedKeys = ['general', 'intake_form'] as const;
+      for (const key of blockedKeys) {
+        if (Object.prototype.hasOwnProperty.call(newSettings, key)) {
+          delete (newSettings as Record<string, unknown>)[key];
+        }
+      }
     }
 
     const supabase = createSupabaseServerClient();
@@ -147,28 +246,28 @@ export async function POST(req: NextRequest) {
         ...(existingSettings.general || {}),
         ...(newSettings.general || {}),
       },
-      availability: {
-        ...(existingSettings.availability || {}),
-        ...(newSettings.availability || {}),
-      },
-      notifications: {
-        ...(existingSettings.notifications || {}),
-        ...(newSettings.notifications || {}),
-      },
+      availability: mergeAvailabilitySettings(
+        (existingSettings.availability || {}) as Record<string, unknown>,
+        (newSettings.availability || {}) as Record<string, unknown>
+      ),
+      notifications: mergeNotificationsSettings(
+        (existingSettings.notifications || {}) as Record<string, unknown>,
+        (newSettings.notifications || {}) as Record<string, unknown>
+      ),
       intake_form: {
         ...(existingSettings.intake_form || {}),
         ...(newSettings.intake_form || {}),
       },
-      meeting_options: {
-        ...(typeof existingSettings.meeting_options === 'object' &&
+      meeting_options: mergeMeetingOptionsSettings(
+        (typeof existingSettings.meeting_options === 'object' &&
         existingSettings.meeting_options !== null
           ? (existingSettings.meeting_options as Record<string, unknown>)
-          : {}),
-        ...(typeof newSettings.meeting_options === 'object' &&
+          : {}) as Record<string, unknown>,
+        (typeof newSettings.meeting_options === 'object' &&
         newSettings.meeting_options !== null
           ? (newSettings.meeting_options as Record<string, unknown>)
-          : {}),
-      },
+          : undefined)
+      ),
     };
     mergedSettings.intake_form = lockIntakeFormFields(
       existingSettings.intake_form,
@@ -216,6 +315,22 @@ export async function POST(req: NextRequest) {
     }
 
     const changedAvailability = Object.prototype.hasOwnProperty.call(newSettings, 'availability');
+    const changedMeetingOptions = Object.prototype.hasOwnProperty.call(
+      newSettings,
+      'meeting_options'
+    );
+    const wid =
+      typeof workspaceId === 'number' ? workspaceId : Number(workspaceId);
+
+    const spAvailabilityOnly =
+      userRole === ROLE_SERVICE_PROVIDER &&
+      changedAvailability &&
+      !changedMeetingOptions;
+
+    if (Number.isFinite(wid) && (changedAvailability || changedMeetingOptions) && !spAvailabilityOnly) {
+      await ensureDefaultEventTypePublic(supabase, wid);
+    }
+
     await appendActivityLog(workspaceId, {
       type: changedAvailability ? 'availability' : 'settings',
       action: 'updated',
@@ -225,42 +340,35 @@ export async function POST(req: NextRequest) {
         : 'General workspace configuration was changed',
     });
 
-    if (Object.prototype.hasOwnProperty.call(newSettings, 'meeting_options')) {
-      // Only in_person / phone / google_meet map to event_types.location_type; whatsapp-only → null → skip update.
-      const location_type = workspace_meeting_options_to_location(mergedSettings.meeting_options);
+    if (changedMeetingOptions && Number.isFinite(wid)) {
+      const meetingForLocation =
+        userRole === ROLE_SERVICE_PROVIDER
+          ? resolveMeetingOptionsForServiceProvider(
+              mergedSettings.meeting_options as Record<string, unknown>,
+              user.id
+            )
+          : mergedSettings.meeting_options;
+      const location_type = workspace_meeting_options_to_location(meetingForLocation);
       if (location_type) {
-        const wid =
-          typeof workspaceId === 'number' ? workspaceId : Number(workspaceId);
-        if (Number.isFinite(wid)) {
-          const { data: slugRow } = await supabase
-            .from('event_types')
-            .select('id')
-            .eq('workspace_id', wid)
-            .eq('slug', '30mins-chat')
-            .maybeSingle();
-
-          let defaultEventId: number | null =
-            slugRow && typeof (slugRow as { id?: unknown }).id === 'number'
-              ? (slugRow as { id: number }).id
-              : null;
-
-          if (defaultEventId == null) {
-            const { data: firstRow } = await supabase
-              .from('event_types')
-              .select('id')
-              .eq('workspace_id', wid)
-              .order('id', { ascending: true })
-              .limit(1)
-              .maybeSingle();
-            if (firstRow && typeof (firstRow as { id?: unknown }).id === 'number') {
-              defaultEventId = (firstRow as { id: number }).id;
-            }
+        if (userRole === ROLE_SERVICE_PROVIDER) {
+          await createServiceProviderEventType(supabase, {
+            workspaceId: wid,
+            ownerId: user.id,
+          });
+          const { error: locErr } = await syncServiceProviderEventTypeLocation(
+            supabase,
+            wid,
+            user.id
+          );
+          if (locErr) {
+            console.warn('SP event_type location sync (non-critical):', locErr);
           }
-
+        } else {
+          const defaultEventId = await resolveDefaultEventTypeId(supabase, wid);
           if (defaultEventId != null) {
             const { error: etError } = await supabase
               .from('event_types')
-              .update({ location_type })
+              .update({ location_type, is_public: true })
               .eq('id', defaultEventId)
               .eq('workspace_id', wid);
             if (etError) {

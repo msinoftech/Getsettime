@@ -9,6 +9,8 @@ export interface EventType {
   title: string;
   duration_minutes: number | null;
   slug?: string;
+  owner_id?: string | null;
+  is_public?: boolean | null;
 }
 
 export type Department = Pick<

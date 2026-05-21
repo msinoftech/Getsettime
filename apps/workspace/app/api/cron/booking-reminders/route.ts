@@ -4,10 +4,8 @@ import { isValidPhone, toE164, sendSMS } from '@/lib/twilio-sms';
 import { sendReminderEmail, sendFollowUpEmail } from '@/lib/email-service';
 import { getServerAppOrigin } from '@/lib/request-site-origin';
 import { post_booking_whatsapp_notification } from '@/lib/post_booking_whatsapp_notification';
-import {
-  type workspace_notifications_settings,
-  is_whatsapp_user_enabled,
-} from '@/lib/workspace-notification-flags';
+import { is_whatsapp_user_enabled } from '@/lib/workspace-notification-flags';
+import { resolveNotificationsForServiceProvider } from '@/src/utils/providerSettingsResolution';
 
 const BATCH_WINDOW_MINUTES = 15;
 const SMS_REMINDER_MINUTES = 60;
@@ -98,9 +96,17 @@ function resolveEventTitle(booking: Record<string, unknown>): string {
   return et?.title || 'Appointment';
 }
 
+function notificationSettingsCacheKey(
+  workspaceId: string,
+  serviceProviderId: string | null
+): string {
+  return `${workspaceId}:${serviceProviderId ?? ''}`;
+}
+
 async function getWorkspaceNotificationSettings(
   supabase: SupabaseClient,
   workspaceId: string,
+  serviceProviderId: string | null = null
 ): Promise<NotificationSettings> {
   const { data } = await supabase
     .from('configurations')
@@ -108,17 +114,18 @@ async function getWorkspaceNotificationSettings(
     .eq('workspace_id', workspaceId)
     .single();
 
-  const notifications = (data?.settings as Record<string, unknown>)
-    ?.notifications as Record<string, unknown> | undefined;
+  const notifications = resolveNotificationsForServiceProvider(
+    (data?.settings as Record<string, unknown> | undefined)?.notifications as
+      | Record<string, unknown>
+      | undefined,
+    serviceProviderId
+  );
 
   return {
-    'email-reminder': (notifications?.['email-reminder'] as boolean | undefined) ?? true,
-    'sms-reminder': (notifications?.['sms-reminder'] as boolean | undefined) ?? true,
-    'post-meeting-follow-up':
-      (notifications?.['post-meeting-follow-up'] as boolean | undefined) ?? true,
-    'whatsapp-notifications': is_whatsapp_user_enabled(
-      notifications as workspace_notifications_settings | undefined,
-    ),
+    'email-reminder': notifications['email-reminder'] ?? true,
+    'sms-reminder': notifications['sms-reminder'] ?? true,
+    'post-meeting-follow-up': notifications['post-meeting-follow-up'] ?? true,
+    'whatsapp-notifications': is_whatsapp_user_enabled(notifications),
   };
 }
 
@@ -139,7 +146,7 @@ async function process24hEmailReminders(
 
   const { data: bookings, error } = await supabase
     .from('bookings')
-    .select('id, workspace_id, invitee_name, invitee_email, invitee_phone, start_at, end_at, event_type_id, contact_id, metadata, contacts(phone, email, name), event_types(title, duration_minutes)')
+    .select('id, workspace_id, service_provider_id, invitee_name, invitee_email, invitee_phone, start_at, end_at, event_type_id, contact_id, metadata, contacts(phone, email, name), event_types(title, duration_minutes)')
     .gte('start_at', windowStart.toISOString())
     .lte('start_at', windowEnd.toISOString())
     .neq('status', 'cancelled')
@@ -156,10 +163,15 @@ async function process24hEmailReminders(
 
   for (const booking of bookings ?? []) {
     const wsId = booking.workspace_id as string;
-    if (!settingsCache.has(wsId)) {
-      settingsCache.set(wsId, await getWorkspaceNotificationSettings(supabase, wsId));
+    const spId =
+      typeof booking.service_provider_id === 'string' && booking.service_provider_id.trim()
+        ? booking.service_provider_id.trim()
+        : null;
+    const cacheKey = notificationSettingsCacheKey(wsId, spId);
+    if (!settingsCache.has(cacheKey)) {
+      settingsCache.set(cacheKey, await getWorkspaceNotificationSettings(supabase, wsId, spId));
     }
-    const settings = settingsCache.get(wsId)!;
+    const settings = settingsCache.get(cacheKey)!;
 
     if (!settings['email-reminder']) {
       await supabase.from('bookings').update({ email_reminder_skipped_at: new Date().toISOString() }).eq('id', booking.id);
@@ -217,7 +229,7 @@ async function process1hSmsReminders(
 
   const { data: bookings, error } = await supabase
     .from('bookings')
-    .select('id, workspace_id, invitee_name, invitee_phone, invitee_email, start_at, end_at, event_type_id, contact_id, contacts(phone, email, name), event_types(title)')
+    .select('id, workspace_id, service_provider_id, invitee_name, invitee_phone, invitee_email, start_at, end_at, event_type_id, contact_id, contacts(phone, email, name), event_types(title)')
     .gte('start_at', windowStart.toISOString())
     .lte('start_at', windowEnd.toISOString())
     .neq('status', 'cancelled')
@@ -234,10 +246,15 @@ async function process1hSmsReminders(
 
   for (const booking of bookings ?? []) {
     const wsId = booking.workspace_id as string;
-    if (!settingsCache.has(wsId)) {
-      settingsCache.set(wsId, await getWorkspaceNotificationSettings(supabase, wsId));
+    const spId =
+      typeof booking.service_provider_id === 'string' && booking.service_provider_id.trim()
+        ? booking.service_provider_id.trim()
+        : null;
+    const cacheKey = notificationSettingsCacheKey(wsId, spId);
+    if (!settingsCache.has(cacheKey)) {
+      settingsCache.set(cacheKey, await getWorkspaceNotificationSettings(supabase, wsId, spId));
     }
-    const settings = settingsCache.get(wsId)!;
+    const settings = settingsCache.get(cacheKey)!;
 
     if (!settings['sms-reminder']) {
       await supabase.from('bookings').update({ sms_reminder_skipped_at: new Date().toISOString() }).eq('id', booking.id);
@@ -322,10 +339,15 @@ async function process1hWhatsAppReminders(
 
   for (const booking of bookings ?? []) {
     const wsId = booking.workspace_id as string;
-    if (!settingsCache.has(wsId)) {
-      settingsCache.set(wsId, await getWorkspaceNotificationSettings(supabase, wsId));
+    const spId =
+      typeof booking.service_provider_id === 'string' && booking.service_provider_id.trim()
+        ? booking.service_provider_id.trim()
+        : null;
+    const cacheKey = notificationSettingsCacheKey(wsId, spId);
+    if (!settingsCache.has(cacheKey)) {
+      settingsCache.set(cacheKey, await getWorkspaceNotificationSettings(supabase, wsId, spId));
     }
-    const settings = settingsCache.get(wsId)!;
+    const settings = settingsCache.get(cacheKey)!;
 
     if (!settings['whatsapp-notifications']) {
       await supabase.from('bookings').update({ whatsapp_reminder_skipped_at: new Date().toISOString() }).eq('id', booking.id);
@@ -444,7 +466,7 @@ async function processPostMeetingFollowUps(
 
   const { data: bookings, error } = await supabase
     .from('bookings')
-    .select('id, workspace_id, invitee_name, invitee_email, invitee_phone, start_at, end_at, event_type_id, contact_id, metadata, contacts(phone, email, name), event_types(title, duration_minutes)')
+    .select('id, workspace_id, service_provider_id, invitee_name, invitee_email, invitee_phone, start_at, end_at, event_type_id, contact_id, metadata, contacts(phone, email, name), event_types(title, duration_minutes)')
     .gte('end_at', windowStart.toISOString())
     .lte('end_at', windowEnd.toISOString())
     .eq('status', 'completed')
@@ -461,10 +483,15 @@ async function processPostMeetingFollowUps(
 
   for (const booking of bookings ?? []) {
     const wsId = booking.workspace_id as string;
-    if (!settingsCache.has(wsId)) {
-      settingsCache.set(wsId, await getWorkspaceNotificationSettings(supabase, wsId));
+    const spId =
+      typeof booking.service_provider_id === 'string' && booking.service_provider_id.trim()
+        ? booking.service_provider_id.trim()
+        : null;
+    const cacheKey = notificationSettingsCacheKey(wsId, spId);
+    if (!settingsCache.has(cacheKey)) {
+      settingsCache.set(cacheKey, await getWorkspaceNotificationSettings(supabase, wsId, spId));
     }
-    const settings = settingsCache.get(wsId)!;
+    const settings = settingsCache.get(cacheKey)!;
 
     if (!settings['post-meeting-follow-up']) {
       await supabase.from('bookings').update({ followup_email_skipped_at: new Date().toISOString() }).eq('id', booking.id);

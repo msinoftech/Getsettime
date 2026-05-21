@@ -168,6 +168,14 @@ export default function RegisterForm() {
   const [timesheetSaveFeedback, setTimesheetSaveFeedback] =
     useState<availability_timesheet_save_feedback>(null);
   const [onboardingUser, setOnboardingUser] = useState<{ email?: string; google_calendar_sync?: boolean } | null>(null);
+
+  useEffect(() => {
+    if (onboardingMode !== true || onboardingRole !== "service_provider") return;
+    void supabase.auth.getUser().then(({ data }) => {
+      const id = data.user?.id;
+      if (id) setOnboardingProviderUserId(id);
+    });
+  }, [onboardingMode, onboardingRole, onboardingStep]);
   const [calendarConnecting, setCalendarConnecting] = useState(false);
 
   const registeringRef = useRef(false);
@@ -901,23 +909,49 @@ export default function RegisterForm() {
     }
   };
 
+  const SP_DEFAULT_NOTIFICATIONS = {
+    "sms-reminder": true,
+    "email-reminder": true,
+    "auto-confirm-booking": true,
+    "post-meeting-follow-up": true,
+    whatsapp: true,
+    "whatsapp-user": true,
+  } as const;
+
   const saveStep4 = async (): Promise<boolean> => {
     setOnboardingSaving(true);
     setError("");
     try {
       const headers = await headers_for_workspace_api();
+      const meetingPayload = {
+        in_person: meetingOptions.in_person,
+        phone_call: meetingOptions.phone_call,
+        google_meet: meetingOptions.google_meet,
+      };
+
+      if (onboardingRole === "service_provider") {
+        const postRes = await fetch("/api/settings/provider-settings", {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            notifications: { ...SP_DEFAULT_NOTIFICATIONS },
+            meeting_options: meetingPayload,
+          }),
+        });
+        if (!postRes.ok) {
+          const err = await postRes.json().catch(() => ({}));
+          throw new Error(err.error ?? "Failed to save meeting options");
+        }
+        return true;
+      }
+
       const getRes = await fetch("/api/settings", {
         headers: { Authorization: headers.Authorization },
       });
       const existingSettings = getRes.ok ? (await getRes.json()).settings ?? {} : {};
       const merged = {
         ...existingSettings,
-        meeting_options: {
-          in_person: meetingOptions.in_person,
-          phone_call: meetingOptions.phone_call,
-          google_meet: meetingOptions.google_meet,
-          // whatsapp: meetingOptions.whatsapp,
-        },
+        meeting_options: meetingPayload,
       };
       const postRes = await fetch("/api/settings", {
         method: "POST",
@@ -945,6 +979,14 @@ export default function RegisterForm() {
     } else if (onboardingStep === 2) {
       setOnboardingSaving(true);
       try {
+        if (onboardingRole === "service_provider") {
+          const headers = await headers_for_workspace_api();
+          await fetch("/api/settings/provider-settings", {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ init_defaults: true }),
+          });
+        }
         await persistOnboardingStep(2);
         goToOnboardingStep(3);
       } catch (e: unknown) {
@@ -974,6 +1016,24 @@ export default function RegisterForm() {
       } catch (e: unknown) {
         setError(e instanceof Error ? e.message : "Failed to save progress");
         return;
+      }
+      if (onboardingRole === "service_provider") {
+        try {
+          const headers = await headers_for_workspace_api();
+          const etRes = await fetch("/api/onboarding/service-provider-event-type", {
+            method: "POST",
+            headers,
+          });
+          if (!etRes.ok) {
+            const err = await etRes.json().catch(() => ({}));
+            throw new Error(
+              (err as { error?: string }).error ?? "Failed to create your event type"
+            );
+          }
+        } catch (e: unknown) {
+          setError(e instanceof Error ? e.message : "Failed to create your event type");
+          return;
+        }
       }
       const { error: onboardErr } = await supabase.auth.updateUser({
         data: { onboarding_completed: true, onboarding_last_completed_step: 4 },
@@ -1400,17 +1460,34 @@ export default function RegisterForm() {
                       setCalendarConnecting(true);
                       setError("");
                       try {
-                        const res = await fetch("/api/auth/google", {
+                        const returnTo = "/register?onboarding=1&step=2";
+                        const { data: { session } } = await supabase.auth.getSession();
+                        const token = session?.access_token;
+                        const connectUrl = `/api/integrations/google/connect?returnTo=${encodeURIComponent(returnTo)}`;
+                        const res = await fetch(connectUrl, {
+                          headers: token ? { Authorization: `Bearer ${token}` } : {},
+                        });
+                        if (res.ok) {
+                          const data = await res.json();
+                          if (data.authUrl) {
+                            window.location.href = data.authUrl;
+                            return;
+                          }
+                          setError("No auth URL received");
+                          setCalendarConnecting(false);
+                          return;
+                        }
+                        const fallback = await fetch("/api/auth/google", {
                           method: "POST",
                           headers: { "Content-Type": "application/json" },
                           body: JSON.stringify({
                             enableCalendarSync: true,
                             isSignup: false,
-                            returnTo: "/register?onboarding=1&step=2",
+                            returnTo,
                           }),
                         });
-                        const data = await res.json();
-                        if (!res.ok) {
+                        const data = await fallback.json();
+                        if (!fallback.ok) {
                           setError(data.error ?? "Failed to connect Google");
                           setCalendarConnecting(false);
                           return;
@@ -1460,11 +1537,7 @@ export default function RegisterForm() {
               <h2 className="text-lg font-semibold text-gray-800 mb-4">Working Hours</h2>
               <p className="text-sm text-gray-600 mb-4">Configure your availability and break times, then click Save Timesheet before continuing.</p>
               <AvailabilityTimesheet
-                providerUserId={
-                  isSpOnboardingUi && onboardingProviderUserId
-                    ? onboardingProviderUserId
-                    : undefined
-                }
+                providerUserId={isSpOnboardingUi ? onboardingProviderUserId ?? undefined : undefined}
                 onSave={() => {
                   setStep3Saved(true);
                   setError("");

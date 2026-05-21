@@ -6,6 +6,7 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const workspaceSlug = searchParams.get('workspace_slug');
     const workspaceId = searchParams.get('workspace_id');
+    const serviceProviderId = searchParams.get('service_provider_id')?.trim() || null;
     
     if (!workspaceSlug && !workspaceId) {
       return NextResponse.json(
@@ -44,12 +45,17 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    // Fetch all event types for the workspace (for embed bookings, show all available)
-    const { data, error } = await supabase
+    let query = supabase
       .from('event_types')
-      .select('id, title, slug, duration_minutes')
+      .select('id, title, slug, duration_minutes, owner_id, is_public')
       .eq('workspace_id', workspaceIdResolved)
-      .order('created_at', { ascending: false });
+      .eq('is_public', true);
+
+    if (serviceProviderId) {
+      query = query.eq('owner_id', serviceProviderId);
+    }
+
+    const { data, error } = await query.order('created_at', { ascending: false });
 
     if (error) {
       console.error('Error fetching event types:', error);
