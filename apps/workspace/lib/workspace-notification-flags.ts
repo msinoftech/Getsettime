@@ -5,6 +5,10 @@
 export type workspace_notifications_settings = {
   whatsapp?: boolean;
   'whatsapp-user'?: boolean;
+  'sms-reminder'?: boolean;
+  'email-reminder'?: boolean;
+  'auto-confirm-booking'?: boolean;
+  'post-meeting-follow-up'?: boolean;
 };
 
 export function is_whatsapp_admin_enabled(

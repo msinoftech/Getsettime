@@ -89,27 +89,6 @@ const MultiStepBookingForm = ({ onSave, onCancel }: MultiStepBookingFormProps) =
 
   const intakeForm = settings.intake_form;
 
-  const resolvedMeetingOptions = providerMeetingOptions ?? settings.meeting_options;
-  const resolvedNotifications = providerNotifications ?? settings.notifications;
-
-  const enabledMeetingOptionKeys = useMemo(
-    () => list_enabled_meeting_option_keys(resolvedMeetingOptions),
-    [resolvedMeetingOptions]
-  );
-
-  const intakeMeetingValidation = useMemo(
-    () =>
-      enabledMeetingOptionKeys.length > 1
-        ? { enabledKeys: enabledMeetingOptionKeys, selectedKey: selectedMeetingOption }
-        : null,
-    [enabledMeetingOptionKeys, selectedMeetingOption]
-  );
-
-  const meetingChoiceLabel = useMemo(() => {
-    const k = effective_meeting_option_key(enabledMeetingOptionKeys, selectedMeetingOption);
-    return k ? label_for_meeting_option_key(k) : '';
-  }, [enabledMeetingOptionKeys, selectedMeetingOption]);
-
   const [days, setDays] = useState<Date[]>(() =>
     Array.from({ length: 10 }, (_, i) => {
       const d = new Date();
@@ -155,6 +134,27 @@ const MultiStepBookingForm = ({ onSave, onCancel }: MultiStepBookingFormProps) =
     intakeForm,
     onAvailabilityChange,
   });
+
+  const resolvedMeetingOptions = providerMeetingOptions ?? settings.meeting_options;
+  const resolvedNotifications = providerNotifications ?? settings.notifications;
+
+  const enabledMeetingOptionKeys = useMemo(
+    () => list_enabled_meeting_option_keys(resolvedMeetingOptions),
+    [resolvedMeetingOptions]
+  );
+
+  const intakeMeetingValidation = useMemo(
+    () =>
+      enabledMeetingOptionKeys.length > 1
+        ? { enabledKeys: enabledMeetingOptionKeys, selectedKey: selectedMeetingOption }
+        : null,
+    [enabledMeetingOptionKeys, selectedMeetingOption]
+  );
+
+  const meetingChoiceLabel = useMemo(() => {
+    const k = effective_meeting_option_key(enabledMeetingOptionKeys, selectedMeetingOption);
+    return k ? label_for_meeting_option_key(k) : '';
+  }, [enabledMeetingOptionKeys, selectedMeetingOption]);
 
   useEffect(() => {
     if (

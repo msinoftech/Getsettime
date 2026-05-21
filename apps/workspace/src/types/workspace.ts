@@ -91,11 +91,16 @@ export type meeting_options_settings = {
   whatsapp?: boolean;
 };
 
+import type { workspace_notifications_settings } from '@/lib/workspace-notification-flags';
+
+export type { workspace_notifications_settings };
+
 export type WorkspaceSettings = {
   general?: GeneralSettings;
   availability?: AvailabilitySettings;
   intake_form?: IntakeFormSettings;
   meeting_options?: meeting_options_settings;
+  notifications?: workspace_notifications_settings;
 };
 
 export type WorkspaceSettingsHook = {
