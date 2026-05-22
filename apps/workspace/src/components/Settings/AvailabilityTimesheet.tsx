@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { AvailabilityGeneralSkeleton } from '@/src/components/ui/AvailabilityGeneralSkeleton';
 
 type DayName = "Sun" | "Mon" | "Tue" | "Wed" | "Thu" | "Fri" | "Sat";
@@ -65,6 +65,57 @@ const formatTimeForDisplay = (time: string): string => {
 
 const timeOptions = generateTimeOptions();
 
+function buildDefaultSchedules(): Record<DayName, DaySchedule> {
+  const defaultSchedule: DaySchedule = {
+    enabled: false,
+    startTime: '09:00',
+    endTime: '17:00',
+    breaks: [],
+  };
+  return {
+    Sun: { ...defaultSchedule },
+    Mon: { ...defaultSchedule, enabled: true },
+    Tue: { ...defaultSchedule, enabled: true },
+    Wed: { ...defaultSchedule, enabled: true },
+    Thu: { ...defaultSchedule, enabled: true },
+    Fri: { ...defaultSchedule, enabled: true },
+    Sat: { ...defaultSchedule },
+  };
+}
+
+function cloneDaySchedule(day: DaySchedule): DaySchedule {
+  return {
+    ...day,
+    breaks: day.breaks.map((b) => ({ ...b })),
+  };
+}
+
+function cloneSchedules(schedulesClone: Record<DayName, DaySchedule>): Record<DayName, DaySchedule> {
+  const out = {} as Record<DayName, DaySchedule>;
+  for (const d of DAYS) {
+    out[d] = cloneDaySchedule(schedulesClone[d]);
+  }
+  return out;
+}
+
+/** Ignore break ids so break id churn does not mark a day dirty. */
+function dayScheduleSignature(schedule: DaySchedule): string {
+  const sortedBreaks = [...schedule.breaks]
+    .map((b) => `${b.start}|${b.end}`)
+    .sort()
+    .join(';');
+  return `${schedule.enabled}:${schedule.startTime}:${schedule.endTime}:${sortedBreaks}`;
+}
+
+function fingerprintPartialTimesheet(
+  partial: Record<string, DaySchedule> | null | undefined
+): string {
+  if (!partial || Object.keys(partial).length === 0) return '∅';
+  return DAYS.map((d) =>
+    partial[d] !== undefined ? dayScheduleSignature(partial[d] as DaySchedule) : '__'
+  ).join('#');
+}
+
 // Helper function to compare times (returns true if time1 is after time2)
 const isTimeAfter = (time1: string, time2: string): boolean => {
   const [h1, m1] = time1.split(':').map(Number);
@@ -108,13 +159,6 @@ const getFilteredTimeOptions = (
   });
 };
 
-// Helper function to convert time to angle (0-360 degrees)
-const timeToAngle = (time: string): number => {
-  const [hours, minutes] = time.split(':').map(Number);
-  const totalMinutes = hours * 60 + minutes;
-  return (totalMinutes / (24 * 60)) * 360 - 90; // -90 to start at top
-};
-
 // Helper function to calculate hours between start and end time
 const calculateHours = (startTime: string, endTime: string): number => {
   const [startHours, startMins] = startTime.split(':').map(Number);
@@ -133,39 +177,138 @@ export default function AvailabilityTimesheet({
   initialTimesheet,
   providerUserId,
 }: AvailabilityTimesheetProps) {
-  const [schedules, setSchedules] = useState<Record<DayName, DaySchedule>>(() => {
-    const defaultSchedule: DaySchedule = {
-      enabled: false,
-      startTime: '09:00',
-      endTime: '17:00',
-      breaks: [],
-    };
-    return {
-      Sun: { ...defaultSchedule },
-      Mon: { ...defaultSchedule, enabled: true },
-      Tue: { ...defaultSchedule, enabled: true },
-      Wed: { ...defaultSchedule, enabled: true },
-      Thu: { ...defaultSchedule, enabled: true },
-      Fri: { ...defaultSchedule, enabled: true },
-      Sat: { ...defaultSchedule },
-    };
-  });
+  const [schedules, setSchedules] = useState<Record<DayName, DaySchedule>>(buildDefaultSchedules);
+
+  const [savedSchedules, setSavedSchedules] = useState<Record<DayName, DaySchedule>>(() =>
+    cloneSchedules(buildDefaultSchedules())
+  );
 
   const hasInitialData = initialTimesheet !== undefined;
   const [isLoading, setIsLoading] = useState(!hasInitialData);
   const [isSaving, setIsSaving] = useState(false);
+  const [savingDay, setSavingDay] = useState<DayName | null>(null);
   const [saveMessage, setSaveMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
+  const schedulesRef = useRef(schedules);
+  schedulesRef.current = schedules;
+
+  const partialTimesheetFingerprint = fingerprintPartialTimesheet(initialTimesheet ?? undefined);
+
+  /* Intentionally depend on semantic timesheet fingerprint, not unstable object refs */
+  /* eslint-disable react-hooks/exhaustive-deps -- loadAvailability merges once per fingerprint */
   useEffect(() => {
     if (hasInitialData) {
-      if (initialTimesheet && Object.keys(initialTimesheet).length > 0) {
-        setSchedules((prev) => ({ ...prev, ...initialTimesheet }));
-      }
+      const prev = schedulesRef.current;
+      const next =
+        initialTimesheet && Object.keys(initialTimesheet).length > 0
+          ? { ...prev, ...initialTimesheet }
+          : prev;
+      setSchedules(next);
+      setSavedSchedules(cloneSchedules(next));
       setIsLoading(false);
       return;
     }
     loadAvailability();
-  }, [hasInitialData, initialTimesheet, providerUserId]);
+  }, [hasInitialData, partialTimesheetFingerprint, providerUserId]);
+  /* eslint-enable react-hooks/exhaustive-deps */
+
+
+  const validateDaySchedule = (day: DayName, schedule: DaySchedule): string[] => {
+    const validationErrors: string[] = [];
+    if (schedule.enabled) {
+      if (!isTimeAfter(schedule.endTime, schedule.startTime)) {
+        validationErrors.push(`${DAY_NAMES[day]}: End time must be after start time`);
+      }
+
+      schedule.breaks.forEach((breakTime, index) => {
+        if (!isTimeAfter(breakTime.start, schedule.startTime)) {
+          validationErrors.push(
+            `${DAY_NAMES[day]}: Break ${index + 1} start must be after day start time`
+          );
+        }
+        if (!isTimeAfter(schedule.endTime, breakTime.end)) {
+          validationErrors.push(
+            `${DAY_NAMES[day]}: Break ${index + 1} end must be before day end time`
+          );
+        }
+        if (!isTimeAfter(breakTime.end, breakTime.start)) {
+          validationErrors.push(
+            `${DAY_NAMES[day]}: Break ${index + 1} end must be after break start time`
+          );
+        }
+      });
+    }
+    return validationErrors;
+  };
+
+  const persistTimesheet = async (timesheet: Record<DayName, DaySchedule>) => {
+    const { supabase } = await import('@/lib/supabaseClient');
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    const token = session?.access_token;
+
+    if (providerUserId) {
+      const response = await fetch('/api/settings/provider-availability', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ timesheet }),
+      });
+
+      if (!response.ok) {
+        const result = await response.json().catch(() => ({}));
+        throw new Error(
+          (result as { error?: string }).error || 'Failed to save provider availability'
+        );
+      }
+      return;
+    }
+
+    const settingsPayload = {
+      availability: {
+        timesheet,
+      },
+    };
+
+    const response = await fetch('/api/settings', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ settings: settingsPayload }),
+    });
+
+    if (!response.ok) {
+      const result = await response.json().catch(() => ({}));
+      throw new Error(
+        (result as { error?: string }).error || 'Failed to save availability timesheet'
+      );
+    }
+  };
+
+  const pushSaveFeedback = (
+    payload: availability_timesheet_save_feedback,
+    clearAfterMs?: number
+  ) => {
+    if (payload === null) {
+      return;
+    }
+    if (onSaveFeedback) {
+      onSaveFeedback(payload);
+      if (clearAfterMs !== undefined && clearAfterMs > 0) {
+        setTimeout(() => onSaveFeedback(null), clearAfterMs);
+      }
+    } else {
+      setSaveMessage(payload);
+      if (clearAfterMs !== undefined && clearAfterMs > 0) {
+        setTimeout(() => setSaveMessage(null), clearAfterMs);
+      }
+    }
+  };
 
   const loadAvailability = async () => {
     try {
@@ -186,14 +329,22 @@ export default function AvailabilityTimesheet({
           ? availability?.providers?.[providerUserId]
           : undefined;
         const providerTimesheet = providerEntry?.timesheet;
+        let patch: Record<string, DaySchedule> | undefined;
         if (
           providerUserId &&
           providerTimesheet &&
           Object.keys(providerTimesheet).length > 0
         ) {
-          setSchedules((prev) => ({ ...prev, ...providerTimesheet }));
-        } else if (availability?.timesheet) {
-          setSchedules((prev) => ({ ...prev, ...availability.timesheet }));
+          patch = providerTimesheet;
+        } else if (availability?.timesheet && Object.keys(availability.timesheet).length > 0) {
+          patch = availability.timesheet;
+        }
+
+        if (patch) {
+          const currentSnap = schedulesRef.current;
+          const next = { ...currentSnap, ...patch } as Record<DayName, DaySchedule>;
+          setSchedules(next);
+          setSavedSchedules(cloneSchedules(next));
         }
       } else if (response.status === 404) {
         // API route doesn't exist yet, use default schedules
@@ -213,120 +364,71 @@ export default function AvailabilityTimesheet({
     onSaveFeedback?.(null);
 
     try {
-      // Validate all schedules before saving
       const validationErrors: string[] = [];
-      
-      Object.entries(schedules).forEach(([day, schedule]) => {
-        if (schedule.enabled) {
-          // Validate end time is after start time
-          if (!isTimeAfter(schedule.endTime, schedule.startTime)) {
-            validationErrors.push(`${DAY_NAMES[day as DayName]}: End time must be after start time`);
-          }
-          
-          // Validate all breaks
-          schedule.breaks.forEach((breakTime, index) => {
-            if (!isTimeAfter(breakTime.start, schedule.startTime)) {
-              validationErrors.push(`${DAY_NAMES[day as DayName]}: Break ${index + 1} start must be after day start time`);
-            }
-            if (!isTimeAfter(schedule.endTime, breakTime.end)) {
-              validationErrors.push(`${DAY_NAMES[day as DayName]}: Break ${index + 1} end must be before day end time`);
-            }
-            if (!isTimeAfter(breakTime.end, breakTime.start)) {
-              validationErrors.push(`${DAY_NAMES[day as DayName]}: Break ${index + 1} end must be after break start time`);
-            }
-          });
-        }
-      });
-      
+      for (const day of DAYS) {
+        validationErrors.push(...validateDaySchedule(day, schedules[day]));
+      }
+
       if (validationErrors.length > 0) {
         throw new Error(`Validation failed:\n${validationErrors.join('\n')}`);
       }
 
-      const { supabase } = await import('@/lib/supabaseClient');
-      const { data: { session } } = await supabase.auth.getSession();
-      const token = session?.access_token;
-
-      let settingsPayload: Record<string, unknown>;
-
-      if (providerUserId) {
-        const response = await fetch('/api/settings/provider-availability', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          },
-          body: JSON.stringify({ timesheet: schedules }),
-        });
-
-        if (!response.ok) {
-          const result = await response.json().catch(() => ({}));
-          throw new Error(
-            (result as { error?: string }).error || 'Failed to save provider availability'
-          );
-        }
-
-        const successText = 'Availability timesheet saved successfully!';
-        if (onSaveFeedback) {
-          onSaveFeedback({ type: 'success', text: successText });
-          setTimeout(() => onSaveFeedback(null), 3000);
-        } else {
-          setSaveMessage({ type: 'success', text: successText });
-          setTimeout(() => setSaveMessage(null), 3000);
-        }
-        onSave?.(schedules);
-        return;
-      } else {
-        settingsPayload = {
-          availability: {
-            timesheet: schedules,
-          },
-        };
-      }
-
-      const response = await fetch('/api/settings', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({ settings: settingsPayload }),
-      });
-
-      if (!response.ok) {
-        const result = await response.json().catch(() => ({}));
-        throw new Error(result.error || 'Failed to save availability timesheet');
-      }
-
-      const successText = "Availability timesheet saved successfully!";
-      if (onSaveFeedback) {
-        onSaveFeedback({ type: "success", text: successText });
-        setTimeout(() => onSaveFeedback(null), 3000);
-      } else {
-        setSaveMessage({ type: "success", text: successText });
-        setTimeout(() => setSaveMessage(null), 3000);
-      }
-
-      if (onSave) {
-        onSave(schedules);
-      }
+      await persistTimesheet(schedules);
+      const frozen = cloneSchedules(schedules);
+      setSavedSchedules(frozen);
+      pushSaveFeedback({ type: 'success', text: 'Availability timesheet saved successfully!' }, 3000);
+      onSave?.(schedules);
     } catch (error) {
       console.error('Error saving availability timesheet:', error);
       const errText =
         error instanceof Error
           ? error.message
-          : "Failed to save availability timesheet. Please try again.";
-      if (onSaveFeedback) {
-        onSaveFeedback({ type: "error", text: errText });
-        setTimeout(() => onSaveFeedback(null), 5000);
-      } else {
-        setSaveMessage({
-          type: "error",
-          text: errText,
-        });
-        setTimeout(() => setSaveMessage(null), 5000);
-      }
+          : 'Failed to save availability timesheet. Please try again.';
+      pushSaveFeedback({ type: 'error', text: errText }, 5000);
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const handleSaveDay = async (day: DayName) => {
+    setSavingDay(day);
+    setSaveMessage(null);
+    onSaveFeedback?.(null);
+
+    try {
+      const dayErrors = validateDaySchedule(day, schedules[day]);
+      if (dayErrors.length > 0) {
+        throw new Error(`Validation failed:\n${dayErrors.join('\n')}`);
+      }
+
+      const merged: Record<DayName, DaySchedule> = {
+        ...savedSchedules,
+        [day]: cloneDaySchedule(schedules[day]),
+      };
+
+      await persistTimesheet(merged);
+      setSavedSchedules(cloneSchedules(merged));
+      setSchedules((prev) => ({
+        ...prev,
+        [day]: cloneDaySchedule(merged[day]),
+      }));
+      pushSaveFeedback(
+        { type: 'success', text: `${DAY_NAMES[day]} availability saved successfully!` },
+        3000
+      );
+      onSave?.({
+        ...schedules,
+        [day]: cloneDaySchedule(schedules[day]),
+      });
+    } catch (error) {
+      console.error('Error saving day availability:', error);
+      const errText =
+        error instanceof Error
+          ? error.message
+          : 'Failed to save availability timesheet. Please try again.';
+      pushSaveFeedback({ type: 'error', text: errText }, 5000);
+    } finally {
+      setSavingDay(null);
     }
   };
 
@@ -696,9 +798,9 @@ export default function AvailabilityTimesheet({
             <button
               type="button"
               onClick={handleSave}
-              disabled={isSaving}
+              disabled={isSaving || savingDay !== null}
               className={`px-6 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 transition-colors font-medium text-sm ${
-                isSaving ? 'opacity-50 cursor-not-allowed' : ''
+                isSaving || savingDay !== null ? 'opacity-50 cursor-not-allowed' : ''
               }`}
             >
               {isSaving ? 'Saving...' : 'Save changes'}
@@ -712,6 +814,8 @@ export default function AvailabilityTimesheet({
           const schedule = schedules[day];
           const dayLetter = day[0];
           const dayFullName = DAY_NAMES[day];
+          const dayDirty =
+            dayScheduleSignature(schedule) !== dayScheduleSignature(savedSchedules[day]);
           
           return (
             <div key={day} className="bg-white rounded-xl p-4 overflow-hidden shadow-sm relative">
@@ -746,7 +850,9 @@ export default function AvailabilityTimesheet({
 
                 {/* Available Button */}
                 <div className="flex items-center justify-between gap-2">
-                <button type="button" onClick={() => copyToAllDays(day)} className="text-xs font-extrabold text-indigo-700 hover:text-indigo-800">Copy to all</button>
+                  <div className={`text-xs min-w-[min(100%,280px)] ${!schedule.enabled ? 'text-slate-400' : 'text-zinc-500'}`}>
+                    {'Tip: Configure one day then "Copy to all" to apply the same settings to all days.'}
+                  </div>
                   <button
                     type="button"
                     onClick={() => updateDaySchedule(day, { enabled: !schedule.enabled })}
@@ -925,20 +1031,41 @@ export default function AvailabilityTimesheet({
                     )}
                   </div>
 
-                  <div className="mt-4 flex flex-wrap gap-4 items-center justify-between">
-                    <div className={`text-xs ${!schedule.enabled ? 'text-slate-400' : 'text-zinc-500'}`}>Tip: Configure one day then "Copy to all".</div>
-                    <button 
-                      type="button" 
-                      onClick={() => addBreak(day)} 
-                      disabled={!schedule.enabled}
-                      className={`inline-flex items-center justify-center rounded-2xl border px-4 py-2.5 text-sm font-bold transition focus:outline-none focus:ring-4 ${
-                        !schedule.enabled
-                          ? 'border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed focus:ring-slate-100'
-                          : 'border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50 focus:ring-zinc-100'
-                      }`}
-                    >
-                      Quick add
-                    </button>
+                  <div className="mt-4 flex flex-wrap gap-y-4 gap-x-3 items-start sm:items-center justify-end">
+                    <div className="flex flex-wrap gap-2 items-center justify-end shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => addBreak(day)}
+                        disabled={!schedule.enabled}
+                        className={`inline-flex items-center justify-center rounded-2xl border px-4 py-2.5 text-sm font-bold transition focus:outline-none focus:ring-4 ${
+                          !schedule.enabled
+                            ? 'border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed focus:ring-slate-100'
+                            : 'border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50 focus:ring-zinc-100'
+                        }`}
+                      >
+                        Quick add
+                      </button>
+                      {dayDirty && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => copyToAllDays(day)}
+                            disabled={savingDay !== null || isSaving}
+                            className={`inline-flex items-center justify-center rounded-2xl px-4 py-2.5 text-sm font-bold text-white transition bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed`}
+                          >
+                            Copy to all
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleSaveDay(day)}
+                            disabled={savingDay === day || isSaving}
+                            className="inline-flex items-center justify-center rounded-2xl px-4 py-2.5 text-sm font-bold text-white transition bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            {savingDay === day ? 'Saving...' : 'Save'}
+                          </button>
+                        </>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>

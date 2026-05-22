@@ -190,7 +190,11 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
               <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-rectangle-ellipsis h-4.5 w-4.5" aria-hidden="true" data-source-pos="107:20-107:52" data-source-name="Icon"><rect width="20" height="12" x="2" y="6" rx="2"></rect><path d="M12 12h.01"></path><path d="M17 12h.01"></path><path d="M7 12h.01"></path></svg>
               Forms
             </Link>
-            <div className="space-y-1">
+            <Link href="/departments" className={`flex items-center gap-3 rounded-xl px-4 py-3 text-left text-[14px] font-medium transition-all ${ activeMenu === "departments" ? "text-indigo-700" : "text-gray-700" }`} onClick={() => { setIsDepartmentsSubmenuOpen(true); handleNavClick(); }}>
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-building2 lucide-building-2 h-4.5 w-4.5" aria-hidden="true" data-source-pos="107:20-107:52" data-source-name="Icon"><path d="M10 12h4"></path><path d="M10 8h4"></path><path d="M14 21v-3a2 2 0 0 0-4 0v3"></path><path d="M6 10H4a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-2"></path><path d="M6 21V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v16"></path></svg>
+              <span className="truncate">Departments</span>
+            </Link>
+            {/* <div className="space-y-1">
               <div className={`flex items-stretch justify-between rounded-md ${ activeMenu === "departments" || activeMenu === "services" ? "bg-indigo-50 shadow-sm" : "text-gray-700 hover:bg-gray-50" }`}>
                 <Link href="/departments" className={`flex items-center gap-3 rounded-xl px-4 py-3 text-left text-[14px] font-medium transition-all ${ activeMenu === "departments" ? "text-indigo-700" : "text-gray-700" }`} onClick={() => { setIsDepartmentsSubmenuOpen(true); handleNavClick(); }}>
                   <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-building2 lucide-building-2 h-4.5 w-4.5" aria-hidden="true" data-source-pos="107:20-107:52" data-source-name="Icon"><path d="M10 12h4"></path><path d="M10 8h4"></path><path d="M14 21v-3a2 2 0 0 0-4 0v3"></path><path d="M6 10H4a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-2"></path><path d="M6 21V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v16"></path></svg>
@@ -226,7 +230,11 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
                   </Link>
                 </div>
               )}
-            </div>
+            </div> */}
+            <Link href="/services" className={`flex items-center gap-3 rounded-xl px-3 py-3 text-left text-[14px] font-medium transition-all ${ activeMenu === "services" ? "bg-indigo-50  text-indigo-700 shadow-sm" : "text-gray-600 hover:bg-gray-50" }`} onClick={handleNavClick}>
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-life-buoy-icon lucide-life-buoy"><circle cx="12" cy="12" r="10"/><path d="m4.93 4.93 4.24 4.24"/><path d="m14.83 9.17 4.24-4.24"/><path d="m14.83 14.83 4.24 4.24"/><path d="m9.17 14.83-4.24 4.24"/><circle cx="12" cy="12" r="4"/></svg>
+              Services
+            </Link>
             {/* <Link href="/notifications" className={`flex items-center gap-3 rounded-xl px-4 py-3 text-left text-[14px] font-medium transition-all ${ activeMenu === "notifications" ? "bg-indigo-50 text-indigo-700 shadow-sm" : "text-gray-700 hover:bg-gray-50" }`} onClick={handleNavClick}>
               <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-bell h-4.5 w-4.5" aria-hidden="true" data-source-pos="107:20-107:52" data-source-name="Icon"><path d="M10.268 21a2 2 0 0 0 3.464 0"></path><path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"></path></svg>
               Notifications
