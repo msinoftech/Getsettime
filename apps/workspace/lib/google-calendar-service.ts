@@ -1,10 +1,14 @@
 import { google } from 'googleapis';
-import { getIntegration, saveIntegration } from '@/lib/integrations';
+import {
+  getIntegration,
+  getLinkedAuthUserIdFromConfig,
+  saveIntegration,
+} from '@/lib/integrations';
 import { getGoogleOAuthClient } from '@/lib/googleClient';
 
 export interface CreateCalendarEventParams {
   workspaceId: number;
-  /** When set, uses that service provider's Google Calendar integration only. */
+  /** When set, prefers that service provider's integration, then workspace-level. */
   serviceProviderId?: string | null;
   summary: string;
   description?: string;
@@ -40,6 +44,10 @@ async function getCalendarClient(options: CalendarClientOptions) {
   });
   if (!integration?.access_token) return null;
 
+  const resolvedLinkedAuthUserId = getLinkedAuthUserIdFromConfig(
+    integration.config as Record<string, unknown>
+  );
+
   const baseUrl = process.env.NEXT_PUBLIC_APP_URL?.trim() || '';
   const redirectUri = `${baseUrl.replace(/\/$/, '')}/api/integrations/google/callback`;
   const oauth2Client = getGoogleOAuthClient(redirectUri);
@@ -55,16 +63,16 @@ async function getCalendarClient(options: CalendarClientOptions) {
   const googleAccountId = integration.provider_user_id ?? undefined;
 
   oauth2Client.on('tokens', async (tokens) => {
-    if (tokens.refresh_token) {
+    if (tokens.access_token) {
       await saveIntegration({
         workspace_id: workspaceId,
         type: 'google_calendar',
-        access_token: tokens.access_token!,
-        refresh_token: tokens.refresh_token,
+        access_token: tokens.access_token,
+        refresh_token: tokens.refresh_token ?? undefined,
         expires_at: tokens.expiry_date ? Math.floor(tokens.expiry_date / 1000) : undefined,
         metadata: configSnapshot,
         provider_user_id: googleAccountId,
-        linked_auth_user_id: linkedAuthUserId,
+        linked_auth_user_id: resolvedLinkedAuthUserId ?? null,
       });
     }
   });

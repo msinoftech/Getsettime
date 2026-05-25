@@ -89,11 +89,16 @@ function findIntegrationRow(
   }
 
   if (linkedAuthUserId) {
+    const providerRow = rows.find(
+      (r) =>
+        getLinkedAuthUserIdFromConfig(r.config as Record<string, unknown>) ===
+        linkedAuthUserId
+    );
+    if (providerRow) return providerRow;
+    // Fall back to workspace-level calendar when provider has not connected Google
     return (
       rows.find(
-        (r) =>
-          getLinkedAuthUserIdFromConfig(r.config as Record<string, unknown>) ===
-          linkedAuthUserId
+        (r) => !getLinkedAuthUserIdFromConfig(r.config as Record<string, unknown>)
       ) ?? null
     );
   }
@@ -108,6 +113,7 @@ function findIntegrationRow(
 /**
  * Get integration for a workspace by type.
  * Pass linkedAuthUserId for a service provider row; pass null for workspace-level; omit for legacy workspace-first lookup.
+ * When linkedAuthUserId is set and no provider row exists, falls back to workspace-level integration.
  */
 export async function getIntegration(
   workspaceId: number,
