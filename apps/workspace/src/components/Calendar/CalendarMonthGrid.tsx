@@ -1,5 +1,6 @@
 "use client";
 
+import type { RefObject } from "react";
 import Link from "next/link";
 import type { Booking } from "@/src/types/booking";
 import { formatTime } from "@/src/utils/date";
@@ -20,6 +21,7 @@ type CalendarMonthGridProps = {
   loading: boolean;
   today: Date;
   monthLabel: string;
+  todayCellRef?: RefObject<HTMLDivElement | null>;
 };
 
 export function CalendarMonthGrid({
@@ -28,6 +30,7 @@ export function CalendarMonthGrid({
   loading,
   today,
   monthLabel,
+  todayCellRef,
 }: CalendarMonthGridProps) {
   const todayKey = toDateKey(today);
 
@@ -59,6 +62,7 @@ export function CalendarMonthGrid({
               return (
                 <div
                   key={cell.date.toISOString()}
+                  ref={isToday ? todayCellRef : undefined}
                   className={cn(
                     "min-h-[160px] border-r border-slate-200 p-2.5 last:border-r-0",
                     isCurrentMonth ? "bg-white" : "bg-slate-50/80",

@@ -188,6 +188,11 @@ export default function AvailabilityTimesheet({
   const [isSaving, setIsSaving] = useState(false);
   const [savingDay, setSavingDay] = useState<DayName | null>(null);
   const [saveMessage, setSaveMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [daySaveFeedback, setDaySaveFeedback] = useState<
+    Partial<Record<DayName, { type: 'success' | 'error'; text: string }>>
+  >({});
+  const [copyConfirmDay, setCopyConfirmDay] = useState<DayName | null>(null);
+  const [copyConfirmLoading, setCopyConfirmLoading] = useState(false);
 
   const schedulesRef = useRef(schedules);
   schedulesRef.current = schedules;
@@ -310,6 +315,25 @@ export default function AvailabilityTimesheet({
     }
   };
 
+  const pushDaySaveFeedback = (
+    day: DayName,
+    payload: { type: 'success' | 'error'; text: string } | null,
+    clearAfterMs?: number
+  ) => {
+    if (payload === null) {
+      setDaySaveFeedback((prev) => {
+        const next = { ...prev };
+        delete next[day];
+        return next;
+      });
+      return;
+    }
+    setDaySaveFeedback((prev) => ({ ...prev, [day]: payload }));
+    if (clearAfterMs !== undefined && clearAfterMs > 0) {
+      setTimeout(() => pushDaySaveFeedback(day, null), clearAfterMs);
+    }
+  };
+
   const loadAvailability = async () => {
     try {
       const { supabase } = await import('@/lib/supabaseClient');
@@ -392,7 +416,7 @@ export default function AvailabilityTimesheet({
 
   const handleSaveDay = async (day: DayName) => {
     setSavingDay(day);
-    setSaveMessage(null);
+    pushDaySaveFeedback(day, null);
     onSaveFeedback?.(null);
 
     try {
@@ -412,7 +436,8 @@ export default function AvailabilityTimesheet({
         ...prev,
         [day]: cloneDaySchedule(merged[day]),
       }));
-      pushSaveFeedback(
+      pushDaySaveFeedback(
+        day,
         { type: 'success', text: `${DAY_NAMES[day]} availability saved successfully!` },
         3000
       );
@@ -426,10 +451,25 @@ export default function AvailabilityTimesheet({
         error instanceof Error
           ? error.message
           : 'Failed to save availability timesheet. Please try again.';
-      pushSaveFeedback({ type: 'error', text: errText }, 5000);
+      pushDaySaveFeedback(day, { type: 'error', text: errText }, 5000);
     } finally {
       setSavingDay(null);
     }
+  };
+
+  const saveFullTimesheet = async (timesheet: Record<DayName, DaySchedule>) => {
+    const validationErrors: string[] = [];
+    for (const d of DAYS) {
+      validationErrors.push(...validateDaySchedule(d, timesheet[d]));
+    }
+    if (validationErrors.length > 0) {
+      throw new Error(`Validation failed:\n${validationErrors.join('\n')}`);
+    }
+    await persistTimesheet(timesheet);
+    const frozen = cloneSchedules(timesheet);
+    setSavedSchedules(frozen);
+    setSchedules(frozen);
+    onSave?.(timesheet);
   };
 
   const updateDaySchedule = (day: DayName, updates: Partial<DaySchedule>) => {
@@ -669,30 +709,87 @@ export default function AvailabilityTimesheet({
     });
   };
 
-  const copyToAllDays = (sourceDay: DayName) => {
-    const sourceSchedule = schedules[sourceDay];
-    
-    // Deep copy the schedule including breaks with new IDs
-    const copiedSchedule: DaySchedule = {
-      enabled: sourceSchedule.enabled,
-      startTime: sourceSchedule.startTime,
-      endTime: sourceSchedule.endTime,
-      breaks: sourceSchedule.breaks.map((breakTime) => ({
-        ...breakTime,
-        id: `break-${Date.now()}-${Math.random()}`, // Generate new IDs for breaks
-      })),
-    };
-    
-    // Apply to all days except the source day
-    setSchedules((prev) => {
-      const updated = { ...prev };
-      DAYS.forEach((day) => {
-        if (day !== sourceDay) {
-          updated[day] = { ...copiedSchedule };
-        }
-      });
-      return updated;
+  const buildSchedulesCopiedFromDay = (
+    sourceDay: DayName,
+    base: Record<DayName, DaySchedule>
+  ): Record<DayName, DaySchedule> => {
+    const sourceSchedule = base[sourceDay];
+    const updated = { ...base };
+    DAYS.forEach((day) => {
+      if (day !== sourceDay) {
+        updated[day] = {
+          enabled: sourceSchedule.enabled,
+          startTime: sourceSchedule.startTime,
+          endTime: sourceSchedule.endTime,
+          breaks: sourceSchedule.breaks.map((breakTime) => ({
+            ...breakTime,
+            id: `break-${Date.now()}-${Math.random()}`,
+          })),
+        };
+      }
     });
+    return updated;
+  };
+
+  const copyToAllDays = (sourceDay: DayName) => {
+    setSchedules((prev) => buildSchedulesCopiedFromDay(sourceDay, prev));
+  };
+
+  const handleCopyToAllClick = (sourceDay: DayName) => {
+    if (savingDay !== null || isSaving || copyConfirmLoading) return;
+    const dayDirty =
+      dayScheduleSignature(schedules[sourceDay]) !==
+      dayScheduleSignature(savedSchedules[sourceDay]);
+    if (!dayDirty) {
+      copyToAllDays(sourceDay);
+      return;
+    }
+    setCopyConfirmDay(sourceDay);
+  };
+
+  const handleCopyConfirmOnlyDay = async () => {
+    const day = copyConfirmDay;
+    if (!day) return;
+    setCopyConfirmLoading(true);
+    try {
+      await handleSaveDay(day);
+    } finally {
+      setCopyConfirmLoading(false);
+      setCopyConfirmDay(null);
+    }
+  };
+
+  const handleCopyConfirmAllDays = async () => {
+    const day = copyConfirmDay;
+    if (!day) return;
+    setCopyConfirmLoading(true);
+    setSavingDay(day);
+    pushDaySaveFeedback(day, null);
+    onSaveFeedback?.(null);
+
+    try {
+      const copied = buildSchedulesCopiedFromDay(day, schedules);
+      await saveFullTimesheet(copied);
+      pushDaySaveFeedback(
+        day,
+        {
+          type: 'success',
+          text: `${DAY_NAMES[day]} schedule copied and saved for all days!`,
+        },
+        3000
+      );
+    } catch (error) {
+      console.error('Error saving copied availability:', error);
+      const errText =
+        error instanceof Error
+          ? error.message
+          : 'Failed to save availability timesheet. Please try again.';
+      pushDaySaveFeedback(day, { type: 'error', text: errText }, 5000);
+    } finally {
+      setSavingDay(null);
+      setCopyConfirmLoading(false);
+      setCopyConfirmDay(null);
+    }
   };
 
   // Calculate enabled days count
@@ -1049,8 +1146,8 @@ export default function AvailabilityTimesheet({
                         <>
                           <button
                             type="button"
-                            onClick={() => copyToAllDays(day)}
-                            disabled={savingDay !== null || isSaving}
+                            onClick={() => handleCopyToAllClick(day)}
+                            disabled={savingDay !== null || isSaving || copyConfirmLoading}
                             className={`inline-flex items-center justify-center rounded-2xl px-4 py-2.5 text-sm font-bold text-white transition bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed`}
                           >
                             Copy to all
@@ -1067,12 +1164,73 @@ export default function AvailabilityTimesheet({
                       )}
                     </div>
                   </div>
+
+                  {daySaveFeedback[day] && (
+                    <div
+                      className={`mt-3 w-full rounded-lg border px-3 py-2 text-sm font-medium ${
+                        daySaveFeedback[day]?.type === 'success'
+                          ? 'bg-green-50 text-green-700 border-green-200'
+                          : 'bg-red-50 text-red-700 border-red-200'
+                      }`}
+                    >
+                      {daySaveFeedback[day]?.text}
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
           );
         })}
       </div>
+
+      {copyConfirmDay !== null && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center overflow-y-auto bg-black/40 p-4"
+          onClick={() => !copyConfirmLoading && setCopyConfirmDay(null)}
+        >
+          <div
+            className="relative bg-white rounded-xl shadow-2xl max-w-md w-full"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="p-6 border-b border-slate-200">
+              <h3 className="text-xl font-semibold text-slate-800">Save changes?</h3>
+            </div>
+            <div className="p-6">
+              <p className="text-slate-700 mb-4">Do you want to save changes for:</p>
+              <ul className="list-disc list-inside text-slate-700 space-y-1 mb-6">
+                <li>Only this day</li>
+                <li>All days</li>
+              </ul>
+              <div className="flex flex-col sm:flex-row sm:justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => !copyConfirmLoading && setCopyConfirmDay(null)}
+                  disabled={copyConfirmLoading}
+                  className="px-4 py-2 text-slate-700 bg-slate-100 rounded-lg hover:bg-slate-200 transition-colors disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCopyConfirmOnlyDay}
+                  disabled={copyConfirmLoading}
+                  className="px-4 py-2 rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-50 transition-colors disabled:opacity-50"
+                >
+                  {copyConfirmLoading ? 'Saving...' : 'Only this day'}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCopyConfirmAllDays}
+                  disabled={copyConfirmLoading}
+                  className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50"
+                >
+                  {copyConfirmLoading ? 'Saving...' : 'All days'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {saveMessage && !onSaveFeedback && (
         <div

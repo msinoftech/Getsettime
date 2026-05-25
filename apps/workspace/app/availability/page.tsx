@@ -15,7 +15,10 @@ import {
   isSameWeek,
   eachDayOfInterval,
 } from "date-fns";
-import AvailabilityTimesheet from '@/src/components/Settings/AvailabilityTimesheet';
+import AvailabilityTimesheet, {
+  type availability_timesheet_save_feedback,
+} from '@/src/components/Settings/AvailabilityTimesheet';
+import AlertMessage from '@/src/components/Auth/AlertMessage';
 import { AvailabilityGeneralSkeleton } from '@/src/components/ui/AvailabilityGeneralSkeleton';
 import { useWorkspaceSettings } from '@/src/hooks/useWorkspaceSettings';
 import { ROLE_SERVICE_PROVIDER } from '@/src/constants/roles';
@@ -76,6 +79,8 @@ export default function Availability() {
   const [currentUserId, setCurrentUserId] = useState<string>('');
   const [currentUserRole, setCurrentUserRole] = useState<string>('');
   /** Cached full availability from settings - used to re-derive when selectedProviderId changes without re-fetching */
+  const [timesheetSaveFeedback, setTimesheetSaveFeedback] =
+    useState<availability_timesheet_save_feedback>(null);
   const [settingsAvailability, setSettingsAvailability] = useState<{
     timesheet: Record<DayName, DaySchedule> | null;
     individual: Record<string, boolean> | undefined;
@@ -710,7 +715,13 @@ export default function Availability() {
       <div className="rounded-2xl border border-slate-100 overflow-hidden">
         <div className="relative">
           {activeTab === 'general' && (
-            <div className="mt-0 pt-6">
+            <div className="mt-0 pt-6 space-y-4">
+              {timesheetSaveFeedback !== null && (
+                <AlertMessage
+                  type={timesheetSaveFeedback.type === 'success' ? 'success' : 'error'}
+                  message={timesheetSaveFeedback.text}
+                />
+              )}
               {settingsLoading ? (
                 <AvailabilityGeneralSkeleton />
               ) : (
@@ -728,6 +739,7 @@ export default function Availability() {
                       ? undefined
                       : settingsAvailability?.timesheet ?? null
                   }
+                  onSaveFeedback={setTimesheetSaveFeedback}
                 />
               )}
             </div>

@@ -1,9 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { Booking } from "@/src/types/booking";
-import MultiStepBookingForm from "@/src/components/Booking/MultiStepBookingForm";
+import { CreateBookingModal } from "@/src/components/Booking/CreateBookingModal";
 import { CalendarManagementHeader } from "@/src/components/Calendar/CalendarManagementHeader";
 import {
   CalendarFiltersBar,
@@ -43,12 +43,16 @@ function group_bookings_by_day(bookings: Booking[]): Record<string, Booking[]> {
   return grouped;
 }
 
+function start_of_month(date: Date): Date {
+  return new Date(date.getFullYear(), date.getMonth(), 1);
+}
+
 export default function BookingCalendar() {
   const router = useRouter();
-  const today = useMemo(() => new Date(), []);
-  const [viewDate, setViewDate] = useState(
-    () => new Date(today.getFullYear(), today.getMonth(), 1),
-  );
+  const today = new Date();
+  const [viewDate, setViewDate] = useState(() => start_of_month(new Date()));
+  const todayCellRef = useRef<HTMLDivElement | null>(null);
+  const [scroll_to_today, set_scroll_to_today] = useState(false);
   const [rawBookings, setRawBookings] = useState<Booking[]>([]);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
@@ -189,9 +193,20 @@ export default function BookingCalendar() {
     };
   }, [viewDate, statusFilter, refreshKey]);
 
+  useEffect(() => {
+    if (!scroll_to_today) return;
+    todayCellRef.current?.scrollIntoView({
+      behavior: "smooth",
+      block: "nearest",
+    });
+    set_scroll_to_today(false);
+  }, [scroll_to_today, viewDate, calendarRows]);
+
   const goToToday = useCallback(() => {
-    setViewDate(new Date(today.getFullYear(), today.getMonth(), 1));
-  }, [today]);
+    const now = new Date();
+    setViewDate(start_of_month(now));
+    set_scroll_to_today(true);
+  }, []);
 
   const previousMonth = useCallback(() => {
     setViewDate(
@@ -205,14 +220,8 @@ export default function BookingCalendar() {
     );
   }, []);
 
-  const handleMultiStepSave = useCallback(() => {
-    setShowMultiStepForm(false);
+  const handleBookingSaved = useCallback(() => {
     setRefreshKey((k) => k + 1);
-    window.dispatchEvent(new Event("bookings-viewed-update"));
-  }, []);
-
-  const handleMultiStepCancel = useCallback(() => {
-    setShowMultiStepForm(false);
   }, []);
 
   return (
@@ -252,6 +261,7 @@ export default function BookingCalendar() {
                 loading={loading}
                 today={today}
                 monthLabel={monthLabel}
+                todayCellRef={todayCellRef}
               />
             </div>
 
@@ -264,44 +274,11 @@ export default function BookingCalendar() {
         </section>
       </div>
 
-      {showMultiStepForm && (
-        <div
-          className="fixed inset-0 z-999 m-0 overflow-y-auto bg-gray-50 bg-opacity-50"
-          role="presentation"
-          onClick={handleMultiStepSave}
-        >
-          <div
-            className="relative mx-auto h-full w-full"
-            role="presentation"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <button
-              type="button"
-              onClick={handleMultiStepSave}
-              className="fixed right-2 top-2 z-10 rounded-full text-slate-500 transition-colors hover:text-slate-700"
-              aria-label="Close modal"
-            >
-              <svg
-                className="h-6 w-6"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-                strokeWidth="2"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M6 18L18 6M6 6l12 12"
-                />
-              </svg>
-            </button>
-            <MultiStepBookingForm
-              onSave={handleMultiStepSave}
-              onCancel={handleMultiStepCancel}
-            />
-          </div>
-        </div>
-      )}
+      <CreateBookingModal
+        open={showMultiStepForm}
+        onClose={() => setShowMultiStepForm(false)}
+        onSaved={handleBookingSaved}
+      />
     </div>
   );
 }

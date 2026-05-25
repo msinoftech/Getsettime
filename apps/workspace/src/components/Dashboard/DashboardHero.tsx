@@ -22,9 +22,11 @@ function minutes_until_start(start_at: string | null): number | null {
 export default function DashboardHero({
   next_booking,
   next_loading,
+  onCreateBooking,
 }: {
   next_booking: Booking | null;
   next_loading: boolean;
+  onCreateBooking: () => void;
 }) {
   const name =
     next_booking?.invitee_name?.trim() ||
@@ -52,12 +54,13 @@ export default function DashboardHero({
             Track bookings, team availability, reminders, and automation from one place.
           </p>
           <div className="mt-6 flex flex-wrap gap-3">
-            <Link
-              href="/bookings"
+            <button
+              type="button"
+              onClick={onCreateBooking}
               className="flex items-center gap-2 rounded-2xl bg-white px-5 py-3 text-sm font-black text-indigo-600 shadow-lg transition duration-300 hover:-translate-y-0.5 hover:bg-indigo-50"
             >
               <DashboardIcon name="plus" size={17} /> Create Booking
-            </Link>
+            </button>
             <Link
               href="/calendar"
               className="flex items-center gap-2 rounded-2xl bg-white/15 px-5 py-3 text-sm font-black text-white backdrop-blur transition duration-300 hover:-translate-y-0.5 hover:bg-white/25"

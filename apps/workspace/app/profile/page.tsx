@@ -1,9 +1,14 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useAuth } from "../../src/providers/AuthProvider";
 import { supabase } from "@/lib/supabaseClient";
-import { useDepartments, useServices } from "@/src/hooks/useBookingLookups";
+import {
+  useDepartments,
+  useServices,
+  useUserDepartments,
+  useUserServices,
+} from "@/src/hooks/useBookingLookups";
 import { useWorkspaceSettings } from "@/src/hooks/useWorkspaceSettings";
 import { WorkspaceBrandLogo } from "@/src/components/molecules/WorkspaceBrandLogo";
 
@@ -18,6 +23,16 @@ export default function ProfileCreative({ }) {
   } = useWorkspaceSettings();
   const { data: departments, loading: departmentsLoading } = useDepartments();
   const { data: services, loading: servicesLoading } = useServices();
+  const {
+    byUser: deptIdsByUser,
+    loading: userDeptsLoading,
+    refetch: refetchUserDepts,
+  } = useUserDepartments();
+  const {
+    byUser: serviceIdsByUser,
+    loading: userServicesLoading,
+    refetch: refetchUserServices,
+  } = useUserServices();
   const [showPublic, setShowPublic] = useState(true);
   const [profileImage, setProfileImage] = useState<string | null>(null);
   const [selectedImageFile, setSelectedImageFile] = useState<File | null>(null);
@@ -37,6 +52,19 @@ export default function ProfileCreative({ }) {
   const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>([]);
   const [needsDepartmentFallback, setNeedsDepartmentFallback] = useState(false);
   const [needsServiceFallback, setNeedsServiceFallback] = useState(false);
+  const [syncingAssignments, setSyncingAssignments] = useState(false);
+
+  const getAuthToken = useCallback(async () => {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    return session?.access_token ?? null;
+  }, []);
+
+  const parse_department_ids = (ids: string[]): number[] =>
+    ids
+      .map((id) => parseInt(id, 10))
+      .filter((n) => Number.isFinite(n) && n > 0);
 
   const normalize_ids = (value: unknown): string[] => {
     if (!Array.isArray(value)) return [];
@@ -80,13 +108,37 @@ export default function ProfileCreative({ }) {
     setSelectedImageFile(null);
     setSelectedImagePreview(null);
     setShowPublic(metadata.show_public_profile !== false);
-    const metadataDepartmentIds = normalize_ids(metadata.department_ids);
-    const metadataServiceIds = normalize_ids(metadata.service_ids);
-    setSelectedDepartmentIds(metadataDepartmentIds);
-    setSelectedServiceIds(metadataServiceIds);
-    setNeedsDepartmentFallback(metadataDepartmentIds.length === 0);
-    setNeedsServiceFallback(metadataServiceIds.length === 0);
   }, [user]);
+
+  useEffect(() => {
+    if (!user || userDeptsLoading) return;
+    const fromTable = deptIdsByUser.get(user.id);
+    if (fromTable && fromTable.size > 0) {
+      const ids = [...fromTable].sort((a, b) => a - b).map(String);
+      setSelectedDepartmentIds(ids);
+      setNeedsDepartmentFallback(false);
+      return;
+    }
+    const metadataDepartmentIds = normalize_ids(
+      (user.user_metadata ?? {}).department_ids
+    );
+    setSelectedDepartmentIds(metadataDepartmentIds);
+    setNeedsDepartmentFallback(metadataDepartmentIds.length === 0);
+  }, [user, userDeptsLoading, deptIdsByUser]);
+
+  useEffect(() => {
+    if (!user || userServicesLoading) return;
+    const fromTable = serviceIdsByUser.get(user.id);
+    if (fromTable && fromTable.size > 0) {
+      const ids = [...fromTable].sort().map(String);
+      setSelectedServiceIds(ids);
+      setNeedsServiceFallback(false);
+      return;
+    }
+    const metadataServiceIds = normalize_ids((user.user_metadata ?? {}).service_ids);
+    setSelectedServiceIds(metadataServiceIds);
+    setNeedsServiceFallback(metadataServiceIds.length === 0);
+  }, [user, userServicesLoading, serviceIdsByUser]);
 
   useEffect(() => {
     if (needsDepartmentFallback && !departmentsLoading && selectedDepartmentIds.length === 0 && departments.length > 0) {
@@ -135,22 +187,218 @@ export default function ProfileCreative({ }) {
     }
   };
 
-  const add_department = (departmentId: string) => {
-    if (selectedDepartmentIds.includes(departmentId)) return;
-    setSelectedDepartmentIds((prev) => [...prev, departmentId]);
+  const sync_department_assignments = async (
+    departmentIds: string[]
+  ): Promise<boolean> => {
+    if (!user) return false;
+    const token = await getAuthToken();
+    if (!token) {
+      setFeedback({ type: "error", message: "Not authenticated" });
+      return false;
+    }
+    const res = await fetch("/api/user-departments", {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        user_id: user.id,
+        department_ids: parse_department_ids(departmentIds),
+      }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => null);
+      setFeedback({
+        type: "error",
+        message: err?.error || `Failed to sync departments (${res.status})`,
+      });
+      return false;
+    }
+    await refetchUserDepts();
+    return true;
   };
 
-  const remove_department = (departmentId: string) => {
-    setSelectedDepartmentIds((prev) => prev.filter((id) => id !== departmentId));
+  const sync_service_assignments = async (serviceIds: string[]): Promise<boolean> => {
+    if (!user) return false;
+    const token = await getAuthToken();
+    if (!token) {
+      setFeedback({ type: "error", message: "Not authenticated" });
+      return false;
+    }
+    const res = await fetch("/api/user-services", {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        user_id: user.id,
+        service_ids: Array.from(new Set(serviceIds)),
+      }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => null);
+      setFeedback({
+        type: "error",
+        message: err?.error || `Failed to sync services (${res.status})`,
+      });
+      return false;
+    }
+    await refetchUserServices();
+    return true;
   };
 
-  const add_service = (serviceId: string) => {
-    if (selectedServiceIds.includes(serviceId)) return;
-    setSelectedServiceIds((prev) => [...prev, serviceId]);
+  const add_department = async (departmentId: string) => {
+    if (!user || selectedDepartmentIds.includes(departmentId)) return;
+    const previous = selectedDepartmentIds;
+    const next = [...previous, departmentId];
+    setSelectedDepartmentIds(next);
+    setSyncingAssignments(true);
+    try {
+      const token = await getAuthToken();
+      if (!token) {
+        setSelectedDepartmentIds(previous);
+        setFeedback({ type: "error", message: "Not authenticated" });
+        return;
+      }
+      const department_id = parseInt(departmentId, 10);
+      if (!Number.isFinite(department_id) || department_id <= 0) {
+        setSelectedDepartmentIds(previous);
+        return;
+      }
+      const res = await fetch("/api/user-departments", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ user_id: user.id, department_id }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => null);
+        setSelectedDepartmentIds(previous);
+        setFeedback({
+          type: "error",
+          message: err?.error || `Failed to assign department (${res.status})`,
+        });
+        return;
+      }
+      await refetchUserDepts();
+    } finally {
+      setSyncingAssignments(false);
+    }
   };
 
-  const remove_service = (serviceId: string) => {
-    setSelectedServiceIds((prev) => prev.filter((id) => id !== serviceId));
+  const remove_department = async (departmentId: string) => {
+    if (!user) return;
+    const previous = selectedDepartmentIds;
+    const next = previous.filter((id) => id !== departmentId);
+    setSelectedDepartmentIds(next);
+    setSyncingAssignments(true);
+    try {
+      const token = await getAuthToken();
+      if (!token) {
+        setSelectedDepartmentIds(previous);
+        setFeedback({ type: "error", message: "Not authenticated" });
+        return;
+      }
+      const department_id = parseInt(departmentId, 10);
+      if (!Number.isFinite(department_id) || department_id <= 0) {
+        setSelectedDepartmentIds(previous);
+        return;
+      }
+      const res = await fetch(
+        `/api/user-departments?user_id=${encodeURIComponent(user.id)}&department_id=${department_id}`,
+        {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      );
+      if (!res.ok) {
+        const err = await res.json().catch(() => null);
+        setSelectedDepartmentIds(previous);
+        setFeedback({
+          type: "error",
+          message: err?.error || `Failed to unassign department (${res.status})`,
+        });
+        return;
+      }
+      await refetchUserDepts();
+    } finally {
+      setSyncingAssignments(false);
+    }
+  };
+
+  const add_service = async (serviceId: string) => {
+    if (!user || selectedServiceIds.includes(serviceId)) return;
+    const previous = selectedServiceIds;
+    const next = [...previous, serviceId];
+    setSelectedServiceIds(next);
+    setSyncingAssignments(true);
+    try {
+      const token = await getAuthToken();
+      if (!token) {
+        setSelectedServiceIds(previous);
+        setFeedback({ type: "error", message: "Not authenticated" });
+        return;
+      }
+      const res = await fetch("/api/user-services", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ user_id: user.id, service_id: serviceId }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => null);
+        setSelectedServiceIds(previous);
+        setFeedback({
+          type: "error",
+          message: err?.error || `Failed to assign service (${res.status})`,
+        });
+        return;
+      }
+      await refetchUserServices();
+    } finally {
+      setSyncingAssignments(false);
+    }
+  };
+
+  const remove_service = async (serviceId: string) => {
+    if (!user) return;
+    const previous = selectedServiceIds;
+    const next = previous.filter((id) => id !== serviceId);
+    setSelectedServiceIds(next);
+    setSyncingAssignments(true);
+    try {
+      const token = await getAuthToken();
+      if (!token) {
+        setSelectedServiceIds(previous);
+        setFeedback({ type: "error", message: "Not authenticated" });
+        return;
+      }
+      const res = await fetch(
+        `/api/user-services?user_id=${encodeURIComponent(user.id)}&service_id=${encodeURIComponent(serviceId)}`,
+        {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      );
+      if (!res.ok) {
+        const err = await res.json().catch(() => null);
+        setSelectedServiceIds(previous);
+        setFeedback({
+          type: "error",
+          message: err?.error || `Failed to unassign service (${res.status})`,
+        });
+        return;
+      }
+      await refetchUserServices();
+    } finally {
+      setSyncingAssignments(false);
+    }
   };
 
   const handleSaveChanges = async () => {
@@ -180,9 +428,17 @@ export default function ProfileCreative({ }) {
         avatarUrl = uploadBody?.url || null;
       }
 
-      const currentMetadata = (user.user_metadata ?? {}) as Record<string, unknown>;
       const department_ids = Array.from(new Set(selectedDepartmentIds));
       const service_ids = Array.from(new Set(selectedServiceIds));
+      const department_numbers = parse_department_ids(department_ids);
+
+      const deptSynced = await sync_department_assignments(department_ids);
+      if (!deptSynced) return;
+
+      const svcSynced = await sync_service_assignments(service_ids);
+      if (!svcSynced) return;
+
+      const currentMetadata = (user.user_metadata ?? {}) as Record<string, unknown>;
       const { error: updateError } = await supabase.auth.updateUser({
         data: {
           ...currentMetadata,
@@ -193,6 +449,7 @@ export default function ProfileCreative({ }) {
           show_public_profile: showPublic,
           avatar_url: avatarUrl,
           department_ids,
+          departments: department_numbers,
           service_ids,
         },
       });
@@ -248,21 +505,27 @@ export default function ProfileCreative({ }) {
       phone: (metadata.phone as string) || "",
     });
     setShowPublic(metadata.show_public_profile !== false);
+    const fromDeptTable = deptIdsByUser.get(user.id);
+    const fromSvcTable = serviceIdsByUser.get(user.id);
     const metadataDepartmentIds = normalize_ids(metadata.department_ids);
     const metadataServiceIds = normalize_ids(metadata.service_ids);
     setSelectedDepartmentIds(
-      metadataDepartmentIds.length > 0
-        ? metadataDepartmentIds
-        : departments.length > 0
-          ? [departments[0].id]
-          : []
+      fromDeptTable && fromDeptTable.size > 0
+        ? [...fromDeptTable].sort((a, b) => a - b).map(String)
+        : metadataDepartmentIds.length > 0
+          ? metadataDepartmentIds
+          : departments.length > 0
+            ? [departments[0].id]
+            : []
     );
     setSelectedServiceIds(
-      metadataServiceIds.length > 0
-        ? metadataServiceIds
-        : services.length > 0
-          ? [services[0].id]
-          : []
+      fromSvcTable && fromSvcTable.size > 0
+        ? [...fromSvcTable].sort().map(String)
+        : metadataServiceIds.length > 0
+          ? metadataServiceIds
+          : services.length > 0
+            ? [services[0].id]
+            : []
     );
     setNeedsDepartmentFallback(false);
     setNeedsServiceFallback(false);
@@ -534,8 +797,9 @@ export default function ProfileCreative({ }) {
                                     {department.name}
                                     <button
                                       type="button"
-                                      onClick={() => remove_department(department.id)}
-                                      className="ml-1 inline-flex items-center justify-center w-4 h-4 rounded-full hover:bg-indigo-200 transition"
+                                      onClick={() => void remove_department(department.id)}
+                                      disabled={syncingAssignments || isSaving}
+                                      className="ml-1 inline-flex items-center justify-center w-4 h-4 rounded-full hover:bg-indigo-200 transition disabled:opacity-50 disabled:cursor-not-allowed"
                                       aria-label={`Remove ${department.name}`}
                                     >
                                       <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -555,8 +819,9 @@ export default function ProfileCreative({ }) {
                                     <button
                                       key={department.id}
                                       type="button"
-                                      onClick={() => add_department(department.id)}
-                                      className="w-full text-left px-3 py-2 rounded-md text-sm text-slate-700 hover:bg-indigo-50 hover:text-indigo-700 transition"
+                                      onClick={() => void add_department(department.id)}
+                                      disabled={syncingAssignments || isSaving}
+                                      className="w-full text-left px-3 py-2 rounded-md text-sm text-slate-700 hover:bg-indigo-50 hover:text-indigo-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
                                     >
                                       {department.name}
                                     </button>
@@ -590,8 +855,9 @@ export default function ProfileCreative({ }) {
                                     {service.name}
                                     <button
                                       type="button"
-                                      onClick={() => remove_service(service.id)}
-                                      className="ml-1 inline-flex items-center justify-center w-4 h-4 rounded-full hover:bg-emerald-200 transition"
+                                      onClick={() => void remove_service(service.id)}
+                                      disabled={syncingAssignments || isSaving}
+                                      className="ml-1 inline-flex items-center justify-center w-4 h-4 rounded-full hover:bg-emerald-200 transition disabled:opacity-50 disabled:cursor-not-allowed"
                                       aria-label={`Remove ${service.name}`}
                                     >
                                       <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -611,8 +877,9 @@ export default function ProfileCreative({ }) {
                                     <button
                                       key={service.id}
                                       type="button"
-                                      onClick={() => add_service(service.id)}
-                                      className="w-full text-left px-3 py-2 rounded-md text-sm text-slate-700 hover:bg-emerald-50 hover:text-emerald-800 transition"
+                                      onClick={() => void add_service(service.id)}
+                                      disabled={syncingAssignments || isSaving}
+                                      className="w-full text-left px-3 py-2 rounded-md text-sm text-slate-700 hover:bg-emerald-50 hover:text-emerald-800 transition disabled:opacity-50 disabled:cursor-not-allowed"
                                     >
                                       {service.name}
                                     </button>
@@ -646,14 +913,14 @@ export default function ProfileCreative({ }) {
                   <div className="flex shrink-0 justify-end gap-4">
                     <button
                       onClick={handleSaveChanges}
-                      disabled={isSaving}
+                      disabled={isSaving || syncingAssignments}
                       className="px-8 py-4 bg-gradient-to-r from-blue-600 to-blue-700 text-white py-4 rounded-xl font-semibold hover:from-blue-700 hover:to-blue-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition shadow-lg hover:shadow-xl disabled:opacity-60 disabled:cursor-not-allowed"
                     >
-                      {isSaving ? "Saving..." : "Save Changes"}
+                      {isSaving ? "Saving..." : syncingAssignments ? "Syncing..." : "Save Changes"}
                     </button>
                     <button
                       onClick={handleCancel}
-                      disabled={isSaving}
+                      disabled={isSaving || syncingAssignments}
                       className="px-8 py-4 border-2 border-gray-300 text-gray-700 rounded-xl font-semibold hover:border-gray-400 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-gray-400 focus:ring-offset-2 transition disabled:opacity-60 disabled:cursor-not-allowed"
                     >
                       Cancel

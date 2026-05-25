@@ -12,7 +12,7 @@ export type event_type_form_state = {
   is_public: boolean;
 };
 
-const DURATION_PRESETS = [5, 10, 15, 20, 30, 45, 60, 90, 120] as const;
+const DURATION_PRESETS = [5, 10, 15, 20, 30, 45, 60, 90] as const;
 function parse_non_negative_int(s: string, fallback = 0): number {
   if (s.trim() === "") return fallback;
   const n = parseInt(s, 10);

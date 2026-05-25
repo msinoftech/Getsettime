@@ -7,6 +7,10 @@ function userCanManageAssignments(user: User): boolean {
   return role === 'workspace_admin' || role === 'manager' || role === 'service_provider';
 }
 
+function userCanSelfManageAssignments(user: User, targetUserId: string): boolean {
+  return user.id === targetUserId;
+}
+
 function createAuthenticatedClient(req: NextRequest) {
   const authHeader = req.headers.get('authorization');
   const token = authHeader?.replace('Bearer ', '');
@@ -76,7 +80,14 @@ export async function POST(req: NextRequest) {
     if (authError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-    if (!userCanManageAssignments(user)) {
+    const body = await req.json();
+    const userId = typeof body.user_id === 'string' ? body.user_id : null;
+    const serviceId = typeof body.service_id === 'string' ? body.service_id : null;
+
+    if (
+      !userCanManageAssignments(user) &&
+      !(userId && userCanSelfManageAssignments(user, userId))
+    ) {
       return NextResponse.json({ error: 'Forbidden: Access denied' }, { status: 403 });
     }
 
@@ -84,10 +95,6 @@ export async function POST(req: NextRequest) {
     if (!workspaceId) {
       return NextResponse.json({ error: 'Workspace ID not found' }, { status: 400 });
     }
-
-    const body = await req.json();
-    const userId = typeof body.user_id === 'string' ? body.user_id : null;
-    const serviceId = typeof body.service_id === 'string' ? body.service_id : null;
     if (!userId || !serviceId) {
       return NextResponse.json({ error: 'user_id and service_id are required' }, { status: 400 });
     }
@@ -135,7 +142,13 @@ export async function PUT(req: NextRequest) {
     if (authError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-    if (!userCanManageAssignments(user)) {
+    const body = await req.json();
+    const userId = typeof body.user_id === 'string' ? body.user_id : null;
+
+    if (
+      !userCanManageAssignments(user) &&
+      !(userId && userCanSelfManageAssignments(user, userId))
+    ) {
       return NextResponse.json({ error: 'Forbidden: Access denied' }, { status: 403 });
     }
 
@@ -144,8 +157,6 @@ export async function PUT(req: NextRequest) {
       return NextResponse.json({ error: 'Workspace ID not found' }, { status: 400 });
     }
 
-    const body = await req.json();
-    const userId = typeof body.user_id === 'string' ? body.user_id : null;
     const serviceIdsRaw = body.service_ids;
     if (!userId || !Array.isArray(serviceIdsRaw)) {
       return NextResponse.json({ error: 'user_id and service_ids[] are required' }, { status: 400 });
@@ -216,7 +227,15 @@ export async function DELETE(req: NextRequest) {
     if (authError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-    if (!userCanManageAssignments(user)) {
+    const { searchParams } = new URL(req.url);
+    const id = searchParams.get('id');
+    const userId = searchParams.get('user_id');
+    const serviceId = searchParams.get('service_id');
+
+    if (
+      !userCanManageAssignments(user) &&
+      !(userId && userCanSelfManageAssignments(user, userId))
+    ) {
       return NextResponse.json({ error: 'Forbidden: Access denied' }, { status: 403 });
     }
 
@@ -224,11 +243,6 @@ export async function DELETE(req: NextRequest) {
     if (!workspaceId) {
       return NextResponse.json({ error: 'Workspace ID not found' }, { status: 400 });
     }
-
-    const { searchParams } = new URL(req.url);
-    const id = searchParams.get('id');
-    const userId = searchParams.get('user_id');
-    const serviceId = searchParams.get('service_id');
 
     if (id) {
       const { error } = await supabase

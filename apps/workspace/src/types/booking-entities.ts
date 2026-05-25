@@ -14,6 +14,7 @@ export type ServiceProvider = {
   email: string;
   /** Team member assignments; drives department scope like the booking Step 1 form. */
   departments?: number[];
+  deactivated?: boolean;
   is_workspace_owner?: boolean;
   raw_user_meta_data?: {
     full_name?: string;

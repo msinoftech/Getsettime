@@ -17,7 +17,10 @@ function userMetadataForSpCheck(u: Pick<User, 'id' | 'user_metadata'>) {
 }
 
 /**
- * Removes `user_departments` rows for users who no longer act as service providers in the workspace.
+ * Removes `user_departments` rows for users who are still in this workspace but
+ * do **not** act as service providers. Kept as a utility for one-off/admin cleanup;
+ * `PUT /api/team-members` no longer invokes this automatically so dormant department
+ * assignments persist when someone temporarily loses the service provider role.
  */
 export async function pruneDepartmentsToValidServiceProviders(
   adminClient: SupabaseClient,

@@ -22,6 +22,7 @@ import {
 } from "react-icons/lu";
 import {
   EditTeamMemberModal,
+  ManageRoleModal,
   ProviderCreateModal,
   StaffInviteModal,
 } from "./team-member-modals";
@@ -30,11 +31,10 @@ import { useAuth } from "@/src/providers/AuthProvider";
 import { ConfirmModal } from "@/src/components/ui/ConfirmModal";
 import { TeamMemberSkeleton } from "@/src/components/ui/TeamMemberSkeleton";
 import {
-  ASSIGNABLE_ROLES,
-  OWNER_DISALLOWED_ROLES,
   MANAGE_ROLES,
   ROLE_SERVICE_PROVIDER,
   ROLE_WORKSPACE_ADMIN,
+  SERVICE_PROVIDER_ASSIGNABLE_ADDITIONAL_ROLES,
   formatRoleLabel,
 } from "@/src/constants/roles";
 import { splitDepartmentSelectionByName } from "@/lib/invite_department_assignment";
@@ -71,6 +71,19 @@ function teamMemberActsAsServiceProvider(m: TeamMember): boolean {
     is_workspace_owner: m.is_workspace_owner,
     additional_roles: m.additional_roles,
   });
+}
+
+/** Active = not deactivated; excludes `excludeUserId` from the roster. */
+function countOtherActiveServiceProviders(
+  members: TeamMember[],
+  excludeUserId: string
+): number {
+  return members.filter(
+    (m) =>
+      m.id !== excludeUserId &&
+      !m.deactivated &&
+      teamMemberActsAsServiceProvider(m)
+  ).length;
 }
 
 function getSortedDepartmentIdsForDisplay(
@@ -175,28 +188,14 @@ function formatWeeklyBookingsLabel(count: number): string {
   return count === 1 ? "1 booking this week" : `${count} bookings this week`;
 }
 
-/** Local Monday 00:00 → next Monday 00:00 (ISO), for bookings this week on the team list. */
-function getLocalWeekRangeQueryParams(): { week_start: string; week_end: string } {
-  const now = new Date();
-  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const day = start.getDay();
-  const mondayOffset = day === 0 ? -6 : 1 - day;
-  start.setDate(start.getDate() + mondayOffset);
-  start.setHours(0, 0, 0, 0);
-  const end = new Date(start);
-  end.setDate(end.getDate() + 7);
-  return {
-    week_start: start.toISOString(),
-    week_end: end.toISOString(),
-  };
-}
-
 export default function TeamMembersPage() {
   const { user: currentUser } = useAuth();
   const currentUserRole =
     (currentUser?.user_metadata?.role as string | undefined) ?? null;
   const currentUserIsOwner =
     currentUser?.user_metadata?.is_workspace_owner === true;
+  const canAssignServiceProviderAdditionalRoles =
+    currentUserIsOwner || currentUserRole === ROLE_WORKSPACE_ADMIN;
   // Owner OR workspace_admin OR manager may manage team members.
   // Service providers and customers see no management buttons.
   const canManageMembers =
@@ -240,6 +239,7 @@ export default function TeamMembersPage() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [openActionsId, setOpenActionsId] = useState<string | null>(null);
+  const [roleModalMember, setRoleModalMember] = useState<TeamMember | null>(null);
 
   const teamStats = useMemo(() => {
     let active = 0;
@@ -268,10 +268,12 @@ export default function TeamMembersPage() {
       const ui = getMemberUiStatus(m, departments);
       if (statusFilter !== "all" && ui !== statusFilter) return false;
       if (!q) return true;
-      const deptNames = getSortedDepartmentIdsForDisplay(m, departments)
-        .map((id) => departments.find((d) => d.id === id)?.name)
-        .filter(Boolean)
-        .join(" ");
+      const deptNames = teamMemberActsAsServiceProvider(m)
+        ? getSortedDepartmentIdsForDisplay(m, departments)
+            .map((id) => departments.find((d) => d.id === id)?.name)
+            .filter(Boolean)
+            .join(" ")
+        : "";
       const roleBits = [
         m.role,
         ...m.additional_roles,
@@ -389,6 +391,7 @@ export default function TeamMembersPage() {
   };
 
   const handleNewMember = () => {
+    setRoleModalMember(null);
     setEditingMember(null);
     setMemberFormData({
       name: "",
@@ -409,6 +412,7 @@ export default function TeamMembersPage() {
   };
 
   const handleInviteMember = () => {
+    setRoleModalMember(null);
     setInviteFormData({
       name: "",
       email: "",
@@ -423,7 +427,40 @@ export default function TeamMembersPage() {
     setShowInviteForm(true);
   };
 
+  const handleOpenManageRole = (member: TeamMember) => {
+    setRoleModalMember(member);
+    setEditingMember(null);
+    setShowMemberForm(false);
+    setMemberFormData({
+      name: member.name,
+      email: member.email,
+      phone: member.phone ?? "",
+      password: "",
+      role: member.role || ROLE_SERVICE_PROVIDER,
+      additional_roles: member.additional_roles ?? [],
+      departments: [...new Set(member.departments ?? [])],
+    });
+    setError(null);
+    setSuccess(null);
+  };
+
+  const handleRoleModalCancel = () => {
+    setRoleModalMember(null);
+    setMemberFormData({
+      name: "",
+      email: "",
+      phone: "",
+      password: "",
+      role: ROLE_SERVICE_PROVIDER,
+      additional_roles: [],
+      departments: [],
+    });
+    setError(null);
+    setSuccess(null);
+  };
+
   const handleEditMember = (member: TeamMember) => {
+    setRoleModalMember(null);
     setEditingMember(member);
     setMemberFormData({
       name: member.name,
@@ -440,6 +477,7 @@ export default function TeamMembersPage() {
   };
 
   const handleMemberFormCancel = () => {
+    setRoleModalMember(null);
     setShowMemberForm(false);
     setEditingMember(null);
     setMemberFormData({
@@ -523,6 +561,7 @@ export default function TeamMembersPage() {
 
   const handleInviteFormCancel = () => {
     setShowInviteForm(false);
+    setRoleModalMember(null);
     setInviteFormData({
       name: "",
       email: "",
@@ -546,16 +585,24 @@ export default function TeamMembersPage() {
 
   const toggleAdditionalRole = (role: string) => {
     setMemberFormData(prev => {
+      const formTarget = roleModalMember ?? editingMember;
+      if (
+        formTarget &&
+        role === ROLE_SERVICE_PROVIDER &&
+        formTarget.is_workspace_owner &&
+        formTarget.role === ROLE_WORKSPACE_ADMIN &&
+        prev.additional_roles.includes(role)
+      ) {
+        if (countOtherActiveServiceProviders(teamMembers, formTarget.id) < 1) {
+          return prev;
+        }
+      }
       const additional_roles = prev.additional_roles.includes(role)
         ? prev.additional_roles.filter(r => r !== role)
         : [...prev.additional_roles, role];
-      // Clear departments when service_provider is no longer present in any role slot.
-      const stillServiceProvider =
-        prev.role === ROLE_SERVICE_PROVIDER || additional_roles.includes(ROLE_SERVICE_PROVIDER);
       return {
         ...prev,
         additional_roles,
-        departments: stillServiceProvider ? prev.departments : [],
       };
     });
   };
@@ -583,26 +630,49 @@ export default function TeamMembersPage() {
         return;
       }
 
-      if (!editingMember) {
+      const targetMember = roleModalMember ?? editingMember;
+      if (!targetMember) {
         setLoading(false);
         return;
       }
 
+      const fromRoleModal = roleModalMember !== null;
+
       const url = '/api/team-members';
       const method = 'PUT';
-      // additional_roles is only meaningful for owners; send only then to keep payload clean.
-      const additionalRolesForOwner = editingMember?.is_workspace_owner
-        ? memberFormData.additional_roles.filter(r => r !== memberFormData.role)
-        : undefined;
+      const additionalRolesPayload = (() => {
+        if (targetMember.is_workspace_owner) {
+          return memberFormData.additional_roles.filter((r) => r !== memberFormData.role);
+        }
+        if (
+          canAssignServiceProviderAdditionalRoles &&
+          !targetMember.is_workspace_owner &&
+          targetMember.role === ROLE_SERVICE_PROVIDER
+        ) {
+          const allowed = new Set(SERVICE_PROVIDER_ASSIGNABLE_ADDITIONAL_ROLES);
+          return memberFormData.additional_roles.filter((r) => allowed.has(r));
+        }
+        return undefined;
+      })();
+
+      const actsAsServiceProviderInForm =
+        userActsAsServiceProviderFromMetadata({
+          role: memberFormData.role,
+          is_workspace_owner: targetMember.is_workspace_owner,
+          additional_roles: memberFormData.additional_roles,
+        });
+
       const body = {
-        id: editingMember.id,
+        id: targetMember.id,
         name: memberFormData.name,
         email: memberFormData.email,
         phone: memberFormData.phone,
         role: memberFormData.role,
-        departments: memberFormData.departments,
-        ...(additionalRolesForOwner !== undefined
-          ? { additional_roles: additionalRolesForOwner }
+        ...(actsAsServiceProviderInForm
+          ? { departments: memberFormData.departments }
+          : {}),
+        ...(additionalRolesPayload !== undefined
+          ? { additional_roles: additionalRolesPayload }
           : {}),
       };
 
@@ -616,14 +686,15 @@ export default function TeamMembersPage() {
       });
 
       if (response.ok) {
-        setSuccess(editingMember ? 'Team member updated successfully' : 'Team member created successfully');
+        setSuccess('Team member updated successfully');
         await fetchTeamMembers();
         setTimeout(() => {
-          handleMemberFormCancel();
+          if (fromRoleModal) handleRoleModalCancel();
+          else handleMemberFormCancel();
         }, 1500);
       } else {
         const errorData = await response.json();
-        setError(errorData.error || (editingMember ? 'Failed to update team member' : 'Failed to create team member'));
+        setError(errorData.error || 'Failed to update team member');
       }
     } catch (error) {
       console.error('Error saving team member:', error);
@@ -1007,17 +1078,16 @@ export default function TeamMembersPage() {
                                       {formatRoleLabel(member.role)}
                                     </span>
                                   )}
-                                  {member.is_workspace_owner &&
-                                    member.additional_roles
-                                      .filter((r) => r !== member.role)
-                                      .map((r) => (
-                                        <span
-                                          key={r}
-                                          className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${getRolePillClass(r)}`}
-                                        >
-                                          {formatRoleLabel(r)}
-                                        </span>
-                                      ))}
+                                  {[...new Set((member.additional_roles ?? []).filter((r) => r && r !== member.role))].map(
+                                    (r) => (
+                                      <span
+                                        key={r}
+                                        className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${getRolePillClass(r)}`}
+                                      >
+                                        {formatRoleLabel(r)}
+                                      </span>
+                                    ),
+                                  )}
                                   {member.is_workspace_owner && (
                                     <span className="inline-flex items-center rounded-full border border-amber-300 bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-800 ring-1 ring-amber-200">
                                       <LuCrown className="mr-1 h-3.5 w-3.5" aria-hidden />
@@ -1031,7 +1101,8 @@ export default function TeamMembersPage() {
                                   </span>
                                 </div>
 
-                                {displayDeptIds.length > 0 && (
+                                {teamMemberActsAsServiceProvider(member) &&
+                                  displayDeptIds.length > 0 && (
                                   <div className="mt-2 flex max-h-48 flex-wrap gap-2 overflow-y-auto pr-1">
                                     {displayDeptIds.map((deptId) => {
                                       const name = departments.find(
@@ -1077,7 +1148,7 @@ export default function TeamMembersPage() {
                                       type="button"
                                       onClick={() => {
                                         setOpenActionsId(null);
-                                        handleEditMember(member);
+                                        handleOpenManageRole(member);
                                       }}
                                       disabled={loading || member.deactivated}
                                       className="inline-flex h-10 items-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-medium text-slate-800 transition hover:bg-slate-50 disabled:opacity-50"
@@ -1148,7 +1219,7 @@ export default function TeamMembersPage() {
                                             className="flex w-full items-center rounded-lg px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
                                             onClick={() => {
                                               setOpenActionsId(null);
-                                              handleEditMember(member);
+                                              handleOpenManageRole(member);
                                             }}
                                           >
                                             <LuUserCog className="mr-2 h-4 w-4" aria-hidden />
@@ -1213,12 +1284,38 @@ export default function TeamMembersPage() {
         editingMember={editingMember!}
         departments={departments}
         memberFormData={memberFormData}
+        canAssignServiceProviderAdditionalRoles={canAssignServiceProviderAdditionalRoles}
+        otherActiveServiceProviderCount={
+          editingMember
+            ? countOtherActiveServiceProviders(teamMembers, editingMember.id)
+            : 0
+        }
         onCancel={handleMemberFormCancel}
         onSubmit={handleMemberFormSubmit}
         onChange={setMemberFormData}
         onToggleDepartment={toggleDepartment}
         onToggleAdditionalRole={toggleAdditionalRole}
       />
+
+      {roleModalMember ? (
+        <ManageRoleModal
+          open
+          loading={loading}
+          member={roleModalMember}
+          departments={departments}
+          memberFormData={memberFormData}
+          canAssignServiceProviderAdditionalRoles={canAssignServiceProviderAdditionalRoles}
+          otherActiveServiceProviderCount={countOtherActiveServiceProviders(
+            teamMembers,
+            roleModalMember.id
+          )}
+          onCancel={handleRoleModalCancel}
+          onSubmit={handleMemberFormSubmit}
+          onChange={setMemberFormData}
+          onToggleDepartment={toggleDepartment}
+          onToggleAdditionalRole={toggleAdditionalRole}
+        />
+      ) : null}
 
       <StaffInviteModal
         open={showInviteForm}

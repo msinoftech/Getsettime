@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
+import { CreateBookingModal } from "@/src/components/Booking/CreateBookingModal";
 import { useAuth } from "@/src/providers/AuthProvider";
 import { useDashboardCounts } from "@/src/hooks/useDashboardCounts";
 import { useDashboardBookings } from "@/src/hooks/useDashboardBookings";
@@ -53,6 +54,8 @@ const Dashboard: React.FC = () => {
   });
 
   const [selected_date, set_selected_date] = useState<Date>(() => new Date());
+  const [show_booking_form, set_show_booking_form] = useState(false);
+  const [dashboard_refresh_key, set_dashboard_refresh_key] = useState(0);
 
   const {
     today_bookings,
@@ -61,7 +64,11 @@ const Dashboard: React.FC = () => {
     next_loading,
     month_bookings,
     month_loading,
-  } = useDashboardBookings(user, view_date);
+  } = useDashboardBookings(user, view_date, dashboard_refresh_key);
+
+  const handle_booking_saved = useCallback(() => {
+    set_dashboard_refresh_key((k) => k + 1);
+  }, []);
 
   const user_name =
     user?.user_metadata?.name || user?.email?.split("@")[0] || "User";
@@ -84,7 +91,11 @@ const Dashboard: React.FC = () => {
     <div className="space-y-6 pb-28 text-slate-900">
       <DashboardHeader user_name={user_name} />
 
-      <DashboardHero next_booking={next_appointment} next_loading={next_loading} />
+      <DashboardHero
+        next_booking={next_appointment}
+        next_loading={next_loading}
+        onCreateBooking={() => set_show_booking_form(true)}
+      />
 
       <DashboardStatCards
         loading={loading}
@@ -126,6 +137,12 @@ const Dashboard: React.FC = () => {
       </section>
 
       <DashboardFab />
+
+      <CreateBookingModal
+        open={show_booking_form}
+        onClose={() => set_show_booking_form(false)}
+        onSaved={handle_booking_saved}
+      />
     </div>
   );
 };

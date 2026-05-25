@@ -22,6 +22,19 @@ import {
 
 type DayName = "Sun" | "Mon" | "Tue" | "Wed" | "Thu" | "Fri" | "Sat";
 
+/** Parse YYYY-MM-DD from calendar filters as local calendar dates (not UTC midnight). */
+function parse_calendar_date_key(dateStr: string): Date | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr.trim());
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]) - 1;
+  const day = Number(match[3]);
+  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) {
+    return null;
+  }
+  return new Date(year, month, day);
+}
+
 interface BreakTime {
   id: string;
   start: string;
@@ -132,7 +145,7 @@ export async function GET(req: NextRequest) {
 
     // Apply date filter if provided (fetch bookings for a specific date)
     if (date) {
-      const dateObj = new Date(date);
+      const dateObj = parse_calendar_date_key(date) ?? new Date(date);
       const startOfDay = new Date(dateObj);
       startOfDay.setHours(0, 0, 0, 0);
       const endOfDay = new Date(dateObj);
@@ -146,11 +159,11 @@ export async function GET(req: NextRequest) {
     // Apply date range filter if provided (fetch bookings within a date range)
     // This is used for availability checking across multiple dates
     if (startDate && endDate) {
-      const startDateObj = new Date(startDate);
+      const startDateObj = parse_calendar_date_key(startDate) ?? new Date(startDate);
       const startOfRange = new Date(startDateObj);
       startOfRange.setHours(0, 0, 0, 0);
       
-      const endDateObj = new Date(endDate);
+      const endDateObj = parse_calendar_date_key(endDate) ?? new Date(endDate);
       const endOfRange = new Date(endDateObj);
       endOfRange.setHours(23, 59, 59, 999);
       

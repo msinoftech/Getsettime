@@ -1319,18 +1319,18 @@ function StatCard({
   value: number;
 }) {
   return (
-    <div className="rounded-3xl border border-slate-100 bg-white/80 p-5 shadow-sm backdrop-blur">
-      <div className="flex items-center justify-between">
-        <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-indigo-50 text-indigo-600">
-          {icon}
+    <div className="rounded-3xl border border-slate-100 bg-white p-5 shadow-sm">
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex min-w-0 flex-1 items-center gap-4">
+          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-violet-50 text-indigo-600">
+            {icon}
+          </div>
+          <span className="truncate text-sm font-semibold text-slate-500">{label}</span>
         </div>
-
-        <Icon name="more" className="h-5 w-5 text-slate-300" />
+        <span className="shrink-0 text-3xl font-black tracking-tight text-slate-950 tabular-nums">
+          {value}
+        </span>
       </div>
-
-      <div className="mt-5 text-3xl font-black text-slate-950">{value}</div>
-
-      <div className="mt-1 text-sm font-semibold text-slate-500">{label}</div>
     </div>
   );
 }

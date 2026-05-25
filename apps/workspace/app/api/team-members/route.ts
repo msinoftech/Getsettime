@@ -5,11 +5,15 @@ import {
   userActsAsServiceProviderFromMetadata,
   userActsAsServiceProviderFromSupabaseUser,
 } from '@/lib/service_provider_role';
-import { pruneDepartmentsToValidServiceProviders } from '@/lib/department_service_provider_prune';
 import {
   normalizeDepartmentIdsFromUserMetadata,
 } from '@/lib/sync_department_service_providers_from_team';
 import { replaceUserDepartmentsForWorkspaceUser } from '@/lib/user_workspace_assignments';
+import {
+  ROLE_SERVICE_PROVIDER,
+  ROLE_WORKSPACE_ADMIN,
+  SERVICE_PROVIDER_ASSIGNABLE_ADDITIONAL_ROLES,
+} from '@/src/constants/roles';
 
 /**
  * Authorized to manage team members if user is a workspace owner (regardless
@@ -21,6 +25,12 @@ function userCanManageTeam(user: User): boolean {
   if (user.user_metadata?.is_workspace_owner === true) return true;
   const role = user.user_metadata?.role;
   return role === 'workspace_admin' || role === 'manager';
+}
+
+/** Owner or workspace admin may set `additional_roles` on primary service providers. */
+function userCanAssignServiceProviderAdditionalRoles(user: User): boolean {
+  if (user.user_metadata?.is_workspace_owner === true) return true;
+  return user.user_metadata?.role === ROLE_WORKSPACE_ADMIN;
 }
 
 /** Read team roster for booking/availability UIs (not full team management). */
@@ -464,6 +474,39 @@ export async function PUT(req: NextRequest) {
       return NextResponse.json({ error: 'Only a workspace owner can edit another workspace owner' }, { status: 403 });
     }
 
+    const existingPrimary =
+      typeof existingUser.user_metadata?.role === 'string'
+        ? existingUser.user_metadata.role
+        : null;
+    const isPrimaryServiceProvider =
+      existingPrimary === ROLE_SERVICE_PROVIDER && !targetIsOwner;
+
+    // Primary service_provider (non-owner) cannot be reassigned away from service_provider.
+    if (isPrimaryServiceProvider && role && role !== ROLE_SERVICE_PROVIDER) {
+      return NextResponse.json(
+        {
+          error:
+            'Cannot change primary role away from service_provider for this member. Remove extra roles in Manage Role instead.',
+        },
+        { status: 400 },
+      );
+    }
+
+    const requesterCanSetSpAdditional = userCanAssignServiceProviderAdditionalRoles(user);
+    if (
+      additional_roles !== undefined &&
+      isPrimaryServiceProvider &&
+      !requesterCanSetSpAdditional
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            'Only a workspace owner or workspace admin can assign additional roles to service providers.',
+        },
+        { status: 403 },
+      );
+    }
+
     // Owners cannot be assigned customer or staff as primary or additional role.
     if (targetIsOwner && role && OWNER_DISALLOWED_ROLES.includes(role)) {
       return NextResponse.json({ error: `Owners cannot have ${OWNER_DISALLOWED_ROLES.join(' or ')} as their primary role` }, { status: 400 });
@@ -476,9 +519,81 @@ export async function PUT(req: NextRequest) {
       return NextResponse.json({ error: `Owners cannot have ${OWNER_DISALLOWED_ROLES.join(' or ')} in additional roles` }, { status: 400 });
     }
 
-    // additional_roles is only accepted for owners; silently drop it for non-owners
-    // so it never leaks into normal member metadata.
-    const additionalRolesToPersist = targetIsOwner ? normalizedAdditionalRoles : undefined;
+    if (
+      targetIsOwner &&
+      existingPrimary === ROLE_WORKSPACE_ADMIN &&
+      role &&
+      role !== ROLE_WORKSPACE_ADMIN
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            'Workspace owners with primary role workspace_admin cannot change their primary role.',
+        },
+        { status: 400 },
+      );
+    }
+
+    const existingAdditionalRolesRaw = existingUser.user_metadata?.additional_roles;
+    const existingAdditionalRoles: string[] = Array.isArray(existingAdditionalRolesRaw)
+      ? existingAdditionalRolesRaw.filter((r): r is string => typeof r === 'string')
+      : [];
+
+    if (
+      targetIsOwner &&
+      existingPrimary === ROLE_WORKSPACE_ADMIN &&
+      normalizedAdditionalRoles !== undefined
+    ) {
+      const hadServiceProviderAdditional = existingAdditionalRoles.includes(
+        ROLE_SERVICE_PROVIDER,
+      );
+      const keepsServiceProviderAdditional = normalizedAdditionalRoles.includes(
+        ROLE_SERVICE_PROVIDER,
+      );
+      if (hadServiceProviderAdditional && !keepsServiceProviderAdditional) {
+        const { data: listResult, error: listWorkspaceUsersError } =
+          await adminClient.auth.admin.listUsers();
+        if (listWorkspaceUsersError) {
+          console.error(
+            'listUsers (PUT workspace_admin owner SP check):',
+            listWorkspaceUsersError,
+          );
+          return NextResponse.json(
+            { error: listWorkspaceUsersError.message },
+            { status: 500 },
+          );
+        }
+        const otherActiveServiceProviders =
+          listResult?.users?.filter((u) => {
+            if (u.id === id) return false;
+            if (!user_belongs_to_workspace(u, workspaceId)) return false;
+            if (u.user_metadata?.deactivated) return false;
+            return userActsAsServiceProviderFromSupabaseUser(u);
+          }) ?? [];
+        if (otherActiveServiceProviders.length < 1) {
+          return NextResponse.json(
+            {
+              error:
+                'Cannot remove service provider from this owner while they are the only active service provider in the workspace.',
+            },
+            { status: 400 },
+          );
+        }
+      }
+    }
+
+    const assignableSpExtraSet = new Set<string>(
+      [...SERVICE_PROVIDER_ASSIGNABLE_ADDITIONAL_ROLES],
+    );
+
+    let additionalRolesToPersist: string[] | undefined;
+    if (targetIsOwner) {
+      additionalRolesToPersist = normalizedAdditionalRoles;
+    } else if (isPrimaryServiceProvider && normalizedAdditionalRoles !== undefined) {
+      additionalRolesToPersist = normalizedAdditionalRoles.filter((r) => assignableSpExtraSet.has(r));
+    } else {
+      additionalRolesToPersist = undefined;
+    }
 
     const updatedMetadata = {
       ...existingUser.user_metadata,
@@ -495,7 +610,12 @@ export async function PUT(req: NextRequest) {
       updatedMetadata.is_workspace_owner = true;
     }
 
-    const updatePayload: any = {
+    type TeamMemberAdminUpdatePayload = {
+      user_metadata: Record<string, unknown>;
+      email?: string;
+    };
+
+    const updatePayload: TeamMemberAdminUpdatePayload = {
       user_metadata: updatedMetadata,
     };
 
@@ -513,16 +633,6 @@ export async function PUT(req: NextRequest) {
 
     if (!updatedUser.user) {
       return NextResponse.json({ error: 'Failed to update user' }, { status: 500 });
-    }
-
-    const wasServiceProvider = userActsAsServiceProviderFromSupabaseUser(existingUser);
-    const isServiceProvider = userActsAsServiceProviderFromSupabaseUser(updatedUser.user);
-    if (wasServiceProvider && !isServiceProvider) {
-      try {
-        await pruneDepartmentsToValidServiceProviders(adminClient, workspaceId);
-      } catch (pruneErr) {
-        console.error('pruneDepartmentsToValidServiceProviders:', pruneErr);
-      }
     }
 
     let returnedDeptIds: number[] = [];

@@ -5,7 +5,7 @@ import {
   LuBuilding2,
   LuSend,
   LuStethoscope,
-  LuUserPlus,
+  LuUserCog,
   LuX,
 } from "react-icons/lu";
 import {
@@ -13,6 +13,8 @@ import {
   OWNER_DISALLOWED_ROLES,
   ROLE_CUSTOMER,
   ROLE_SERVICE_PROVIDER,
+  ROLE_WORKSPACE_ADMIN,
+  SERVICE_PROVIDER_ASSIGNABLE_ADDITIONAL_ROLES,
 } from "@/src/constants/roles";
 
 const STAFF_INVITE_ROLES = ASSIGNABLE_ROLES.filter(
@@ -87,7 +89,7 @@ type Department = {
   name: string;
 };
 
-type DepartmentChipVariant = "staff" | "provider";
+type DepartmentChipVariant = "staff" | "provider" | "manage";
 
 export function CatalogDepartmentChipSelector({
   catalogNames,
@@ -109,7 +111,10 @@ export function CatalogDepartmentChipSelector({
   const selectedClass =
     variant === "staff"
       ? "border-emerald-300 bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200"
-      : "border-sky-300 bg-sky-50 text-sky-800 ring-1 ring-sky-200";
+      : variant === "provider"
+        ? "border-sky-300 bg-sky-50 text-sky-800 ring-1 ring-sky-200"
+        : "border-indigo-300 bg-indigo-50 text-indigo-800 ring-1 ring-indigo-200";
+
   const unselectedClass =
     "border-slate-200 bg-white text-slate-700 hover:border-slate-300";
 
@@ -155,7 +160,10 @@ export function DepartmentChipSelector({
   const selectedClass =
     variant === "staff"
       ? "border-emerald-300 bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200"
-      : "border-sky-300 bg-sky-50 text-sky-800 ring-1 ring-sky-200";
+      : variant === "provider"
+        ? "border-sky-300 bg-sky-50 text-sky-800 ring-1 ring-sky-200"
+        : "border-indigo-300 bg-indigo-50 text-indigo-800 ring-1 ring-indigo-200";
+
   const unselectedClass =
     "border-slate-200 bg-white text-slate-700 hover:border-slate-300";
 
@@ -181,9 +189,15 @@ export function DepartmentChipSelector({
   );
 }
 
+const SP_ASSIGNABLE_ROLE_OPTIONS = ASSIGNABLE_ROLES.filter((r) =>
+  (SERVICE_PROVIDER_ASSIGNABLE_ADDITIONAL_ROLES as readonly string[]).includes(r.value),
+);
+
 type TeamMember = {
   id: string;
+  name: string;
   is_workspace_owner: boolean;
+  role: string | null;
 };
 
 type MemberFormData = {
@@ -621,6 +635,8 @@ export function EditTeamMemberModal({
   editingMember,
   departments,
   memberFormData,
+  canAssignServiceProviderAdditionalRoles,
+  otherActiveServiceProviderCount,
   onCancel,
   onSubmit,
   onChange,
@@ -632,6 +648,9 @@ export function EditTeamMemberModal({
   editingMember: TeamMember;
   departments: Department[];
   memberFormData: MemberFormData;
+  canAssignServiceProviderAdditionalRoles: boolean;
+  /** Excluding the edited user: members who are not deactivated and act as service provider. */
+  otherActiveServiceProviderCount: number;
   onCancel: () => void;
   onSubmit: (e: React.FormEvent) => void;
   onChange: (data: MemberFormData) => void;
@@ -639,6 +658,16 @@ export function EditTeamMemberModal({
   onToggleAdditionalRole: (role: string) => void;
 }) {
   if (!open) return null;
+
+  const lockSpPrimary =
+    !editingMember.is_workspace_owner && editingMember.role === ROLE_SERVICE_PROVIDER;
+  const lockWorkspaceAdminOwnerPrimary =
+    editingMember.is_workspace_owner && editingMember.role === ROLE_WORKSPACE_ADMIN;
+  const lockPrimaryRoleSelect = lockSpPrimary || lockWorkspaceAdminOwnerPrimary;
+  const ownerWorkspaceAdminBlocksSpRemoval =
+    editingMember.is_workspace_owner && editingMember.role === ROLE_WORKSPACE_ADMIN;
+  const showSpAdditionalRoles =
+    canAssignServiceProviderAdditionalRoles && lockSpPrimary;
 
   const showDepartments =
     memberFormData.role === ROLE_SERVICE_PROVIDER ||
@@ -721,17 +750,14 @@ export function EditTeamMemberModal({
                   const nextAdditional = memberFormData.additional_roles.filter(
                     (r) => r !== newRole
                   );
-                  const stillServiceProvider =
-                    newRole === ROLE_SERVICE_PROVIDER ||
-                    nextAdditional.includes(ROLE_SERVICE_PROVIDER);
                   onChange({
                     ...memberFormData,
                     role: newRole,
                     additional_roles: nextAdditional,
-                    departments: stillServiceProvider ? memberFormData.departments : [],
                   });
                 }}
-                className={MODAL_FIELD_CLASS}
+                disabled={lockPrimaryRoleSelect}
+                className={`${MODAL_FIELD_CLASS} disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-600`}
                 required
               >
                 {ASSIGNABLE_ROLES.filter((r) =>
@@ -759,6 +785,50 @@ export function EditTeamMemberModal({
                         !OWNER_DISALLOWED_ROLES.includes(r.value)
                     ).map((r) => {
                       const checked = memberFormData.additional_roles.includes(r.value);
+                      const blockedServiceProviderRemoval =
+                        ownerWorkspaceAdminBlocksSpRemoval &&
+                        r.value === ROLE_SERVICE_PROVIDER &&
+                        checked &&
+                        otherActiveServiceProviderCount < 1;
+                      return (
+                        <button
+                          key={r.value}
+                          type="button"
+                          disabled={blockedServiceProviderRemoval || loading}
+                          title={
+                            blockedServiceProviderRemoval
+                              ? "Add another active service provider before removing this role."
+                              : undefined
+                          }
+                          onClick={() => onToggleAdditionalRole(r.value)}
+                          className={`w-full rounded-lg px-3 py-2 text-left text-sm transition ${
+                            checked
+                              ? "bg-indigo-100 text-indigo-700"
+                              : "text-slate-700 hover:bg-indigo-50"
+                          } disabled:cursor-not-allowed disabled:opacity-60`}
+                        >
+                          {r.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {showSpAdditionalRoles && (
+              <div>
+                <label className="mb-2 block text-sm font-medium text-slate-700">
+                  Additional roles
+                </label>
+                <p className="mb-3 text-xs text-slate-500">
+                  Grants stacked workspace access without removing service provider scheduling.
+                  Only workspace owners and workspace admins can edit this.
+                </p>
+                <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-3">
+                  <div className="space-y-2">
+                    {SP_ASSIGNABLE_ROLE_OPTIONS.map((r) => {
+                      const checked = memberFormData.additional_roles.includes(r.value);
                       return (
                         <button
                           key={r.value}
@@ -766,8 +836,8 @@ export function EditTeamMemberModal({
                           onClick={() => onToggleAdditionalRole(r.value)}
                           className={`w-full rounded-lg px-3 py-2 text-left text-sm transition ${
                             checked
-                              ? "bg-indigo-100 text-indigo-700"
-                              : "text-slate-700 hover:bg-indigo-50"
+                              ? "bg-indigo-100 font-medium text-indigo-800 ring-1 ring-indigo-200"
+                              : "text-slate-700 hover:bg-white"
                           }`}
                         >
                           {r.label}
@@ -808,6 +878,231 @@ export function EditTeamMemberModal({
               disabled={loading}
             >
               {loading ? "Saving..." : "Update Team Member"}
+            </button>
+          </div>
+        </form>
+      </section>
+    </div>
+  );
+}
+
+export function ManageRoleModal({
+  open,
+  loading,
+  member,
+  departments,
+  memberFormData,
+  canAssignServiceProviderAdditionalRoles,
+  otherActiveServiceProviderCount,
+  onCancel,
+  onSubmit,
+  onChange,
+  onToggleDepartment,
+  onToggleAdditionalRole,
+}: {
+  open: boolean;
+  loading: boolean;
+  member: TeamMember;
+  departments: Department[];
+  memberFormData: MemberFormData;
+  canAssignServiceProviderAdditionalRoles: boolean;
+  /** Excluding this user: members who are not deactivated and act as service provider. */
+  otherActiveServiceProviderCount: number;
+  onCancel: () => void;
+  onSubmit: (e: React.FormEvent) => void;
+  onChange: (data: MemberFormData) => void;
+  onToggleDepartment: (id: number) => void;
+  onToggleAdditionalRole: (role: string) => void;
+}) {
+  if (!open) return null;
+
+  const lockSpPrimary =
+    !member.is_workspace_owner && member.role === ROLE_SERVICE_PROVIDER;
+  const lockWorkspaceAdminOwnerPrimary =
+    member.is_workspace_owner && member.role === ROLE_WORKSPACE_ADMIN;
+  const lockPrimaryRoleSelect = lockSpPrimary || lockWorkspaceAdminOwnerPrimary;
+  const ownerWorkspaceAdminBlocksSpRemoval =
+    member.is_workspace_owner && member.role === ROLE_WORKSPACE_ADMIN;
+  const showSpAdditionalRoles =
+    canAssignServiceProviderAdditionalRoles && lockSpPrimary;
+
+  const showDepartments =
+    memberFormData.role === ROLE_SERVICE_PROVIDER ||
+    memberFormData.additional_roles.includes(ROLE_SERVICE_PROVIDER);
+
+  return (
+    <div className="fixed inset-0 z-40 flex items-center justify-center p-4">
+      <div
+        className="absolute inset-0 bg-black/40"
+        aria-hidden="true"
+        onClick={onCancel}
+      />
+      <section className="relative z-10 flex max-h-[min(90vh,720px)] w-full max-w-lg flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+        <div className="flex shrink-0 items-start justify-between gap-4 border-b border-slate-100 px-6 py-5">
+          <div className="min-w-0 space-y-3">
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-900">
+              <LuUserCog className="h-3.5 w-3.5" aria-hidden />
+              Role Management
+            </span>
+            <div>
+              <h2 className="text-xl font-semibold tracking-tight text-slate-900 md:text-2xl">
+                Manage Role
+              </h2>
+              <p className="mt-1 text-sm text-slate-600">
+                Update role access and department permissions for{" "}
+                <span className="font-semibold text-slate-800">{member.name}</span>.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            className="shrink-0 rounded-full p-2 text-slate-500 transition hover:bg-slate-100"
+            aria-label="Close"
+            onClick={onCancel}
+          >
+            <LuX className="h-5 w-5" aria-hidden />
+          </button>
+        </div>
+
+        <form onSubmit={onSubmit} className="flex min-h-0 flex-1 flex-col">
+          <div className="flex-1 space-y-6 overflow-y-auto px-6 py-5">
+            <div>
+              <label className="mb-2 block text-sm font-medium text-slate-700">
+                Role <span className="text-red-500">*</span>
+              </label>
+              <select
+                value={memberFormData.role}
+                onChange={(e) => {
+                  const newRole = e.target.value;
+                  const nextAdditional = memberFormData.additional_roles.filter((r) => r !== newRole);
+                  onChange({
+                    ...memberFormData,
+                    role: newRole,
+                    additional_roles: nextAdditional,
+                  });
+                }}
+                disabled={lockPrimaryRoleSelect}
+                className={`${MODAL_FIELD_CLASS} disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-600`}
+                required
+              >
+                {ASSIGNABLE_ROLES.filter((r) =>
+                  member.is_workspace_owner ? !OWNER_DISALLOWED_ROLES.includes(r.value) : true,
+                ).map((r) => (
+                  <option key={r.value} value={r.value}>
+                    {r.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {member.is_workspace_owner && (
+              <div>
+                <label className="mb-2 block text-sm font-medium text-slate-700">
+                  Additional roles
+                </label>
+                <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-3">
+                  <div className="space-y-2">
+                    {ASSIGNABLE_ROLES.filter(
+                      (r) =>
+                        r.value !== memberFormData.role && !OWNER_DISALLOWED_ROLES.includes(r.value),
+                    ).map((r) => {
+                      const checked = memberFormData.additional_roles.includes(r.value);
+                      const blockedServiceProviderRemoval =
+                        ownerWorkspaceAdminBlocksSpRemoval &&
+                        r.value === ROLE_SERVICE_PROVIDER &&
+                        checked &&
+                        otherActiveServiceProviderCount < 1;
+                      return (
+                        <button
+                          key={r.value}
+                          type="button"
+                          disabled={blockedServiceProviderRemoval || loading}
+                          title={
+                            blockedServiceProviderRemoval
+                              ? "Add another active service provider before removing this role."
+                              : undefined
+                          }
+                          onClick={() => onToggleAdditionalRole(r.value)}
+                          className={`w-full rounded-lg px-3 py-2 text-left text-sm transition ${
+                            checked
+                              ? "bg-indigo-100 font-medium text-indigo-800 ring-1 ring-indigo-200"
+                              : "text-slate-700 hover:bg-white"
+                          } disabled:cursor-not-allowed disabled:opacity-60`}
+                        >
+                          {r.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {showSpAdditionalRoles && (
+              <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-5">
+                <label className="mb-3 block text-sm font-semibold text-slate-900">
+                  Additional roles
+                </label>
+                <p className="mb-4 text-xs text-slate-600">
+                  Grant manager or workspace admin access alongside service provider scheduling.
+                </p>
+                <div className="space-y-2">
+                  {SP_ASSIGNABLE_ROLE_OPTIONS.map((r) => {
+                    const checked = memberFormData.additional_roles.includes(r.value);
+                    return (
+                      <button
+                        key={r.value}
+                        type="button"
+                        onClick={() => onToggleAdditionalRole(r.value)}
+                        className={`w-full rounded-lg px-3 py-2 text-left text-sm font-medium transition ${
+                          checked
+                            ? "bg-indigo-100 text-indigo-800 ring-1 ring-indigo-200"
+                            : "border border-slate-200 bg-white text-slate-700 hover:border-indigo-200"
+                        }`}
+                      >
+                        {r.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {showDepartments ? (
+              <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-5">
+                <label className="mb-3 block text-sm font-semibold text-slate-900">
+                  Department Permissions
+                </label>
+                <p className="mb-4 text-xs text-slate-600">
+                  Select which departments this member can work with when acting as a service
+                  provider.
+                </p>
+                <DepartmentChipSelector
+                  departments={departments}
+                  selectedIds={memberFormData.departments}
+                  onToggle={onToggleDepartment}
+                  variant="manage"
+                  emptyMessage="No departments available yet."
+                />
+              </div>
+            ) : null}
+          </div>
+
+          <div className="flex shrink-0 justify-end gap-3 border-t border-slate-100 px-6 py-4">
+            <button
+              type="button"
+              onClick={onCancel}
+              className="inline-flex h-11 items-center rounded-xl border border-slate-200 bg-white px-5 text-sm font-medium text-slate-800 transition hover:bg-slate-50"
+              disabled={loading}
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="inline-flex h-11 items-center rounded-xl bg-indigo-600 px-5 text-sm font-medium text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={loading}
+            >
+              {loading ? "Saving…" : "Update Role"}
             </button>
           </div>
         </form>

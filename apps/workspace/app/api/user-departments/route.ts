@@ -14,6 +14,11 @@ function userCanSelfAssignDepartment(user: User, targetUserId: string): boolean 
   return user.id === targetUserId;
 }
 
+/** Profile (and similar): member updates their own department assignments. */
+function userCanSelfManageAssignments(user: User, targetUserId: string): boolean {
+  return user.id === targetUserId;
+}
+
 function userCanManageAssignments(user: User): boolean {
   if (user.user_metadata?.is_workspace_owner === true) return true;
   const role = user.user_metadata?.role;
@@ -166,7 +171,8 @@ export async function PUT(req: NextRequest) {
 
     if (
       !userCanManageAssignments(user) &&
-      !(userId && userCanSelfAssignDuringOnboarding(user, userId))
+      !(userId && userCanSelfAssignDuringOnboarding(user, userId)) &&
+      !(userId && userCanSelfManageAssignments(user, userId))
     ) {
       return NextResponse.json({ error: 'Forbidden: Access denied' }, { status: 403 });
     }
@@ -246,7 +252,15 @@ export async function DELETE(req: NextRequest) {
     if (authError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-    if (!userCanManageAssignments(user)) {
+    const { searchParams } = new URL(req.url);
+    const id = searchParams.get('id');
+    const userId = searchParams.get('user_id');
+    const departmentId = searchParams.get('department_id');
+
+    if (
+      !userCanManageAssignments(user) &&
+      !(userId && userCanSelfManageAssignments(user, userId))
+    ) {
       return NextResponse.json({ error: 'Forbidden: Access denied' }, { status: 403 });
     }
 
@@ -254,11 +268,6 @@ export async function DELETE(req: NextRequest) {
     if (!workspaceId) {
       return NextResponse.json({ error: 'Workspace ID not found' }, { status: 400 });
     }
-
-    const { searchParams } = new URL(req.url);
-    const id = searchParams.get('id');
-    const userId = searchParams.get('user_id');
-    const departmentId = searchParams.get('department_id');
 
     if (id) {
       const { error } = await supabase

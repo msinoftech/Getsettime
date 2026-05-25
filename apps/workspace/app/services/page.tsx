@@ -446,20 +446,54 @@ export default function ServicesPage() {
     }
 
     setBusyAction(true);
-    const price = parsePriceInput(newServicePrice);
-    const data = await callServicesApi("POST", {
-      name,
-      duration: newServiceDuration,
-      price,
-      department_id: selectedDepartmentId,
-      status: "active",
-    });
-    setBusyAction(false);
+    try {
+      const price = parsePriceInput(newServicePrice);
+      const data = await callServicesApi("POST", {
+        name,
+        duration: newServiceDuration,
+        price,
+        department_id: selectedDepartmentId,
+        status: "active",
+      });
 
-    if (data?.service) {
-      setServices((prev) => [data.service as Service, ...prev]);
+      if (!data?.service) return;
+
+      const newService = data.service as Service;
+      const soleDoctor =
+        departmentDoctors.length === 1 ? departmentDoctors[0] : null;
+
+      if (soleDoctor && newService.status === "active") {
+        const token = await getAuthToken();
+        if (token) {
+          const post = await fetch("/api/user-services", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              user_id: soleDoctor.id,
+              service_id: newService.id,
+            }),
+          });
+          if (!post.ok) {
+            const err = await post.json().catch(() => null);
+            setAlertMessage(err?.error || `Request failed (${post.status})`);
+            setServices((prev) => [newService, ...prev]);
+          } else {
+            await refreshServiceAssignments();
+          }
+        } else {
+          setServices((prev) => [newService, ...prev]);
+        }
+      } else {
+        setServices((prev) => [newService, ...prev]);
+      }
+
       resetAddForm();
       setShowAddServiceModal(false);
+    } finally {
+      setBusyAction(false);
     }
   };
 

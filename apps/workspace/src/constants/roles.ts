@@ -37,3 +37,12 @@ export const MANAGE_ROLES: readonly string[] = [
   ROLE_WORKSPACE_ADMIN,
   ROLE_MANAGER,
 ] as const;
+
+/**
+ * Extra roles a workspace owner or workspace admin may grant to a member whose
+ * primary role is service_provider (stored in `additional_roles` alongside owners).
+ */
+export const SERVICE_PROVIDER_ASSIGNABLE_ADDITIONAL_ROLES: readonly string[] = [
+  ROLE_MANAGER,
+  ROLE_WORKSPACE_ADMIN,
+] as const;

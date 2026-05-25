@@ -73,6 +73,10 @@ const SOLE_SP_DEPARTMENT_CHIP_STYLES = [
   "bg-emerald-100 text-emerald-800",
 ] as const;
 
+/** Matches Remove button: red border, red text, light red fill. */
+const INACTIVE_OUTLINE_BADGE =
+  "rounded-full border border-red-200 bg-red-50 text-red-600";
+
 export default function DepartmentsPage() {
   const { user, loading: authLoading } = useAuth();
   const { data: serviceProviders, loading: spLoading } = useServiceProviders();
@@ -233,6 +237,7 @@ export default function DepartmentsPage() {
     id: string;
     name: string;
     role: string;
+    inactive: boolean;
     assignedDepartmentIds: number[];
   };
 
@@ -241,6 +246,7 @@ export default function DepartmentsPage() {
       id: sp.id,
       name: serviceProviderDisplayName(sp),
       role: "Doctor",
+      inactive: sp.deactivated === true,
       assignedDepartmentIds: providerAssignments.get(sp.id) ?? [],
     }));
   }, [serviceProviders, providerAssignments]);
@@ -775,24 +781,34 @@ export default function DepartmentsPage() {
                 <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600">
                   {doctor.role}
                 </span>
+                {doctor.inactive && (
+                  <span
+                    className={`${INACTIVE_OUTLINE_BADGE} px-2 py-0.5 text-[11px] font-semibold`}
+                  >
+                    Inactive
+                  </span>
+                )}
               </div>
 
               <div className="mt-3 flex flex-wrap gap-2">
                 {doctor.assignedDepartmentIds.length > 0 ? (
                   doctor.assignedDepartmentIds.map((depId) => {
                     const departmentStatus = getDepartmentStatus(depId);
+                    const isInactiveDepartment = departmentStatus === "inactive";
 
                     return (
                       <span
                         key={depId}
-                        className={`rounded-full px-2.5 py-1 text-[11px] font-medium ${
-                          depId === selectedDepartmentId
-                            ? "bg-indigo-100 text-indigo-700"
-                            : "border border-slate-200 bg-slate-50 text-slate-600"
+                        className={`px-2.5 py-1 text-[11px] font-medium ${
+                          isInactiveDepartment
+                            ? INACTIVE_OUTLINE_BADGE
+                            : depId === selectedDepartmentId
+                              ? "rounded-full bg-indigo-100 text-indigo-700"
+                              : "rounded-full border border-slate-200 bg-slate-50 text-slate-600"
                         }`}
                       >
                         {getDepartmentName(depId)}
-                        {departmentStatus === "inactive" ? " • Inactive" : ""}
+                        {isInactiveDepartment ? " • Inactive" : ""}
                       </span>
                     );
                   })
@@ -1403,7 +1419,7 @@ export default function DepartmentsPage() {
                             const isSelected = dep.id === selectedDepartmentId;
                             const colorClass =
                               dep.status === "inactive"
-                                ? "bg-slate-200 text-slate-600"
+                                ? `${INACTIVE_OUTLINE_BADGE} font-semibold`
                                 : SOLE_SP_DEPARTMENT_CHIP_STYLES[
                                     i % SOLE_SP_DEPARTMENT_CHIP_STYLES.length
                                   ];
@@ -1427,7 +1443,7 @@ export default function DepartmentsPage() {
                               >
                                 <span className="min-w-0 truncate">
                                   {dep.name}
-                                  {dep.status === "inactive" ? " · off" : ""}
+                                  {dep.status === "inactive" ? " • Inactive" : ""}
                                 </span>
                               </button>
                             );

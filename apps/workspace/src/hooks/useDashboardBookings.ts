@@ -17,7 +17,11 @@ function sort_bookings_by_start(bookings: Booking[]): Booking[] {
   });
 }
 
-export function useDashboardBookings(user: { id?: string } | null, view_date: Date) {
+export function useDashboardBookings(
+  user: { id?: string } | null,
+  view_date: Date,
+  refresh_key = 0,
+) {
   const [state, setState] = useState<dashboard_bookings_state>({
     today_bookings: [],
     today_loading: true,
@@ -141,7 +145,7 @@ export function useDashboardBookings(user: { id?: string } | null, view_date: Da
 
     run();
     return () => ac.abort();
-  }, [user_id, view_date]);
+  }, [user_id, view_date, refresh_key]);
 
   return state;
 }

@@ -49,6 +49,7 @@ interface EventType {
   settings: any;
   created_at: string;
   bookings_count?: number | null;
+  owner_id?: string | null;
 }
 
 const CARD_GRADIENTS = [
@@ -188,6 +189,9 @@ export default function EventTypes() {
   );
   const [settings_loaded, set_settings_loaded] = useState(false);
   const [settings_saving, set_settings_saving] = useState(false);
+  const [owner_names_by_id, set_owner_names_by_id] = useState<
+    Record<string, string>
+  >({});
   const submitInFlightRef = useRef(false);
 
   const empty_form = (): event_type_form_state => {
@@ -580,6 +584,57 @@ export default function EventTypes() {
     setTimeout(() => set_settings_saved_message(""), 2500);
   };
 
+  const show_owner_labels = useMemo(() => {
+    const owner_ids = new Set(
+      items
+        .map((item) => item.owner_id)
+        .filter((id): id is string => typeof id === "string" && id.length > 0)
+    );
+    return owner_ids.size > 1;
+  }, [items]);
+
+  useEffect(() => {
+    if (!user || !show_owner_labels) {
+      set_owner_names_by_id({});
+      return;
+    }
+
+    let cancelled = false;
+
+    const load_owner_names = async () => {
+      try {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+        if (!session?.access_token || cancelled) return;
+
+        const response = await fetch("/api/team-members", {
+          headers: { Authorization: `Bearer ${session.access_token}` },
+        });
+        if (!response.ok || cancelled) return;
+
+        const data = await response.json();
+        const names: Record<string, string> = {};
+        for (const member of (data.teamMembers || []) as Array<{
+          id?: string;
+          name?: string;
+        }>) {
+          if (member.id && member.name) {
+            names[member.id] = member.name;
+          }
+        }
+        if (!cancelled) set_owner_names_by_id(names);
+      } catch (err) {
+        console.error("Error loading team member names:", err);
+      }
+    };
+
+    load_owner_names();
+    return () => {
+      cancelled = true;
+    };
+  }, [user, show_owner_labels]);
+
   const total_event_types = items.length;
   const private_event_types = items.filter((e) => !e.is_public).length;
   const public_event_types = items.filter((e) => e.is_public).length;
@@ -786,9 +841,18 @@ export default function EventTypes() {
                   <div className="p-5">
                     <div className="flex items-start justify-between gap-4">
                       <div className="min-w-0">
-                        <h3 className="truncate text-xl font-bold text-slate-900">
-                          {item.title}
-                        </h3>
+                        <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                          <h3 className="truncate text-xl font-bold text-slate-900">
+                            {item.title}
+                          </h3>
+                          {show_owner_labels &&
+                            item.owner_id &&
+                            owner_names_by_id[item.owner_id] && (
+                              <span className="shrink-0 text-sm font-medium text-slate-500">
+                                (Created by: {owner_names_by_id[item.owner_id]})
+                              </span>
+                            )}
+                        </div>
                         {item.slug && (
                           <p className="mt-1 inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600">
                             {item.slug}
