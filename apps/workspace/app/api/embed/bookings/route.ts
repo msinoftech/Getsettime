@@ -16,8 +16,13 @@ import {
 } from '@/lib/workspace-notification-flags';
 import {
   list_bookable_meeting_option_keys,
-  type meeting_option_key,
 } from '@/src/utils/meeting_options';
+import {
+  booking_wants_google_meet,
+  calendar_event_location_string,
+  merge_meet_into_booking_location,
+  parse_location_meeting_option,
+} from '@/src/utils/google_meet';
 import { resolveAvailabilityForServiceProvider } from '@/src/utils/availabilityResolution';
 import {
   resolveNotificationsForServiceProvider,
@@ -25,22 +30,6 @@ import {
 } from '@/src/utils/providerSettingsResolution';
 
 type DayName = "Sun" | "Mon" | "Tue" | "Wed" | "Thu" | "Fri" | "Sat";
-
-const MEETING_OPTION_BODY_KEYS = new Set<meeting_option_key>([
-  'google_meet',
-  'in_person',
-  'phone_call',
-  'whatsapp',
-]);
-
-function parse_location_meeting_option(location: unknown): meeting_option_key | null {
-  if (!location || typeof location !== 'object') return null;
-  const raw = (location as Record<string, unknown>).meeting_option;
-  if (typeof raw !== 'string' || !raw.trim()) return null;
-  const key = raw.trim() as meeting_option_key;
-  if (!MEETING_OPTION_BODY_KEYS.has(key)) return null;
-  return key;
-}
 
 interface BreakTime {
   id: string;
@@ -463,7 +452,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Create booking with embed source
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from('bookings')
       .insert({
         workspace_id,
@@ -570,6 +559,79 @@ export async function POST(req: NextRequest) {
       console.error('Error resolving provider details:', providerErr);
     }
 
+    let meetingUrlAfterCalendar: string | undefined;
+
+    try {
+      const wantsMeet = booking_wants_google_meet(locationForInsert);
+      const { createCalendarEvent } = await import('@/lib/google-calendar-service');
+      const endAtCal = end_at || start_at;
+      const tzCal =
+        typeof clientTimezone === 'string' && clientTimezone.trim()
+          ? clientTimezone.trim()
+          : undefined;
+      const { eventId, meetLink, error: calInsertErr } = await createCalendarEvent({
+        workspaceId: Number(workspace_id),
+        serviceProviderId: service_provider_id || undefined,
+        summary: `${eventTypeName}: ${invitee_name.trim()}`,
+        description: metadataPayload.notes ? String(metadataPayload.notes) : undefined,
+        startAt: start_at,
+        endAt: endAtCal,
+        location: calendar_event_location_string(location),
+        attendeeEmail: invitee_email?.trim() || undefined,
+        metadata: { bookingId: data?.id, eventTypeName },
+        addGoogleMeet: wantsMeet,
+        meetRequestId: data?.id,
+        ...(tzCal ? { timeZone: tzCal } : {}),
+      });
+
+      const patchBooking: Record<string, unknown> = {};
+      let nextMeta =
+        data?.metadata && typeof data.metadata === 'object'
+          ? { ...(data.metadata as Record<string, unknown>) }
+          : { ...metadataPayload };
+      let nextLoc =
+        locationForInsert && typeof locationForInsert === 'object'
+          ? ({ ...locationForInsert } as Record<string, unknown>)
+          : locationForInsert;
+
+      if (eventId) {
+        nextMeta.google_calendar_event_id = eventId;
+        patchBooking.metadata = nextMeta;
+      } else if (calInsertErr) {
+        console.warn('Google Calendar create returned no event:', calInsertErr);
+      }
+
+      if (meetLink?.trim() && wantsMeet && data?.id) {
+        nextLoc = merge_meet_into_booking_location(
+          locationForInsert as Record<string, unknown> | null,
+          meetLink.trim()
+        );
+        patchBooking.location = nextLoc;
+      }
+
+      if (Object.keys(patchBooking).length > 0 && data?.id) {
+        const { error: patchErr } = await supabase
+          .from('bookings')
+          .update(patchBooking)
+          .eq('id', data.id);
+        if (patchErr) {
+          console.warn('Booking patch after calendar sync failed:', patchErr);
+        } else {
+          data = {
+            ...data,
+            ...(patchBooking.metadata ? { metadata: patchBooking.metadata } : {}),
+            ...(patchBooking.location ? { location: patchBooking.location } : {}),
+          };
+          const locAfter = patchBooking.location as Record<string, unknown> | undefined;
+          const mw = typeof locAfter?.meeting_url === 'string' ? locAfter.meeting_url.trim() : '';
+          meetingUrlAfterCalendar =
+            mw || (meetLink?.trim() && wantsMeet ? meetLink.trim() : undefined);
+        }
+      }
+    } catch (calErr) {
+      console.warn('Google Calendar sync failed (non-blocking):', calErr);
+    }
+
     // Send email notifications after successful booking creation (best-effort)
     try {
       if (invitee_email && invitee_email.trim()) {
@@ -587,6 +649,12 @@ export async function POST(req: NextRequest) {
           duration: durationMinutes,
           notes: metadataPayload.notes ? String(metadataPayload.notes) : undefined,
           ...(clientTimezone ? { timezone: clientTimezone } : {}),
+          ...(meetingUrlAfterCalendar?.trim()
+            ? {
+                meetingUrl: meetingUrlAfterCalendar.trim(),
+                meetingLabel: 'Google Meet',
+              }
+            : {}),
         };
 
         const emailResult = await sendBookingConfirmationEmails(emailData);
@@ -655,6 +723,9 @@ export async function POST(req: NextRequest) {
           ...(metadataPayload.notes
             ? [`Notes: ${String(metadataPayload.notes)}`]
             : []),
+          ...(meetingUrlAfterCalendar?.trim()
+            ? [`Meet: ${meetingUrlAfterCalendar.trim()}`]
+            : []),
         ];
         const message = whatsappParts.join(' ');
 
@@ -680,30 +751,6 @@ export async function POST(req: NextRequest) {
       }
     } catch (whatsappError) {
       console.error('Error sending WhatsApp notification:', whatsappError);
-    }
-
-    // Sync to Google Calendar (best-effort)
-    try {
-      const { createCalendarEvent } = await import('@/lib/google-calendar-service');
-      const endAt = end_at || start_at;
-      const { eventId } = await createCalendarEvent({
-        workspaceId: workspace_id,
-        serviceProviderId: service_provider_id || undefined,
-        summary: `${eventTypeName}: ${invitee_name.trim()}`,
-        description: metadataPayload.notes ? String(metadataPayload.notes) : undefined,
-        startAt: start_at,
-        endAt,
-        attendeeEmail: invitee_email?.trim() || undefined,
-        metadata: { bookingId: data?.id, eventTypeName },
-      });
-      if (eventId && data?.metadata && typeof data.metadata === 'object') {
-        await supabase
-          .from('bookings')
-          .update({ metadata: { ...(data.metadata as object), google_calendar_event_id: eventId } })
-          .eq('id', data.id);
-      }
-    } catch (calErr) {
-      console.warn('Google Calendar sync failed (non-blocking):', calErr);
     }
 
     return NextResponse.json({

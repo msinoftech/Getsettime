@@ -1,5 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createSupabaseServerClient } from '@app/db';
+import { fetchGoogleMeetLinkForCalendarEvent } from '@/lib/google-calendar-service';
+import {
+  booking_wants_google_meet,
+  merge_meet_into_booking_location,
+  resolve_meeting_join_url_from_booking,
+} from '@/src/utils/google_meet';
 
 export async function GET(
   _req: NextRequest,
@@ -25,6 +31,44 @@ export async function GET(
     }
 
     const workspaceId = booking.workspace_id;
+
+    try {
+      const meta =
+        booking.metadata && typeof booking.metadata === 'object'
+          ? (booking.metadata as Record<string, unknown>)
+          : null;
+      const gcalId =
+        typeof meta?.google_calendar_event_id === 'string'
+          ? meta.google_calendar_event_id.trim()
+          : '';
+      if (
+        booking_wants_google_meet(booking.location) &&
+        !resolve_meeting_join_url_from_booking(booking.location, booking.metadata) &&
+        gcalId
+      ) {
+        const meetLink = await fetchGoogleMeetLinkForCalendarEvent({
+          workspaceId: Number(workspaceId),
+          serviceProviderId: booking.service_provider_id || null,
+          eventId: gcalId,
+        });
+        if (meetLink?.trim()) {
+          const nextLoc = merge_meet_into_booking_location(
+            booking.location as Record<string, unknown> | null,
+            meetLink.trim()
+          );
+          const { error: patchErr } = await supabase
+            .from('bookings')
+            .update({ location: nextLoc })
+            .eq('id', booking.id)
+            .eq('public_code', code);
+          if (!patchErr) {
+            booking.location = nextLoc;
+          }
+        }
+      }
+    } catch (hydrateErr) {
+      console.warn('booking-preview Google Meet hydrate skipped:', hydrateErr);
+    }
 
     const [deptResult, providerResult, servicesResult, configResult, workspaceResult] = await Promise.all([
       booking.department_id

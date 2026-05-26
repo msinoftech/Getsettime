@@ -16,8 +16,16 @@ import {
 } from '@/lib/workspace-notification-flags';
 import { resolveAvailabilityForServiceProvider } from '@/src/utils/availabilityResolution';
 import {
-  resolveNotificationsForServiceProvider,
+  booking_wants_google_meet,
+  calendar_event_location_string,
+  merge_meet_into_booking_location,
+  parse_location_meeting_option,
+  resolve_meeting_join_url_from_booking,
+} from '@/src/utils/google_meet';
+import { list_bookable_meeting_option_keys } from '@/src/utils/meeting_options';
+import {
   resolveMeetingOptionsForServiceProvider,
+  resolveNotificationsForServiceProvider,
 } from '@/src/utils/providerSettingsResolution';
 
 type DayName = "Sun" | "Mon" | "Tue" | "Wed" | "Thu" | "Fri" | "Sat";
@@ -437,6 +445,10 @@ export async function POST(req: NextRequest) {
       configData?.settings?.notifications as Record<string, unknown> | undefined,
       bookingServiceProviderId
     );
+    const resolvedMeetingOptions = resolveMeetingOptionsForServiceProvider(
+      configData?.settings?.meeting_options as Record<string, unknown> | undefined,
+      bookingServiceProviderId
+    );
     
     // Use timezone-aware parsing when client sends timezone (fixes Vercel UTC vs local mismatch)
     const tz = typeof clientTimezone === 'string' && clientTimezone.trim() ? clientTimezone.trim() : null;
@@ -551,7 +563,42 @@ export async function POST(req: NextRequest) {
 
     const publicCode = crypto.randomUUID();
 
-    const { data, error } = await supabase
+    let eventTypeLocationTypeForBooking: string | null = null;
+    if (event_type_id) {
+      const { data: etloc } = await supabase
+        .from('event_types')
+        .select('location_type')
+        .eq('id', event_type_id)
+        .eq('workspace_id', workspaceId)
+        .maybeSingle();
+      eventTypeLocationTypeForBooking =
+        typeof etloc?.location_type === 'string' ? etloc.location_type : null;
+    }
+    const bookableMeetingKeys = list_bookable_meeting_option_keys(
+      eventTypeLocationTypeForBooking,
+      resolvedMeetingOptions
+    );
+
+    let normalizedBookingLocation: Record<string, unknown> | null = null;
+    if (location !== undefined && location !== null) {
+      if (typeof location !== 'object' || Array.isArray(location)) {
+        return NextResponse.json({ error: 'Invalid location' }, { status: 400 });
+      }
+      const mo = parse_location_meeting_option(location);
+      if (mo !== null) {
+        if (!bookableMeetingKeys.includes(mo)) {
+          return NextResponse.json(
+            { error: 'Meeting option is not available for this event type' },
+            { status: 400 }
+          );
+        }
+        normalizedBookingLocation = { meeting_option: mo };
+      } else {
+        normalizedBookingLocation = { ...(location as Record<string, unknown>) };
+      }
+    }
+
+    let { data, error } = await supabase
       .from('bookings')
       .insert({
         workspace_id: workspaceId,
@@ -566,7 +613,7 @@ export async function POST(req: NextRequest) {
         start_at: start_at,
         end_at: end_at || null,
         status: status || 'pending',
-        location: location || null,
+        location: normalizedBookingLocation,
         payment_id: payment_id || null,
         metadata: metadata || null,
         public_code: publicCode,
@@ -656,6 +703,75 @@ export async function POST(req: NextRequest) {
       console.error('Error resolving provider details:', providerErr);
     }
 
+    let meetingUrlAfterCalendar: string | undefined;
+
+    try {
+      const wantsMeet = booking_wants_google_meet(normalizedBookingLocation);
+      const { createCalendarEvent } = await import('@/lib/google-calendar-service');
+      const tzCal =
+        typeof clientTimezone === 'string' && clientTimezone.trim()
+          ? clientTimezone.trim()
+          : undefined;
+      const { eventId, meetLink, error: calInsertErr } = await createCalendarEvent({
+        workspaceId: Number(workspaceId),
+        serviceProviderId: service_provider_id || undefined,
+        summary: `${eventTypeName}: ${invitee_name.trim()}`,
+        description: metadata?.notes ? String(metadata.notes) : undefined,
+        startAt: start_at,
+        endAt: end_at || start_at,
+        location: calendar_event_location_string(location),
+        attendeeEmail: invitee_email?.trim() || undefined,
+        metadata: { bookingId: data?.id, eventTypeName },
+        addGoogleMeet: wantsMeet,
+        meetRequestId: data?.id,
+        ...(tzCal ? { timeZone: tzCal } : {}),
+      });
+
+      const patchBooking: Record<string, unknown> = {};
+      let nextMeta =
+        data?.metadata && typeof data.metadata === 'object'
+          ? { ...(data.metadata as Record<string, unknown>) }
+          : metadata && typeof metadata === 'object'
+            ? { ...(metadata as Record<string, unknown>) }
+            : {};
+
+      if (eventId) {
+        nextMeta.google_calendar_event_id = eventId;
+        patchBooking.metadata = nextMeta;
+      } else if (calInsertErr) {
+        console.warn('Google Calendar create returned no event:', calInsertErr);
+      }
+
+      if (meetLink?.trim() && wantsMeet && data?.id) {
+        patchBooking.location = merge_meet_into_booking_location(
+          normalizedBookingLocation as Record<string, unknown> | null,
+          meetLink.trim()
+        );
+      }
+
+      if (Object.keys(patchBooking).length > 0 && data?.id) {
+        const { error: patchErr } = await supabase
+          .from('bookings')
+          .update(patchBooking)
+          .eq('id', data.id);
+        if (patchErr) {
+          console.warn('Booking patch after calendar sync failed:', patchErr);
+        } else {
+          data = {
+            ...data,
+            ...(patchBooking.metadata ? { metadata: patchBooking.metadata } : {}),
+            ...(patchBooking.location ? { location: patchBooking.location } : {}),
+          };
+          const locAfter = patchBooking.location as Record<string, unknown> | undefined;
+          const mw = typeof locAfter?.meeting_url === 'string' ? locAfter.meeting_url.trim() : '';
+          meetingUrlAfterCalendar =
+            mw || (meetLink?.trim() && wantsMeet ? meetLink.trim() : undefined);
+        }
+      }
+    } catch (calErr) {
+      console.warn('Google Calendar sync failed (non-blocking):', calErr);
+    }
+
     // Send email notifications after successful booking creation (best-effort)
     try {
       if (invitee_email && invitee_email.trim()) {
@@ -673,6 +789,12 @@ export async function POST(req: NextRequest) {
           duration: durationMinutes,
           notes: metadata?.notes || undefined,
           ...(clientTimezone ? { timezone: clientTimezone } : {}),
+          ...(meetingUrlAfterCalendar?.trim()
+            ? {
+                meetingUrl: meetingUrlAfterCalendar.trim(),
+                meetingLabel: 'Google Meet',
+              }
+            : {}),
         };
 
         const emailResult = await sendBookingConfirmationEmails(emailData);
@@ -742,6 +864,9 @@ export async function POST(req: NextRequest) {
           ...(providerName?.trim() ? [`Service Provider: ${providerName.trim()}`] : []),
           `When: ${when}`,
           ...(metadata?.notes ? [`Notes: ${String(metadata.notes)}`] : []),
+          ...(meetingUrlAfterCalendar?.trim()
+            ? [`Meet: ${meetingUrlAfterCalendar.trim()}`]
+            : []),
         ];
         const message = whatsappParts.join(' ');
 
@@ -767,30 +892,6 @@ export async function POST(req: NextRequest) {
       }
     } catch (whatsappError) {
       console.error('Error sending WhatsApp notification:', whatsappError);
-    }
-
-    // Sync to Google Calendar (best-effort)
-    try {
-      const { createCalendarEvent } = await import('@/lib/google-calendar-service');
-      const { eventId } = await createCalendarEvent({
-        workspaceId,
-        serviceProviderId: service_provider_id || undefined,
-        summary: `${eventTypeName}: ${invitee_name.trim()}`,
-        description: metadata?.notes ? String(metadata.notes) : undefined,
-        startAt: start_at,
-        endAt: end_at || start_at,
-        location: location || undefined,
-        attendeeEmail: invitee_email?.trim() || undefined,
-        metadata: { bookingId: data?.id, eventTypeName },
-      });
-      if (eventId && data?.metadata && typeof data.metadata === 'object') {
-        await supabase
-          .from('bookings')
-          .update({ metadata: { ...(data.metadata as object), google_calendar_event_id: eventId } })
-          .eq('id', data.id);
-      }
-    } catch (calErr) {
-      console.warn('Google Calendar sync failed (non-blocking):', calErr);
     }
 
     await appendActivityLog(workspaceId, {
@@ -1078,6 +1179,11 @@ export async function PATCH(req: NextRequest) {
         const newStart = data.start_at ?? prevStart;
         const newEnd = data.end_at ?? prevEnd ?? newStart;
 
+        const rescheduleMeetUrl = resolve_meeting_join_url_from_booking(
+          data.location,
+          data.metadata
+        )?.trim();
+
         const { sendBookingRescheduleEmails } = await import('@/lib/email-service');
         await sendBookingRescheduleEmails({
           inviteeName: data.invitee_name || 'Invitee',
@@ -1093,6 +1199,9 @@ export async function PATCH(req: NextRequest) {
           duration: durationMinutes,
           ...(prevStart ? { previousStartTime: prevStart } : {}),
           ...(prevEnd ? { previousEndTime: prevEnd } : {}),
+          ...(rescheduleMeetUrl
+            ? { meetingUrl: rescheduleMeetUrl, meetingLabel: 'Google Meet' }
+            : {}),
         });
 
         const { data: rescheduleConfig } = await supabase
@@ -1155,9 +1264,12 @@ export async function PATCH(req: NextRequest) {
                 ? String(metaRes.notes ?? '')
                 : '';
             const origin = new URL(req.url).origin;
-            const message = finalIsReschedule
+            let message = finalIsReschedule
               ? `Booking rescheduled - Event: ${eventTypeName}, Client: ${data.invitee_name || 'Invitee'}`
               : `Booking time updated - Event: ${eventTypeName}, Client: ${data.invitee_name || 'Invitee'}`;
+            if (rescheduleMeetUrl) {
+              message = `${message} Meet: ${rescheduleMeetUrl}`;
+            }
 
             await post_booking_whatsapp_notification(origin, {
               name: data.invitee_name?.trim() || 'Invitee',

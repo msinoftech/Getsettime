@@ -486,6 +486,7 @@ export function BookingDetailsWithActions({
         onCancelBooking={() => void quick_status('cancelled', 'cancelled')}
         quickActionFeedback={quick_action_feedback}
         onDeleteBooking={() => set_delete_confirm_open(true)}
+        onGoogleMeetSynced={onBookingUpdated}
       />
 
       {reminder_open && (

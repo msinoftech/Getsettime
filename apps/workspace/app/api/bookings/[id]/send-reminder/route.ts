@@ -14,6 +14,7 @@ import {
   is_whatsapp_user_enabled,
 } from '@/lib/workspace-notification-flags';
 import { appendActivityLog } from '@/lib/activity-log';
+import { resolve_meeting_join_url_from_booking } from '@/src/utils/google_meet';
 
 type Channel = 'email' | 'whatsapp';
 
@@ -68,7 +69,7 @@ export async function POST(
     const { data: booking, error: bookingError } = await supabase
       .from('bookings')
       .select(
-        'id,workspace_id,public_code,invitee_name,invitee_email,invitee_phone,service_provider_id,department_id,event_type_id,metadata,start_at,end_at,status,contact_id,contacts(name,phone,email),event_types(title,buffer_before,buffer_after)'
+        'id,workspace_id,public_code,invitee_name,invitee_email,invitee_phone,service_provider_id,department_id,event_type_id,metadata,location,start_at,end_at,status,contact_id,contacts(name,phone,email),event_types(title,buffer_before,buffer_after)'
       )
       .eq('id', booking_id)
       .eq('workspace_id', workspaceId)
@@ -182,6 +183,11 @@ export async function POST(
           { status: 400 }
         );
       }
+      const meetUrl = resolve_meeting_join_url_from_booking(
+        booking.location,
+        booking.metadata
+      );
+
       await sendReminderEmail({
         inviteeName: booking.invitee_name?.trim() || 'Invitee',
         inviteeEmail: email,
@@ -192,6 +198,9 @@ export async function POST(
         endTime: endT,
         duration: durationMinutes,
         ...(noteStr.trim() ? { notes: noteStr } : {}),
+        ...(meetUrl?.trim()
+          ? { meetingUrl: meetUrl.trim(), meetingLabel: 'Google Meet' }
+          : {}),
       });
 
       await appendActivityLog(workspaceId, {
@@ -246,6 +255,11 @@ export async function POST(
     message = eventTitle.includes('appointment')
       ? `Reminder: your appointment is scheduled for ${when}. See you soon!`
       : `Reminder: your ${eventTitle} is on ${when}. See you soon!`;
+
+    const meetUrlWa = resolve_meeting_join_url_from_booking(booking.location, booking.metadata)?.trim();
+    if (meetUrlWa) {
+      message = `${message} Meet: ${meetUrlWa}`;
+    }
 
     const admin_ok = wa_admin && admin_phones.length > 0;
     const user_ok = wa_user && Boolean(inviteeEffective);

@@ -6,6 +6,7 @@ import { getServerAppOrigin } from '@/lib/request-site-origin';
 import { post_booking_whatsapp_notification } from '@/lib/post_booking_whatsapp_notification';
 import { is_whatsapp_user_enabled } from '@/lib/workspace-notification-flags';
 import { resolveNotificationsForServiceProvider } from '@/src/utils/providerSettingsResolution';
+import { resolve_meeting_join_url_from_booking } from '@/src/utils/google_meet';
 
 const BATCH_WINDOW_MINUTES = 15;
 const SMS_REMINDER_MINUTES = 60;
@@ -146,7 +147,7 @@ async function process24hEmailReminders(
 
   const { data: bookings, error } = await supabase
     .from('bookings')
-    .select('id, workspace_id, service_provider_id, invitee_name, invitee_email, invitee_phone, start_at, end_at, event_type_id, contact_id, metadata, contacts(phone, email, name), event_types(title, duration_minutes)')
+    .select('id, workspace_id, service_provider_id, invitee_name, invitee_email, invitee_phone, start_at, end_at, event_type_id, contact_id, metadata, location, contacts(phone, email, name), event_types(title, duration_minutes)')
     .gte('start_at', windowStart.toISOString())
     .lte('start_at', windowEnd.toISOString())
     .neq('status', 'cancelled')
@@ -190,6 +191,11 @@ async function process24hEmailReminders(
     const et = Array.isArray(booking.event_types) ? booking.event_types[0] : booking.event_types;
     const duration = (et as { duration_minutes?: number } | null)?.duration_minutes || 30;
 
+    const meta = booking.metadata as Record<string, unknown> | undefined;
+    const noteStrMeta =
+      meta && typeof meta.notes !== 'undefined' ? String(meta.notes ?? '') : '';
+    const meetUrl = resolve_meeting_join_url_from_booking(booking.location, booking.metadata);
+
     try {
       await sendReminderEmail({
         inviteeName: name,
@@ -198,7 +204,10 @@ async function process24hEmailReminders(
         startTime: booking.start_at!,
         endTime: booking.end_at || booking.start_at!,
         duration,
-        notes: (booking.metadata as Record<string, unknown>)?.notes as string | undefined,
+        ...(noteStrMeta.trim() ? { notes: noteStrMeta } : {}),
+        ...(meetUrl?.trim()
+          ? { meetingUrl: meetUrl.trim(), meetingLabel: 'Google Meet' }
+          : {}),
       });
       await supabase.from('bookings').update({ email_reminder_sent_at: new Date().toISOString() }).eq('id', booking.id);
       stats.sent++;
@@ -229,7 +238,7 @@ async function process1hSmsReminders(
 
   const { data: bookings, error } = await supabase
     .from('bookings')
-    .select('id, workspace_id, service_provider_id, invitee_name, invitee_phone, invitee_email, start_at, end_at, event_type_id, contact_id, contacts(phone, email, name), event_types(title)')
+    .select('id, workspace_id, service_provider_id, invitee_name, invitee_phone, invitee_email, start_at, end_at, event_type_id, contact_id, metadata, location, contacts(phone, email, name), event_types(title)')
     .gte('start_at', windowStart.toISOString())
     .lte('start_at', windowEnd.toISOString())
     .neq('status', 'cancelled')
@@ -278,7 +287,14 @@ async function process1hSmsReminders(
 
     const eventTitle = resolveEventTitle(booking as Record<string, unknown>);
     const when = formatBookingTime(booking.start_at!);
-    const message = `Hi ${name}, reminder: your ${eventTitle} is on ${when}. See you soon!`;
+    const meetUrlSms = resolve_meeting_join_url_from_booking(
+      (booking as Record<string, unknown>).location,
+      booking.metadata
+    );
+    let message = `Hi ${name}, reminder: your ${eventTitle} is on ${when}. See you soon!`;
+    if (meetUrlSms?.trim()) {
+      message = `${message} Meet: ${meetUrlSms.trim()}`;
+    }
 
     const ok = await sendSMS(e164, message);
     if (ok) {
@@ -311,7 +327,7 @@ async function process1hWhatsAppReminders(
   const { data: bookings, error } = await supabase
     .from('bookings')
     .select(
-      'id, public_code, workspace_id, invitee_name, invitee_phone, invitee_email, start_at, end_at, event_type_id, department_id, service_provider_id, metadata, contact_id, contacts(phone, email, name), event_types(title, buffer_before, buffer_after)',
+      'id, public_code, workspace_id, invitee_name, invitee_phone, invitee_email, start_at, end_at, event_type_id, department_id, service_provider_id, metadata, location, contact_id, contacts(phone, email, name), event_types(title, buffer_before, buffer_after)',
     )
     .gte('start_at', windowStart.toISOString())
     .lte('start_at', windowEnd.toISOString())
@@ -364,7 +380,14 @@ async function process1hWhatsAppReminders(
 
     const eventTitle = resolveEventTitle(booking as Record<string, unknown>);
     const when = formatBookingTime(booking.start_at!);
-    const message = `Reminder: your ${eventTitle} is on ${when}. See you soon!`;
+    const meetUrlWa = resolve_meeting_join_url_from_booking(
+      (booking as Record<string, unknown>).location,
+      booking.metadata
+    );
+    let message = `Reminder: your ${eventTitle} is on ${when}. See you soon!`;
+    if (meetUrlWa?.trim()) {
+      message = `${message} Meet: ${meetUrlWa.trim()}`;
+    }
 
     const etRow = Array.isArray(booking.event_types)
       ? booking.event_types[0]

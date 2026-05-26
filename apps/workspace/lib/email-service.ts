@@ -29,6 +29,8 @@ interface BookingEmailData {
   timezone?: string;
   previousStartTime?: string;
   previousEndTime?: string;
+  meetingUrl?: string;
+  meetingLabel?: string;
 }
 
 // Format date and time for email (uses timezone when provided to avoid UTC on server)
@@ -69,6 +71,20 @@ const booking_email_provider_row = (data: BookingEmailData): string => {
   return `
         <div class="detail-row">
           <span class="label">Service Provider:</span> ${v}
+        </div>`;
+};
+
+const booking_email_meeting_row = (data: BookingEmailData): string => {
+  const url = data.meetingUrl?.trim();
+  const label =
+    data.meetingLabel?.trim() && data.meetingLabel.trim().length > 0
+      ? data.meetingLabel.trim()
+      : 'Video meeting';
+  if (!url) return '';
+  const safeUrl = url.replace(/"/g, '&quot;');
+  return `
+        <div class="detail-row">
+          <span class="label">${label}:</span> <a href="${safeUrl}" target="_blank" rel="noopener noreferrer">${safeUrl}</a>
         </div>`;
 };
 
@@ -113,6 +129,7 @@ const getUserEmailTemplate = (data: BookingEmailData): string => {
         <div class="detail-row">
           <span class="label">Duration:</span> ${data.duration} minutes
         </div>
+        ${booking_email_meeting_row(data)}
         ${data.notes ? `
         <div class="detail-row">
           <span class="label">Notes:</span> ${data.notes}
@@ -182,6 +199,7 @@ const getProviderEmailTemplate = (data: BookingEmailData): string => {
         <div class="detail-row">
           <span class="label">Duration:</span> ${data.duration} minutes
         </div>
+        ${booking_email_meeting_row(data)}
         ${data.notes ? `
         <div class="detail-row">
           <span class="label">Client Notes:</span> ${data.notes}
@@ -332,6 +350,7 @@ const getReminderEmailTemplate = (data: BookingEmailData): string => {
         <div class="detail-row">
           <span class="label">Duration:</span> ${data.duration} minutes
         </div>
+        ${booking_email_meeting_row(data)}
         ${data.notes ? `
         <div class="detail-row">
           <span class="label">Notes:</span> ${data.notes}
@@ -477,6 +496,7 @@ const getUserRescheduleEmailTemplate = (data: BookingEmailData): string => {
         <div class="detail-row">
           <span class="label">Duration:</span> ${data.duration} minutes
         </div>
+        ${booking_email_meeting_row(data)}
       </div>
       
       <p><strong>Important:</strong> Please arrive 5-10 minutes before your new scheduled time.</p>
@@ -545,6 +565,7 @@ const getProviderRescheduleEmailTemplate = (data: BookingEmailData): string => {
         <div class="detail-row">
           <span class="label">Duration:</span> ${data.duration} minutes
         </div>
+        ${booking_email_meeting_row(data)}
       </div>
       
       <div class="alert">

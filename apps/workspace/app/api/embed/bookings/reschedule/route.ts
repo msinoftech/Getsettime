@@ -10,6 +10,7 @@ import { post_booking_whatsapp_notification } from '@/lib/post_booking_whatsapp_
 import { is_whatsapp_admin_enabled } from '@/lib/workspace-notification-flags';
 import { resolveAvailabilityForServiceProvider } from '@/src/utils/availabilityResolution';
 import { resolveNotificationsForServiceProvider } from '@/src/utils/providerSettingsResolution';
+import { resolve_meeting_join_url_from_booking } from '@/src/utils/google_meet';
 
 type DayName = 'Sun' | 'Mon' | 'Tue' | 'Wed' | 'Thu' | 'Fri' | 'Sat';
 
@@ -54,7 +55,9 @@ export async function POST(req: NextRequest) {
 
     const { data: booking, error: fetchError } = await supabase
       .from('bookings')
-      .select('id, workspace_id, status, invitee_name, invitee_email, invitee_phone, start_at, end_at, event_type_id, service_provider_id, department_id, metadata, public_code')
+      .select(
+        'id, workspace_id, status, invitee_name, invitee_email, invitee_phone, start_at, end_at, event_type_id, service_provider_id, department_id, metadata, location, public_code'
+      )
       .eq('public_code', public_code)
       .single();
 
@@ -243,6 +246,11 @@ export async function POST(req: NextRequest) {
     try {
       const inviteeEmailTrimmed = booking.invitee_email?.trim();
       if (inviteeEmailTrimmed || providerEmail?.trim()) {
+        const embedRescheduleMeet = resolve_meeting_join_url_from_booking(
+          updated.location ?? booking.location,
+          updated.metadata ?? booking.metadata
+        )?.trim();
+
         const { sendBookingRescheduleEmails } = await import('@/lib/email-service');
         await sendBookingRescheduleEmails({
           inviteeName: booking.invitee_name || 'Invitee',
@@ -257,6 +265,9 @@ export async function POST(req: NextRequest) {
           previousStartTime: previousStartAt || undefined,
           previousEndTime: previousEndAt || undefined,
           ...(clientTimezone ? { timezone: clientTimezone } : {}),
+          ...(embedRescheduleMeet
+            ? { meetingUrl: embedRescheduleMeet, meetingLabel: 'Google Meet' }
+            : {}),
         });
       }
     } catch (emailErr) {
@@ -286,7 +297,14 @@ export async function POST(req: NextRequest) {
         }
 
         const origin = new URL(req.url).origin;
-        const message = `Booking rescheduled - Event: ${eventTypeName}, Client: ${booking.invitee_name || 'Invitee'}`;
+        const meetWa = resolve_meeting_join_url_from_booking(
+          updated.location ?? booking.location,
+          updated.metadata ?? booking.metadata
+        )?.trim();
+        let message = `Booking rescheduled - Event: ${eventTypeName}, Client: ${booking.invitee_name || 'Invitee'}`;
+        if (meetWa) {
+          message = `${message} Meet: ${meetWa}`;
+        }
         const metaNotes = (booking.metadata as Record<string, unknown> | null)?.notes;
         const noteStr =
           metaNotes !== undefined && metaNotes !== null ? String(metaNotes) : '';

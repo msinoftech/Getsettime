@@ -20,7 +20,8 @@ import {
   get_service_provider_display_phone,
 } from '@/src/utils/service_provider_display';
 import { resolve_workspace_logo_src } from '@/src/utils/workspace_logo';
-import { format_booking_location_type_display } from '@/src/types/event_type_location';
+import { format_booking_location_type_display, parse_booking_location_meeting_option } from '@/src/types/event_type_location';
+import { resolve_meeting_join_url_from_booking } from '@/src/utils/google_meet';
 
 type BookingPreviewData = Omit<Booking, 'id' | 'workspace_id' | 'host_user_id'>;
 
@@ -166,46 +167,6 @@ interface ApiResponse {
   workspace_slug: string | null;
   workspace_name: string | null;
   workspace_logo_url: string | null;
-}
-
-/** First HTTPS/HTTP URL found on common keys (location + metadata). */
-function resolveMeetingJoinUrl(
-  location: Record<string, unknown> | null,
-  metadata: Record<string, unknown> | null
-): string | null {
-  const fromValue = (v: unknown): string | null => {
-    if (typeof v !== 'string') return null;
-    const t = v.trim();
-    if (t.startsWith('http://') || t.startsWith('https://')) return t;
-    return null;
-  };
-
-  const keys = [
-    'url',
-    'link',
-    'meeting_url',
-    'join_url',
-    'hangoutLink',
-    'hangout_link',
-    'meet_link',
-    'conference_url',
-  ];
-
-  if (location && typeof location === 'object') {
-    for (const key of keys) {
-      const u = fromValue(location[key]);
-      if (u) return u;
-    }
-  }
-
-  if (metadata && typeof metadata === 'object') {
-    for (const key of keys) {
-      const u = fromValue(metadata[key]);
-      if (u) return u;
-    }
-  }
-
-  return null;
 }
 
 function resolvePhysicalAddress(
@@ -540,7 +501,12 @@ function BookingPreviewContent({
     booking.end_at != null ? `${formatDate(booking.end_at)}, ${formatTime(booking.end_at)}` : 'N/A';
 
   const statusLabel = formatStatusLabel(booking.status);
-  const joinUrl = resolveMeetingJoinUrl(booking.location, booking.metadata);
+  const statusLower = (booking.status || '').toLowerCase();
+  const joinUrl =
+    resolve_meeting_join_url_from_booking(booking.location, booking.metadata) ?? null;
+  const meetingOptionKey = parse_booking_location_meeting_option(booking.location);
+  const showMeetConnectHint =
+    meetingOptionKey === 'google_meet' && !joinUrl && statusLower !== 'cancelled';
   const physicalAddress = resolvePhysicalAddress(booking.location, booking.metadata);
 
   const workspaceTitle = humanize_workspace_title(workspace_slug, workspace_name);
@@ -563,7 +529,6 @@ function BookingPreviewContent({
       ? `${formatDate(booking.created_at)} at ${formatTime(booking.created_at)}`
       : '—';
 
-  const statusLower = (booking.status || '').toLowerCase();
   const heroTitle =
     statusLower === 'cancelled'
       ? 'This appointment was cancelled'
@@ -1087,6 +1052,13 @@ ${booking_preview_supplement_css()}
                     disabled={!canDirections}
                     onClick={handleGetDirections}
                   />
+                  {showMeetConnectHint && (
+                    <p className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-center text-sm text-amber-900">
+                      You chose <strong>Google Meet</strong>. A join link will appear here once your host has
+                      connected Google Calendar. If you need the link sooner, call or email the workspace
+                      using the details above.
+                    </p>
+                  )}
                   {joinUrl && (
                     <a
                       href={joinUrl}

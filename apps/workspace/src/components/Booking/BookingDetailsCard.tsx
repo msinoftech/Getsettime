@@ -37,7 +37,11 @@ import type {
 } from '@/src/types/booking-entities';
 import type { NormalizedIntakeForm } from '@/src/utils/intakeForm';
 import { BOOKING_STATUSES, type Booking } from '@/src/types/booking';
-import { format_booking_location_type_display } from '@/src/types/event_type_location';
+import {
+  format_booking_location_type_display,
+  parse_booking_location_meeting_option,
+} from '@/src/types/event_type_location';
+import { resolve_meeting_join_url_from_booking } from '@/src/utils/google_meet';
 
 async function copy_text_to_clipboard(text: string): Promise<boolean> {
   if (typeof window === 'undefined') return false;
@@ -151,6 +155,8 @@ export interface BookingDetailsCardProps {
   onCancelBooking?: () => void;
   onDeleteBooking?: () => void;
   onSaveAdminNotice?: (notice: string) => void;
+  /** After admin triggers Google Meet sync from Calendar; receives updated booking row */
+  onGoogleMeetSynced?: (booking: Booking) => void;
   /** Per-button loader + green checkmark after PATCH for status shortcuts */
   quickActionFeedback?: BookingQuickActionFeedback;
 }
@@ -182,6 +188,7 @@ export function BookingDetailsCard({
   onDeleteBooking,
   onSaveAdminNotice,
   quickActionFeedback = null,
+  onGoogleMeetSynced,
 }: BookingDetailsCardProps) {
   const invitee_inline_edit = typeof onSaveInvitee === 'function';
   const booking_inline_edit = typeof onSaveBookingDetails === 'function';
@@ -500,6 +507,47 @@ export function BookingDetailsCard({
       ),
     [booking.location, booking.event_types?.location_type]
   );
+
+  const googleMeetJoinUrl = useMemo(() => {
+    if (parse_booking_location_meeting_option(booking.location) !== 'google_meet')
+      return null;
+    return (
+      resolve_meeting_join_url_from_booking(booking.location, booking.metadata) ?? null
+    );
+  }, [booking.location, booking.metadata]);
+
+  const [google_meet_syncing, set_google_meet_syncing] = useState(false);
+  const [google_meet_sync_error, set_google_meet_sync_error] = useState<string | null>(null);
+
+  const sync_google_meet = useCallback(async () => {
+    if (!onGoogleMeetSynced || !booking.id) return;
+    set_google_meet_sync_error(null);
+    set_google_meet_syncing(true);
+    try {
+      const { supabase } = await import('@/lib/supabaseClient');
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      if (!session?.access_token) {
+        set_google_meet_sync_error('Not signed in.');
+        return;
+      }
+      const res = await fetch(`/api/bookings/${booking.id}/google-meet`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+      const json = (await res.json()) as { data?: Booking; error?: string };
+      if (!res.ok) {
+        set_google_meet_sync_error(json.error || 'Could not sync Meet link.');
+        return;
+      }
+      if (json.data) onGoogleMeetSynced(json.data);
+    } catch (e: unknown) {
+      set_google_meet_sync_error(e instanceof Error ? e.message : 'Sync failed.');
+    } finally {
+      set_google_meet_syncing(false);
+    }
+  }, [booking.id, onGoogleMeetSynced]);
 
   const has_service_provider_id =
     booking.service_provider_id != null &&
@@ -955,6 +1003,53 @@ export function BookingDetailsCard({
                 }
               />
               <InfoCard label="Meeting type" value={bookingLocationTypeLabel} />
+              {googleMeetJoinUrl ? (
+                <div className="flex flex-col gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3 sm:col-span-2">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Google Meet link
+                  </span>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <a
+                      href={googleMeetJoinUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="break-all text-sm font-medium text-indigo-600 underline decoration-indigo-400 underline-offset-2 hover:text-indigo-800"
+                    >
+                      Open meeting
+                    </a>
+                    <button
+                      type="button"
+                      onClick={() => void copy_text_to_clipboard(googleMeetJoinUrl)}
+                      className="text-sm font-medium text-slate-700 underline decoration-slate-400 underline-offset-2 hover:text-slate-900"
+                    >
+                      Copy link
+                    </button>
+                  </div>
+                </div>
+              ) : parse_booking_location_meeting_option(booking.location) === 'google_meet' ? (
+                <div className="space-y-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 sm:col-span-2">
+                  <p>
+                    Google Meet was selected. If Calendar is connected, use the button below to
+                    load the join link. New bookings also pick it up automatically when the event
+                    syncs.
+                  </p>
+                  {typeof onGoogleMeetSynced === 'function' ? (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        disabled={google_meet_syncing}
+                        onClick={() => void sync_google_meet()}
+                        className="rounded-md bg-amber-100 px-3 py-1.5 text-xs font-semibold text-amber-950 ring-1 ring-amber-300 hover:bg-amber-200 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {google_meet_syncing ? 'Syncing…' : 'Pull Meet link from Calendar'}
+                      </button>
+                      {google_meet_sync_error ? (
+                        <span className="text-red-800">{google_meet_sync_error}</span>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
               {booking_info_editing && booking_inline_edit ? (
                 <>
                   <InviteeEditField label="Service Provider">

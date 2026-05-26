@@ -1,4 +1,6 @@
 import { google } from 'googleapis';
+import type { calendar_v3 } from 'googleapis';
+import type { GaxiosResponse } from 'gaxios';
 import {
   getIntegration,
   getLinkedAuthUserIdFromConfig,
@@ -17,6 +19,12 @@ export interface CreateCalendarEventParams {
   location?: string;
   attendeeEmail?: string;
   metadata?: { bookingId?: string; eventTypeName?: string };
+  /** When true, creates a Google Meet link on the event (Calendar API conferenceData). */
+  addGoogleMeet?: boolean;
+  /** Stable id for Meet createRequest (e.g. booking id); required when addGoogleMeet is true. */
+  meetRequestId?: string | number | null;
+  /** IANA timezone for event start/end when using dateTime. */
+  timeZone?: string;
 }
 
 export interface BusySlot {
@@ -80,12 +88,79 @@ async function getCalendarClient(options: CalendarClientOptions) {
   return google.calendar({ version: 'v3', auth: oauth2Client });
 }
 
+function extract_meet_link_from_calendar_event(data: {
+  hangoutLink?: string | null;
+  conferenceData?: {
+    entryPoints?: { entryPointType?: string | null; uri?: string | null }[] | null;
+  } | null;
+}): string | undefined {
+  const hangout = data.hangoutLink?.trim();
+  if (hangout) return hangout;
+  const entries = data.conferenceData?.entryPoints;
+  if (!entries?.length) return undefined;
+  const video = entries.find((e) => e.entryPointType === 'video');
+  const uri = video?.uri?.trim();
+  return uri || undefined;
+}
+
+type GoogleCalendarApi = NonNullable<Awaited<ReturnType<typeof getCalendarClient>>>;
+
+/**
+ * `events.insert` sometimes omits hangoutLink/conferenceData until the event is re-fetched.
+ * Poll with `conferenceDataVersion: 1` so we can persist `meeting_url` reliably.
+ */
+async function poll_google_meet_link_after_insert(
+  calendar: GoogleCalendarApi,
+  eventId: string
+): Promise<string | undefined> {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    if (attempt > 0) {
+      await new Promise((r) => setTimeout(r, 650));
+    }
+    try {
+      const getRes = await (
+        calendar.events.get as unknown as (args: {
+          calendarId: string;
+          eventId: string;
+          conferenceDataVersion?: number;
+        }) => Promise<GaxiosResponse<calendar_v3.Schema$Event>>
+      )({
+        calendarId: 'primary',
+        eventId,
+        conferenceDataVersion: 1,
+      });
+      const data = getRes.data;
+      const link = extract_meet_link_from_calendar_event(data);
+      if (link) return link;
+    } catch (err) {
+      console.warn('poll_google_meet_link_after_insert get failed:', err);
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Load Meet join URL for an existing calendar event (retries for delayed conference data).
+ */
+export async function fetchGoogleMeetLinkForCalendarEvent(params: {
+  workspaceId: number;
+  serviceProviderId?: string | null;
+  eventId: string;
+}): Promise<string | undefined> {
+  const calendar = await getCalendarClient({
+    workspaceId: params.workspaceId,
+    serviceProviderId: params.serviceProviderId,
+  });
+  if (!calendar) return undefined;
+  return poll_google_meet_link_after_insert(calendar, params.eventId);
+}
+
 /**
  * Create a calendar event when a booking is created
  */
 export async function createCalendarEvent(
   params: CreateCalendarEventParams
-): Promise<{ eventId: string | null; error?: string }> {
+): Promise<{ eventId: string | null; meetLink?: string; error?: string }> {
   const {
     workspaceId,
     serviceProviderId,
@@ -96,24 +171,44 @@ export async function createCalendarEvent(
     location,
     attendeeEmail,
     metadata,
+    addGoogleMeet,
+    meetRequestId,
+    timeZone,
   } = params;
+
+  /** DB ids may arrive as numbers; Meet requestId must be a trimmed string. */
+  const meet_request_id =
+    meetRequestId === undefined || meetRequestId === null
+      ? ''
+      : String(meetRequestId).trim();
 
   try {
     const calendar = await getCalendarClient({ workspaceId, serviceProviderId });
     if (!calendar) return { eventId: null };
 
+    const dateTimeFields = (iso: string) =>
+      timeZone?.trim()
+        ? { dateTime: iso, timeZone: timeZone.trim() }
+        : { dateTime: iso };
+
     const event: {
       summary: string;
       description?: string;
-      start: { dateTime: string };
-      end: { dateTime: string };
+      start: { dateTime: string; timeZone?: string };
+      end: { dateTime: string; timeZone?: string };
       location?: string;
       attendees?: { email: string }[];
       extendedProperties?: { shared: Record<string, string> };
+      conferenceData?: {
+        createRequest: {
+          requestId: string;
+          conferenceSolutionKey: { type: string };
+        };
+      };
     } = {
       summary,
-      start: { dateTime: startAt },
-      end: { dateTime: endAt },
+      start: dateTimeFields(startAt),
+      end: dateTimeFields(endAt),
     };
     if (description) event.description = description;
     if (location) event.location = location;
@@ -123,13 +218,30 @@ export async function createCalendarEvent(
       if (metadata.eventTypeName) event.extendedProperties.shared.eventTypeName = metadata.eventTypeName;
     }
 
+    if (addGoogleMeet && meet_request_id) {
+      event.conferenceData = {
+        createRequest: {
+          requestId: meet_request_id.slice(0, 256),
+          conferenceSolutionKey: { type: 'hangoutsMeet' },
+        },
+      };
+    }
+
     const res = await calendar.events.insert({
       calendarId: 'primary',
       requestBody: event,
       sendUpdates: 'none',
+      ...(addGoogleMeet && meet_request_id ? { conferenceDataVersion: 1 } : {}),
     });
 
-    return { eventId: res.data.id ?? null };
+    const eventId = res.data.id ?? null;
+    let meetLink = extract_meet_link_from_calendar_event(res.data);
+
+    if (addGoogleMeet && meet_request_id && eventId && !meetLink?.trim()) {
+      meetLink = await poll_google_meet_link_after_insert(calendar, eventId);
+    }
+
+    return { eventId, meetLink };
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Unknown error';
     console.error('createCalendarEvent error:', msg);
