@@ -22,6 +22,8 @@ import {
 import { resolve_workspace_logo_src } from '@/src/utils/workspace_logo';
 import { format_booking_location_type_display, parse_booking_location_meeting_option } from '@/src/types/event_type_location';
 import { resolve_meeting_join_url_from_booking } from '@/src/utils/google_meet';
+import { get_previous_appointment_times } from '@/src/utils/booking_reschedule';
+import { PreviousAppointmentTimes } from '@/src/components/Booking/PreviousAppointmentTimes';
 
 type BookingPreviewData = Omit<Booking, 'id' | 'workspace_id' | 'host_user_id'>;
 
@@ -500,6 +502,11 @@ function BookingPreviewContent({
   const endDisplay =
     booking.end_at != null ? `${formatDate(booking.end_at)}, ${formatTime(booking.end_at)}` : 'N/A';
 
+  const previous_appointment_times = useMemo(
+    () => get_previous_appointment_times(booking.metadata),
+    [booking.metadata]
+  );
+
   const statusLabel = formatStatusLabel(booking.status);
   const statusLower = (booking.status || '').toLowerCase();
   const joinUrl =
@@ -856,7 +863,11 @@ ${booking_preview_supplement_css()}
                   icon={<PreviewIcon name="calendar" className="h-4 w-4" />}
                   title="Appointment Schedule"
                 />
-                <div className="bp-print-fields-grid grid gap-4 p-5 sm:grid-cols-2">
+                <div className="space-y-4 p-5">
+                  {previous_appointment_times && (
+                    <PreviousAppointmentTimes times={previous_appointment_times} />
+                  )}
+                  <div className="bp-print-fields-grid grid gap-4 sm:grid-cols-2">
                   <InfoCard label="Start Date / Time" value={startDisplay} accent="indigo" />
                   <InfoCard label="End Date / Time" value={endDisplay} />
                   <InfoCard label="Duration" value={durationDisplay} />
@@ -869,6 +880,7 @@ ${booking_preview_supplement_css()}
                       />
                     }
                   />
+                  </div>
                 </div>
               </section>
 

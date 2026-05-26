@@ -11,6 +11,7 @@ import { is_whatsapp_admin_enabled } from '@/lib/workspace-notification-flags';
 import { resolveAvailabilityForServiceProvider } from '@/src/utils/availabilityResolution';
 import { resolveNotificationsForServiceProvider } from '@/src/utils/providerSettingsResolution';
 import { resolve_meeting_join_url_from_booking } from '@/src/utils/google_meet';
+import { merge_reschedule_metadata } from '@/src/utils/booking_reschedule';
 
 type DayName = 'Sun' | 'Mon' | 'Tue' | 'Wed' | 'Thu' | 'Fri' | 'Sat';
 
@@ -171,6 +172,12 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    const reschedule_metadata = merge_reschedule_metadata(
+      booking.metadata as Record<string, unknown> | null | undefined,
+      previousStartAt,
+      previousEndAt ?? null
+    );
+
     // --- Update booking ---
     const { data: updated, error: updateError } = await supabase
       .from('bookings')
@@ -179,6 +186,7 @@ export async function POST(req: NextRequest) {
         end_at: end_at || null,
         status: 'reschedule',
         is_reschedule_viewed: false,
+        metadata: reschedule_metadata,
       })
       .eq('id', booking.id)
       .select()

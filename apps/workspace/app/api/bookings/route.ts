@@ -27,6 +27,7 @@ import {
   resolveMeetingOptionsForServiceProvider,
   resolveNotificationsForServiceProvider,
 } from '@/src/utils/providerSettingsResolution';
+import { merge_reschedule_metadata } from '@/src/utils/booking_reschedule';
 
 type DayName = "Sun" | "Mon" | "Tue" | "Wed" | "Thu" | "Fri" | "Sat";
 
@@ -1031,6 +1032,15 @@ export async function PATCH(req: NextRequest) {
     const timeChanged = startChanged || endChanged;
     if (timeChanged && nextIsRescheduleStatus) {
       updateData.is_reschedule_viewed = false;
+      const mergedBase = (metadata !== undefined ? metadata : existingRow.metadata) as
+        | Record<string, unknown>
+        | null
+        | undefined;
+      updateData.metadata = merge_reschedule_metadata(
+        mergedBase,
+        existingRow.start_at,
+        existingRow.end_at ?? null
+      );
     }
 
     const next_invitee_name =
@@ -1071,10 +1081,11 @@ export async function PATCH(req: NextRequest) {
           updateData.contact_id = resolved.contact_id;
         }
         if (resolved.metadata_patch) {
-          const mergedBase = (metadata !== undefined ? metadata : existingRow.metadata) as
-            | Record<string, unknown>
-            | null
-            | undefined;
+          const mergedBase = (updateData.metadata !== undefined
+            ? updateData.metadata
+            : metadata !== undefined
+              ? metadata
+              : existingRow.metadata) as Record<string, unknown> | null | undefined;
           updateData.metadata = {
             ...(typeof mergedBase === 'object' && mergedBase !== null ? mergedBase : {}),
             invitee_change: resolved.metadata_patch,

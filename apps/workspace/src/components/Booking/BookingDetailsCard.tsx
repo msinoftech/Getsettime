@@ -42,6 +42,8 @@ import {
   parse_booking_location_meeting_option,
 } from '@/src/types/event_type_location';
 import { resolve_meeting_join_url_from_booking } from '@/src/utils/google_meet';
+import { get_previous_appointment_times } from '@/src/utils/booking_reschedule';
+import { PreviousAppointmentTimes } from './PreviousAppointmentTimes';
 
 async function copy_text_to_clipboard(text: string): Promise<boolean> {
   if (typeof window === 'undefined') return false;
@@ -515,6 +517,11 @@ export function BookingDetailsCard({
       resolve_meeting_join_url_from_booking(booking.location, booking.metadata) ?? null
     );
   }, [booking.location, booking.metadata]);
+
+  const previous_appointment_times = useMemo(
+    () => get_previous_appointment_times(booking.metadata),
+    [booking.metadata]
+  );
 
   const [google_meet_syncing, set_google_meet_syncing] = useState(false);
   const [google_meet_sync_error, set_google_meet_sync_error] = useState<string | null>(null);
@@ -1213,6 +1220,13 @@ export function BookingDetailsCard({
                 Reschedule
               </button>
             </div>
+
+            {previous_appointment_times && (
+              <PreviousAppointmentTimes
+                times={previous_appointment_times}
+                className="mb-4"
+              />
+            )}
 
             <div className="grid gap-4 sm:grid-cols-2">
               <InfoCard
