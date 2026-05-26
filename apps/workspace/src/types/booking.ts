@@ -34,6 +34,7 @@ export type Booking = {
   event_types?: {
     title: string;
     duration_minutes?: number | null;
+    location_type?: string | null;
   } | null;
   contacts?: {
     name: string | null;

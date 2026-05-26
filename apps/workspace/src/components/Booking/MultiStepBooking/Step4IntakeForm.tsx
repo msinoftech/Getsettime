@@ -183,46 +183,7 @@ export function Step4IntakeForm({
           </div>
         )}
 
-        {enabledMeetingOptionKeys.length > 1 && onMeetingOptionChange && (
-          <div className="group" role="radiogroup" aria-labelledby="meeting-option-heading">
-            <div
-              id="meeting-option-heading"
-              className="text-sm font-semibold text-gray-700"
-            >
-              How would you like to meet?
-              {showFieldError('meeting_option') ? <span className="text-red-500"> *</span> : null}
-            </div>
-            <div className="mt-3 flex flex-wrap gap-2">
-              {enabledMeetingOptionKeys.map((key) => {
-                const selected = selectedMeetingOption === key;
-                return (
-                  <label
-                    key={key}
-                    className={`inline-flex cursor-pointer items-center gap-2 rounded-full border-2 px-4 py-2 text-sm font-semibold transition-all ${
-                      selected
-                        ? 'border-indigo-600 bg-indigo-600 text-white shadow-lg'
-                        : 'border-gray-200 bg-white text-gray-700 hover:border-indigo-400 hover:bg-indigo-50'
-                    } ${showFieldError('meeting_option') ? 'border-red-300' : ''}`}
-                  >
-                    <input
-                      type="radio"
-                      name="meeting_option"
-                      className="sr-only"
-                      checked={selected}
-                      onChange={() => onMeetingOptionChange(key)}
-                    />
-                    <span className="truncate max-w-[220px]">{label_for_meeting_option_key(key)}</span>
-                  </label>
-                );
-              })}
-            </div>
-            {showFieldError('meeting_option') && (
-              <p className="mt-2 text-xs font-medium text-red-600">{intakeValidation.meeting_option}</p>
-            )}
-          </div>
-        )}
-
-        {isServicesEnabled(intakeForm) && !hideIntakeCatalogServices && (
+        {/* {isServicesEnabled(intakeForm) && !hideIntakeCatalogServices && (
           <div className="group">
             <div className="text-sm font-semibold text-gray-700">
               Services{showFieldError('services') ? <span className="text-red-500"> *</span> : null}
@@ -252,6 +213,51 @@ export function Step4IntakeForm({
             </div>
             {showFieldError('services') && (
               <p className="mt-2 text-xs font-medium text-red-600">{intakeValidation.services}</p>
+            )}
+          </div>
+        )} */}
+
+        {enabledMeetingOptionKeys.length > 0 && onMeetingOptionChange && (
+          <div className="group" role="radiogroup" aria-labelledby="meeting-option-heading">
+            <div
+              id="meeting-option-heading"
+              className="text-sm font-semibold text-gray-700"
+            >
+              Meeting type
+              {showFieldError('meeting_option') ? <span className="text-red-500"> *</span> : null}
+            </div>
+            <p className="mt-1 text-xs text-gray-500">
+              {enabledMeetingOptionKeys.length > 1
+                ? 'Choose how you would like to meet for this appointment.'
+                : 'Meeting type for this event.'}
+            </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {enabledMeetingOptionKeys.map((key) => {
+                const selected = selectedMeetingOption === key;
+                return (
+                  <label
+                    key={key}
+                    className={`inline-flex cursor-pointer items-center gap-2 rounded-full border-2 px-4 py-2 text-sm font-semibold transition-all ${
+                      selected
+                        ? 'border-indigo-600 bg-indigo-600 text-white shadow-lg'
+                        : 'border-gray-200 bg-white text-gray-700 hover:border-indigo-400 hover:bg-indigo-50'
+                    } ${showFieldError('meeting_option') ? 'border-red-300' : ''}`}
+                  >
+                    <input
+                      type="radio"
+                      name="meeting_option"
+                      className="sr-only"
+                      checked={selected}
+                      onChange={() => onMeetingOptionChange(key)}
+                      disabled={enabledMeetingOptionKeys.length === 1}
+                    />
+                    <span className="truncate max-w-[220px]">{label_for_meeting_option_key(key)}</span>
+                  </label>
+                );
+              })}
+            </div>
+            {showFieldError('meeting_option') && (
+              <p className="mt-2 text-xs font-medium text-red-600">{intakeValidation.meeting_option}</p>
             )}
           </div>
         )}

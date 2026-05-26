@@ -47,7 +47,7 @@ export async function GET(req: NextRequest) {
 
     let query = supabase
       .from('event_types')
-      .select('id, title, slug, duration_minutes, owner_id, is_public')
+      .select('id, title, slug, duration_minutes, owner_id, is_public, location_type')
       .eq('workspace_id', workspaceIdResolved)
       .eq('is_public', true);
 

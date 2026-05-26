@@ -7,7 +7,7 @@ import { StatusBadge } from '@/src/components/Booking/StatusBadge';
 import type { NormalizedIntakeForm } from '@/src/utils/intakeForm';
 import {
   normalizeIntakeForm,
-  buildIntakeCustomFieldsForPreviewDisplay,
+  listBookingIntakeCustomFieldCards,
 } from '@/src/utils/intakeForm';
 import type { Service, Department, ServiceProvider } from '@/src/types/booking-entities';
 import type { Booking } from '@/src/types/booking';
@@ -20,6 +20,7 @@ import {
   get_service_provider_display_phone,
 } from '@/src/utils/service_provider_display';
 import { resolve_workspace_logo_src } from '@/src/utils/workspace_logo';
+import { format_booking_location_type_display } from '@/src/types/event_type_location';
 
 type BookingPreviewData = Omit<Booking, 'id' | 'workspace_id' | 'host_user_id'>;
 
@@ -470,31 +471,29 @@ function BookingPreviewContent({
   const intakeServicesDisplay =
     selectedServiceNames.length > 0 ? selectedServiceNames.join(', ') : '—';
 
-  const intakePayload = intakeFormData ?? {};
-  const intakeCustomFieldRows = buildIntakeCustomFieldsForPreviewDisplay(
-    intakePayload,
-    intakeFormRaw,
-    intakeFormSettings?.custom_fields ?? null
+  const customFieldCards = useMemo(
+    () =>
+      listBookingIntakeCustomFieldCards(
+        intakeFormData,
+        intakeFormRaw,
+        intakeFormSettings?.custom_fields ?? null
+      ),
+    [intakeFormData, intakeFormRaw, intakeFormSettings?.custom_fields]
   );
 
   const notes = intakeFormData?.additional_description as string | undefined;
   const legacyNotes = booking.metadata?.notes as string | undefined;
   const metaDesc = booking.metadata?.additional_description as string | undefined;
-  const displayNotes = notes || legacyNotes || metaDesc || 'N/A';
+  const displayNotes = notes || legacyNotes || metaDesc || '';
 
   const fileUploadUrl = intakeFormData?.file_upload_url as string | undefined;
   const fileUploadName = fileUploadUrl
     ? decodeURIComponent(fileUploadUrl.split('/').pop() || 'file')
     : '';
 
-  const showNotesInAdditional =
-    (intakeFormSettings?.additional_description === true || intakeFormSettings === null) &&
-    Boolean(displayNotes.trim()) &&
-    displayNotes !== 'N/A';
-
-  /** Custom fields / uploads only — notes stay in Your Note card to avoid duplication. */
-  const showAdditionalInformationSection =
-    intakeCustomFieldRows.length > 0 || !!fileUploadUrl;
+  const showAdditionalInfo =
+    intakeFormSettings?.additional_description === true ||
+    intakeFormSettings === null;
 
   const displayName =
     booking.invitee_name?.trim() || booking.contacts?.name?.trim() || 'N/A';
@@ -523,6 +522,15 @@ function BookingPreviewContent({
     booking.event_types?.title != null
       ? `${booking.event_types.title}${eventDurationInner != null ? ` (${eventDurationInner})` : ''}`
       : 'N/A';
+
+  const bookingLocationTypeLabel = useMemo(
+    () =>
+      format_booking_location_type_display(
+        booking.location,
+        booking.event_types?.location_type ?? null
+      ),
+    [booking.location, booking.event_types?.location_type]
+  );
 
   const startDisplay =
     booking.start_at != null
@@ -906,6 +914,7 @@ ${booking_preview_supplement_css()}
                 />
                 <div className="bp-print-fields-grid grid gap-4 p-5 sm:grid-cols-2">
                   <InfoCard label="Appointment Type" value={eventTypeDisplay} accent="slate" />
+                  <InfoCard label="Meeting type" value={bookingLocationTypeLabel} accent="slate" />
                   <InfoCard label="Host Contact" value={hostContactPhone || '—'} accent="slate" />
                 </div>
               </section>
@@ -923,58 +932,74 @@ ${booking_preview_supplement_css()}
                   </div>
                 </section>
 
-                <section className="print-card overflow-hidden rounded-[24px] border border-slate-200 bg-white shadow-sm">
-                  <SectionHeader
-                    icon={<PreviewIcon name="file" className="h-4 w-4" />}
-                    title="Your Note"
-                  />
-                  <div className="p-5">
-                    <div className="whitespace-pre-line rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm leading-7 text-slate-700">
-                      {showNotesInAdditional ? displayNotes : '—'}
+                {customFieldCards.length > 0 && (
+                  <section className="print-card overflow-hidden rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm">
+                    <h2 className="mb-4 text-sm font-bold uppercase tracking-[0.18em] text-slate-500">
+                      Custom Fields
+                    </h2>
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      {customFieldCards.map((field) => (
+                        <InfoCard
+                          key={field.id}
+                          label={field.label}
+                          value={field.value || 'N/A'}
+                        />
+                      ))}
                     </div>
-                  </div>
-                </section>
+                  </section>
+                )}
 
-                {showAdditionalInformationSection && (
-                  <section className="print-card overflow-hidden rounded-[24px] border border-slate-200 bg-white shadow-sm">
-                    <SectionHeader
-                      icon={<PreviewIcon name="file" className="h-4 w-4" />}
-                      title="Additional Information"
-                    />
-                    <div className="space-y-4 p-5">
-                      {intakeCustomFieldRows.length > 0 && (
-                        <div className="space-y-2 text-sm leading-7 text-slate-800">
-                          {intakeCustomFieldRows.map((row) => (
-                            <p key={row.id} className="break-words">
-                              <span className="font-bold text-slate-900">{row.label}:</span>{' '}
-                              <span className="font-normal">{row.value}</span>
-                            </p>
-                          ))}
-                        </div>
-                      )}
-                      {fileUploadUrl && (
-                        <div>
-                          <div className="bp-print-label mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
-                            Uploaded file
-                          </div>
-                          <a
-                            href={fileUploadUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-800 shadow-sm transition hover:bg-blue-100"
-                          >
-                            <svg className="h-5 w-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                                strokeWidth={2}
-                                d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-                              />
-                            </svg>
-                            <span className="max-w-xs truncate">{fileUploadName}</span>
-                          </a>
-                        </div>
-                      )}
+                {fileUploadUrl && (
+                  <section className="print-card overflow-hidden rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm">
+                    <h2 className="mb-4 text-sm font-bold uppercase tracking-[0.18em] text-slate-500">
+                      Uploaded File
+                    </h2>
+                    <a
+                      href={fileUploadUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-2 rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-2.5 text-indigo-700 transition-colors hover:bg-indigo-100"
+                    >
+                      <svg
+                        className="h-5 w-5 flex-shrink-0"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                        />
+                      </svg>
+                      <span className="max-w-xs truncate text-sm font-medium">
+                        {fileUploadName}
+                      </span>
+                      <svg
+                        className="h-4 w-4 flex-shrink-0"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"
+                        />
+                      </svg>
+                    </a>
+                  </section>
+                )}
+
+                {showAdditionalInfo && (
+                  <section className="print-card overflow-hidden rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm">
+                    <h2 className="mb-4 text-sm font-bold uppercase tracking-[0.18em] text-slate-500">
+                      Notes &amp; Additional Information
+                    </h2>
+                    <div className="whitespace-pre-line rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm leading-7 text-slate-700">
+                      {displayNotes || 'N/A'}
                     </div>
                   </section>
                 )}

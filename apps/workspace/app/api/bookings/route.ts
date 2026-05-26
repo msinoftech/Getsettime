@@ -113,7 +113,7 @@ export async function GET(req: NextRequest) {
     // Build query with search filter, event_types and contacts join
     let query = supabase
       .from('bookings')
-      .select('*, event_types(title, duration_minutes), contacts(name, phone, email)', { count: 'exact' })
+      .select('*, event_types(title, duration_minutes, location_type), contacts(name, phone, email)', { count: 'exact' })
       .eq('workspace_id', workspaceId);
 
     if (sortBy === 'service_provider') {

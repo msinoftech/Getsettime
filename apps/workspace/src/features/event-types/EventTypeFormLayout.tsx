@@ -1,6 +1,23 @@
 "use client";
 
-import { useCallback } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { LuCheck, LuChevronDown } from "react-icons/lu";
+import {
+  EVENT_TYPE_LOCATION_OPTIONS,
+  format_event_type_location_labels,
+  label_for_event_type_location,
+  parse_event_type_location_types,
+  serialize_event_type_location_types,
+  type event_type_location_value,
+} from "@/src/types/event_type_location";
+
+export {
+  EVENT_TYPE_LOCATION_OPTIONS,
+  type event_type_location_value,
+  parse_event_type_location_types as parse_location_types_from_storage,
+  serialize_event_type_location_types as serialize_location_types,
+  format_event_type_location_labels,
+};
 
 export type event_type_form_state = {
   title: string;
@@ -8,7 +25,7 @@ export type event_type_form_state = {
   duration_minutes_part: string;
   buffer_before: string;
   buffer_after: string;
-  location_type: string;
+  location_types: event_type_location_value[];
   is_public: boolean;
 };
 
@@ -58,19 +75,99 @@ function duration_preset_selected(
   return total_duration_minutes(hours, minutes_part) === preset;
 }
 
-function location_type_label(value: string): string {
-  switch (value) {
-    case "in_person":
-      return "In person";
-    case "phone":
-      return "Phone";
-    case "video":
-      return "Video call";
-    case "custom":
-      return "Custom";
-    default:
-      return "Not set";
-  }
+function LocationTypesMultiSelect({
+  value,
+  onChange,
+}: {
+  value: event_type_location_value[];
+  onChange: (next: event_type_location_value[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const listId = useId();
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (e: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  const toggle = (type: event_type_location_value) => {
+    const selected = new Set(value);
+    if (selected.has(type)) selected.delete(type);
+    else selected.add(type);
+    const order = EVENT_TYPE_LOCATION_OPTIONS.map((o) => o.value);
+    onChange(order.filter((v) => selected.has(v)));
+  };
+
+  const triggerLabel =
+    value.length === 0 ? "Select location types" : format_event_type_location_labels(value);
+
+  return (
+    <div ref={rootRef} className="relative">
+      <button
+        type="button"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-controls={listId}
+        onClick={() => setOpen((prev) => !prev)}
+        className="flex w-full items-center justify-between gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-left text-sm outline-none transition focus:border-violet-400 focus:bg-white"
+      >
+        <span className={`truncate ${value.length === 0 ? "text-slate-400" : "text-slate-900"}`}>
+          {triggerLabel}
+        </span>
+        <LuChevronDown
+          className={`h-4 w-4 shrink-0 text-slate-500 transition-transform ${open ? "rotate-180" : ""}`}
+          aria-hidden
+        />
+      </button>
+      {open && (
+        <ul
+          id={listId}
+          role="listbox"
+          aria-multiselectable="true"
+          className="absolute z-20 mt-2 max-h-60 w-full overflow-auto rounded-2xl border border-slate-200 bg-white py-1 shadow-lg"
+        >
+          {EVENT_TYPE_LOCATION_OPTIONS.map((option) => {
+            const selected = value.includes(option.value);
+            return (
+              <li key={option.value} role="option" aria-selected={selected}>
+                <button
+                  type="button"
+                  onClick={() => toggle(option.value)}
+                  className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm text-slate-800 hover:bg-slate-50"
+                >
+                  <span
+                    className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${
+                      selected
+                        ? "border-violet-600 bg-violet-600 text-white"
+                        : "border-slate-300 bg-white"
+                    }`}
+                    aria-hidden
+                  >
+                    {selected ? <LuCheck className="h-3 w-3" /> : null}
+                  </span>
+                  {option.label}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
 }
 
 type EventTypeFormLayoutProps = {
@@ -199,18 +296,11 @@ export function EventTypeFormLayout({
                 </label>
 
                 <label className="block">
-                  <span className="mb-2 block text-sm font-medium text-slate-700">Location type</span>
-                  <select
-                    value={value.location_type}
-                    onChange={(e) => patch({ location_type: e.target.value })}
-                    className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-violet-400 focus:bg-white"
-                  >
-                    <option value="">Select location type</option>
-                    <option value="in_person">In person</option>
-                    <option value="phone">Phone</option>
-                    <option value="video">Video call</option>
-                    <option value="custom">Custom</option>
-                  </select>
+                  <span className="mb-2 block text-sm font-medium text-slate-700">Meeting type</span>
+                  <LocationTypesMultiSelect
+                    value={value.location_types}
+                    onChange={(location_types) => patch({ location_types })}
+                  />
                 </label>
               </div>
 
@@ -386,8 +476,8 @@ export function EventTypeFormLayout({
                   </div>
                   <div className="flex items-center justify-between gap-2 rounded-2xl bg-white/5 px-4 py-3">
                     <span>Location</span>
-                    <span className="shrink-0 font-medium text-white">
-                      {location_type_label(value.location_type)}
+                    <span className="shrink-0 font-medium text-white text-right">
+                      {format_event_type_location_labels(value.location_types)}
                     </span>
                   </div>
                 </div>

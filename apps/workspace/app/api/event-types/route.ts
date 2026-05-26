@@ -88,14 +88,35 @@ function parse_location_type(
   if (value === null || value === undefined) {
     return { ok: true, value: null };
   }
-  const s = String(value).trim();
-  if (!s) {
+
+  let parts: string[];
+  if (Array.isArray(value)) {
+    parts = value.map((v) => String(v).trim()).filter(Boolean);
+  } else {
+    const s = String(value).trim();
+    if (!s) {
+      return { ok: true, value: null };
+    }
+    parts = s.split(',').map((p) => p.trim()).filter(Boolean);
+  }
+
+  if (parts.length === 0) {
     return { ok: true, value: null };
   }
-  if (!EVENT_TYPE_LOCATION_TYPES.has(s)) {
-    return { ok: false, message: 'Invalid location type.' };
+
+  const unique: string[] = [];
+  for (const part of parts) {
+    if (!EVENT_TYPE_LOCATION_TYPES.has(part)) {
+      return { ok: false, message: 'Invalid location type.' };
+    }
+    if (!unique.includes(part)) {
+      unique.push(part);
+    }
   }
-  return { ok: true, value: s };
+
+  const order = ['in_person', 'phone', 'video', 'custom'] as const;
+  const sorted = order.filter((t) => unique.includes(t));
+  return { ok: true, value: sorted.join(',') };
 }
 
 function parse_is_public(value: unknown): boolean {

@@ -47,7 +47,7 @@ export async function GET(
 
     const { data: booking, error } = await supabase
       .from('bookings')
-      .select('*, event_types(title, duration_minutes), contacts(name, phone, email)')
+      .select('*, event_types(title, duration_minutes, location_type), contacts(name, phone, email)')
       .eq('id', id)
       .eq('workspace_id', workspaceId)
       .maybeSingle();

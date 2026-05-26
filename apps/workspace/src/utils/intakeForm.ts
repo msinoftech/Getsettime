@@ -92,6 +92,8 @@ const INTAKE_FORM_PAYLOAD_RESERVED_KEYS = new Set([
   'additional_description',
   'file_upload_url',
   'whatsapp_opt_in',
+  /** Shown as "Meeting type" on booking details / preview, not a workspace custom field. */
+  'meeting_option',
 ]);
 
 export function isIntakeFormReservedPayloadKey(key: string): boolean {
@@ -267,5 +269,51 @@ export function buildIntakeCustomFieldsForPreviewDisplay(
     }));
 
   const orphans = buildOrphanIntakeFieldsForDisplay(data, schemaIds);
+  return [...fromSchema, ...orphans];
+}
+
+/**
+ * Custom-field cards for booking details / preview: workspace labels (no generic fallback),
+ * schema from normalized settings with raw JSON fallback, payload key coercion.
+ */
+export function listBookingIntakeCustomFieldCards(
+  intakePayload: Record<string, unknown> | undefined | null,
+  intakeFormRaw: unknown,
+  normalizedFields: IntakeFieldSchemaRow[] | undefined | null
+): Array<{ id: string; label: string; value: string }> {
+  const parsed = parseIntakeCustomFieldsSchema(intakeFormRaw);
+  const byParsedLabel = new Map(parsed.map((p) => [String(p.id), p.label.trim()]));
+
+  const baseSchema: IntakeFieldSchemaRow[] =
+    normalizedFields && normalizedFields.length > 0 ? normalizedFields : parsed;
+
+  const schema: IntakeFieldSchemaRow[] = baseSchema.map((f) => {
+    const id = String(f.id);
+    const normLabel = typeof f.label === 'string' ? f.label.trim() : '';
+    const parsedLabel = byParsedLabel.get(id) ?? '';
+    return { id, label: normLabel || parsedLabel };
+  });
+
+  const data = intakePayload ?? {};
+  const schemaIds = new Set(schema.map((f) => String(f.id)));
+
+  const fromSchema = schema
+    .filter((field) => intakeCustomFieldHasDisplayValue(getIntakePayloadValue(data, field.id)))
+    .map((field) => ({
+      id: String(field.id),
+      label: field.label,
+      value: formatIntakeFieldValueForDisplay(getIntakePayloadValue(data, field.id)),
+    }));
+
+  const orphans = buildOrphanIntakeFieldsForDisplay(data, schemaIds).map((row) => {
+    const parsedLabel = byParsedLabel.get(String(row.id)) ?? '';
+    const normField = normalizedFields?.find((f) => String(f.id) === String(row.id));
+    const normLabel = typeof normField?.label === 'string' ? normField.label.trim() : '';
+    return {
+      ...row,
+      label: normLabel || parsedLabel || row.label,
+    };
+  });
+
   return [...fromSchema, ...orphans];
 }

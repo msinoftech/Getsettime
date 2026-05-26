@@ -16,7 +16,7 @@ export async function GET(
 
     const { data: booking, error } = await supabase
       .from('bookings')
-      .select('*, event_types(title, duration_minutes), contacts(name, phone, email)')
+      .select('*, event_types(title, duration_minutes, location_type), contacts(name, phone, email)')
       .eq('public_code', code)
       .single();
 
@@ -26,7 +26,7 @@ export async function GET(
 
     const workspaceId = booking.workspace_id;
 
-    const [deptResult, providerResult, servicesResult, settingsResult, workspaceResult] = await Promise.all([
+    const [deptResult, providerResult, servicesResult, configResult, workspaceResult] = await Promise.all([
       booking.department_id
         ? supabase
             .from('departments')
@@ -66,8 +66,8 @@ export async function GET(
         .eq('workspace_id', workspaceId),
 
       supabase
-        .from('workspace_settings')
-        .select('intake_form')
+        .from('configurations')
+        .select('settings')
         .eq('workspace_id', workspaceId)
         .single(),
 
@@ -130,7 +130,11 @@ export async function GET(
       serviceProvider,
       workspaceOwner,
       services: servicesResult.data ?? [],
-      intakeFormSettings: settingsResult.data?.intake_form ?? null,
+      intakeFormSettings: (() => {
+        const settings = (configResult.data?.settings ?? {}) as Record<string, unknown>;
+        const intake = settings.intake_form;
+        return intake && typeof intake === 'object' ? intake : null;
+      })(),
       workspace_slug: workspaceResult.data?.slug ?? null,
       workspace_name:
         workspaceResult.data && typeof workspaceResult.data.name === 'string'

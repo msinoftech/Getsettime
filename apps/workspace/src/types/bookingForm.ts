@@ -11,6 +11,8 @@ export interface EventType {
   slug?: string;
   owner_id?: string | null;
   is_public?: boolean | null;
+  /** Single type or comma-separated (e.g. `video,in_person`). */
+  location_type?: string | null;
 }
 
 export type Department = Pick<

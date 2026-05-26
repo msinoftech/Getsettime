@@ -15,7 +15,7 @@ import {
   is_whatsapp_user_enabled,
 } from '@/lib/workspace-notification-flags';
 import {
-  list_enabled_meeting_option_keys,
+  list_bookable_meeting_option_keys,
   type meeting_option_key,
 } from '@/src/utils/meeting_options';
 import { resolveAvailabilityForServiceProvider } from '@/src/utils/availabilityResolution';
@@ -430,16 +430,32 @@ export async function POST(req: NextRequest) {
 
     const publicCode = crypto.randomUUID();
 
+    let eventTypeLocationType: string | null = null;
+    if (event_type_id) {
+      const { data: eventTypeRow } = await supabase
+        .from('event_types')
+        .select('location_type')
+        .eq('id', event_type_id)
+        .eq('workspace_id', workspace_id)
+        .maybeSingle();
+      eventTypeLocationType =
+        typeof eventTypeRow?.location_type === 'string' ? eventTypeRow.location_type : null;
+    }
+
+    const bookableMeetingKeys = list_bookable_meeting_option_keys(
+      eventTypeLocationType,
+      resolvedMeetingOptions
+    );
+
     let locationForInsert: Record<string, unknown> | null = null;
     if (location !== undefined && location !== null) {
       const mo = parse_location_meeting_option(location);
       if (mo === null) {
         return NextResponse.json({ error: 'Invalid location' }, { status: 400 });
       }
-      const allowed = list_enabled_meeting_option_keys(resolvedMeetingOptions);
-      if (!allowed.includes(mo)) {
+      if (!bookableMeetingKeys.includes(mo)) {
         return NextResponse.json(
-          { error: 'Meeting option is not available for this workspace' },
+          { error: 'Meeting option is not available for this event type' },
           { status: 400 }
         );
       }

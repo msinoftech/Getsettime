@@ -130,6 +130,7 @@ export default function RoutingForm({ dark = false }) {
   const [newCustomFieldType, setNewCustomFieldType] = useState<CustomField["field_type"]>("text");
 
   const [loading, setLoading] = useState(false);
+  const [fileUploadSaving, setFileUploadSaving] = useState(false);
   const [alertMessage, setAlertMessage] = useState<string | null>(null);
 
   // Fetch settings on mount
@@ -199,45 +200,62 @@ export default function RoutingForm({ dark = false }) {
     }
   };
 
-  const handleIntakeFormSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
+  const buildIntakeFormPayload = (
+    overrides?: Partial<typeof intakeFormSettings>
+  ) => ({
+    ...intakeFormSettings,
+    ...overrides,
+    name: true,
+    email: true,
+    phone: true,
+    additional_description: true,
+  });
 
+  const persistIntakeFormSettings = async (
+    overrides?: Partial<typeof intakeFormSettings>
+  ): Promise<boolean> => {
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) {
         setAlertMessage('Not authenticated');
-        return;
+        return false;
       }
 
       const response = await fetch('/api/settings', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${session.access_token}`,
+          Authorization: `Bearer ${session.access_token}`,
         },
         body: JSON.stringify({
           settings: {
-            intake_form: {
-              ...intakeFormSettings,
-              name: true,
-              email: true,
-              phone: true,
-              additional_description: true,
-            },
+            intake_form: buildIntakeFormPayload(overrides),
           },
         }),
       });
 
-      if (response.ok) {
-        setAlertMessage('Intake form settings saved successfully!');
-      } else {
+      if (!response.ok) {
         const errorData = await response.json();
         setAlertMessage(`Error: ${errorData.error || 'Failed to save settings'}`);
+        return false;
       }
+      return true;
     } catch (error) {
       console.error('Error saving intake form settings:', error);
       setAlertMessage('An error occurred while saving settings');
+      return false;
+    }
+  };
+
+  const handleIntakeFormSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+
+    try {
+      const ok = await persistIntakeFormSettings();
+      if (ok) {
+        setAlertMessage('Intake form settings saved successfully!');
+      }
     } finally {
       setLoading(false);
     }
@@ -370,8 +388,24 @@ export default function RoutingForm({ dark = false }) {
     [intakeFormSettings.custom_fields]
   );
 
-  const toggleDefaultIntakeField = (key: DefaultIntakeFieldKey) => {
+  const toggleDefaultIntakeField = async (key: DefaultIntakeFieldKey) => {
     if (LOCKED_DEFAULT_INTAKE_FIELDS.has(key)) return;
+
+    if (key === "file_upload") {
+      const nextValue = !intakeFormSettings.file_upload;
+      setIntakeFormSettings((prev) => ({ ...prev, file_upload: nextValue }));
+      setFileUploadSaving(true);
+      try {
+        const ok = await persistIntakeFormSettings({ file_upload: nextValue });
+        if (!ok) {
+          setIntakeFormSettings((prev) => ({ ...prev, file_upload: !nextValue }));
+        }
+      } finally {
+        setFileUploadSaving(false);
+      }
+      return;
+    }
+
     setIntakeFormSettings((prev) => {
       switch (key) {
         case "name":
@@ -380,8 +414,6 @@ export default function RoutingForm({ dark = false }) {
           return { ...prev, email: !prev.email };
         case "phone":
           return { ...prev, phone: !prev.phone };
-        case "file_upload":
-          return { ...prev, file_upload: !prev.file_upload };
         case "additional_description":
           return { ...prev, additional_description: !prev.additional_description };
         default:
@@ -478,6 +510,8 @@ export default function RoutingForm({ dark = false }) {
                 {filteredDefaultFieldMeta.map((field) => {
                   const enabled = defaultFieldEnabled(field.key);
                   const isLocked = LOCKED_DEFAULT_INTAKE_FIELDS.has(field.key);
+                  const isFileUpload = field.key === "file_upload";
+                  const toggleDisabled = isLocked || (isFileUpload && fileUploadSaving);
                   return (
                     <div
                       key={field.key}
@@ -489,16 +523,19 @@ export default function RoutingForm({ dark = false }) {
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2">
                           <h3 className="font-black text-slate-800">{field.label}</h3>
+                          {isFileUpload && fileUploadSaving ? (
+                            <span className="text-xs font-semibold text-blue-600">Saving…</span>
+                          ) : null}
                         </div>
                         <p className="mt-1 text-sm text-slate-500">{field.description}</p>
                       </div>
                       <button
                         type="button"
-                        onClick={() => toggleDefaultIntakeField(field.key)}
+                        onClick={() => void toggleDefaultIntakeField(field.key)}
                         aria-label={isLocked ? `${field.label} is always enabled` : `Toggle ${field.label}`}
                         aria-pressed={enabled}
-                        disabled={isLocked}
-                        className={`relative h-8 w-14 shrink-0 rounded-full transition ${enabled ? "bg-blue-600" : "bg-slate-300"} ${isLocked ? "cursor-not-allowed opacity-20" : ""}`}
+                        disabled={toggleDisabled}
+                        className={`relative h-8 w-14 shrink-0 rounded-full transition ${enabled ? "bg-blue-600" : "bg-slate-300"} ${isLocked ? "cursor-not-allowed opacity-20" : ""} ${isFileUpload && fileUploadSaving ? "cursor-wait opacity-60" : ""}`}
                       >
                         <span
                           className={`absolute top-1 h-6 w-6 rounded-full bg-white shadow transition ${enabled ? "left-7" : "left-1"}`}

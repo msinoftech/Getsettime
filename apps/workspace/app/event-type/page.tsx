@@ -28,9 +28,13 @@ import { ConfirmModal } from "@/src/components/ui/ConfirmModal";
 import { EventTypeSkeleton } from "@/src/components/ui/EventTypeSkeleton";
 import {
   EventTypeFormLayout,
+  format_event_type_location_labels,
+  parse_location_types_from_storage,
+  serialize_location_types,
   split_duration_minutes,
   total_duration_minutes,
   type event_type_form_state,
+  type event_type_location_value,
 } from "@/src/features/event-types/EventTypeFormLayout";
 import { workspace_meeting_options_to_location } from "@/src/utils/meeting_options";
 import { ROLE_SERVICE_PROVIDER } from "@/src/constants/roles";
@@ -126,22 +130,15 @@ function get_card_gradient(id: number): string {
 }
 
 function get_location_label(location: string | null): string {
-  switch (location) {
-    case "video":
-      return "Video Call";
-    case "phone":
-      return "Phone Call";
-    case "in_person":
-      return "In Person";
-    case "custom":
-      return "Custom";
-    default:
-      return "Not set";
-  }
+  const types = parse_location_types_from_storage(location);
+  if (types.length === 0) return "Not set";
+  return format_event_type_location_labels(types);
 }
 
 function get_location_icon(location: string | null) {
-  switch (location) {
+  const types = parse_location_types_from_storage(location);
+  const primary = types[0];
+  switch (primary) {
     case "video":
       return <Video className="h-4 w-4" />;
     case "phone":
@@ -197,15 +194,15 @@ export default function EventTypes() {
   const empty_form = (): event_type_form_state => {
     const default_location_for_form =
       event_settings.default_location === "custom"
-        ? ""
-        : event_settings.default_location;
+        ? []
+        : [event_settings.default_location];
     return {
       title: "",
       duration_hours: "",
       duration_minutes_part: "",
       buffer_before: "",
       buffer_after: "",
-      location_type: default_location_for_form,
+      location_types: default_location_for_form,
       is_public: event_settings.default_visibility === "public",
     };
   };
@@ -352,7 +349,7 @@ export default function EventTypes() {
         duration_minutes: durationMinutes,
         buffer_before: form.buffer_before || null,
         buffer_after: form.buffer_after || null,
-        location_type: form.location_type || null,
+        location_type: serialize_location_types(form.location_types),
         is_public: form.is_public,
       };
 
@@ -430,7 +427,7 @@ export default function EventTypes() {
       duration_minutes_part,
       buffer_before: item.buffer_before?.toString() || "",
       buffer_after: item.buffer_after?.toString() || "",
-      location_type: item.location_type || "",
+      location_types: parse_location_types_from_storage(item.location_type),
       is_public: item.is_public || false,
     });
     setShowForm(true);
@@ -893,7 +890,7 @@ export default function EventTypes() {
                         </div>
                         <div>
                           <p className="text-xs font-medium text-slate-500">
-                            Location
+                            Meeting type
                           </p>
                           <p className="text-sm font-semibold text-slate-800">
                             {get_location_label(item.location_type)}

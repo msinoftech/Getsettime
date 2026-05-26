@@ -1,4 +1,9 @@
 import type { meeting_options_settings } from '@/src/types/workspace';
+import {
+  EVENT_TYPE_LOCATION_TO_MEETING_OPTION,
+  parse_event_type_location_types,
+  type event_type_location_with_meeting_option,
+} from '@/src/types/event_type_location';
 
 /** Keys stored under `settings.meeting_options` (RegisterForm / settings page). */
 export type meeting_option_key = 'google_meet' | 'in_person' | 'phone_call' | 'whatsapp';
@@ -64,4 +69,52 @@ export function effective_meeting_option_key(
   const t = selectedWhenMultiple.trim();
   if (!t || !enabledKeys.includes(t as meeting_option_key)) return null;
   return t as meeting_option_key;
+}
+
+export { parse_event_type_location_types } from '@/src/types/event_type_location';
+
+/** Map event-type location to onboarding `meeting_options` key (`custom` has no key). */
+export function event_type_location_to_meeting_option_key(
+  location: string
+): meeting_option_key | null {
+  if (!location || !(location in EVENT_TYPE_LOCATION_TO_MEETING_OPTION)) {
+    return null;
+  }
+  return EVENT_TYPE_LOCATION_TO_MEETING_OPTION[
+    location as event_type_location_with_meeting_option
+  ];
+}
+
+/**
+ * Meeting options bookable for an event type.
+ * When `location_type` is set (e.g. `in_person,phone`), each value is split and mapped to a booking key.
+ * When empty, falls back to workspace/provider enabled `meeting_options` (legacy).
+ */
+export function list_bookable_meeting_option_keys(
+  eventTypeLocationType: string | null | undefined,
+  meeting_options: meeting_options_settings | unknown
+): meeting_option_key[] {
+  const eventLocations = parse_event_type_location_types(eventTypeLocationType);
+  const fromEvent = eventLocations
+    .map((loc) => event_type_location_to_meeting_option_key(loc))
+    .filter((k): k is meeting_option_key => k != null);
+
+  if (fromEvent.length > 0) {
+    return MEETING_OPTION_ORDER.filter((k) => fromEvent.includes(k));
+  }
+
+  return list_enabled_meeting_option_keys(meeting_options);
+}
+
+/** Default booking choice: onboarding preference when it is bookable, else first event-type option. */
+export function default_booking_meeting_option_key(
+  bookableKeys: meeting_option_key[],
+  meeting_options: meeting_options_settings | unknown
+): meeting_option_key | null {
+  if (bookableKeys.length === 0) return null;
+  const workspaceEnabled = list_enabled_meeting_option_keys(meeting_options);
+  for (const k of MEETING_OPTION_ORDER) {
+    if (bookableKeys.includes(k) && workspaceEnabled.includes(k)) return k;
+  }
+  return MEETING_OPTION_ORDER.find((k) => bookableKeys.includes(k)) ?? bookableKeys[0] ?? null;
 }

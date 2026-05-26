@@ -19,9 +19,10 @@ import {
   parseEventTypeDurationParam,
 } from '@/src/utils/bookingFormUtils';
 import {
+  default_booking_meeting_option_key,
   effective_meeting_option_key,
   label_for_meeting_option_key,
-  list_enabled_meeting_option_keys,
+  list_bookable_meeting_option_keys,
   type meeting_option_key,
 } from '@/src/utils/meeting_options';
 import { BookingPreviewSidebar } from './MultiStepBooking/BookingPreviewSidebar';
@@ -177,23 +178,24 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
 
   const hideIntakeCatalogServices = providerScopedCatalogServices.length > 0;
 
-  const enabledMeetingOptionKeys = useMemo(
-    () => list_enabled_meeting_option_keys(meetingOptions),
-    [meetingOptions]
+  const bookableMeetingOptionKeys = useMemo(
+    () =>
+      list_bookable_meeting_option_keys(selectedType?.location_type, meetingOptions),
+    [selectedType?.location_type, meetingOptions]
   );
 
   const intakeMeetingValidation = useMemo(
     () =>
-      enabledMeetingOptionKeys.length > 1
-        ? { enabledKeys: enabledMeetingOptionKeys, selectedKey: selectedMeetingOption }
+      bookableMeetingOptionKeys.length > 1
+        ? { enabledKeys: bookableMeetingOptionKeys, selectedKey: selectedMeetingOption }
         : null,
-    [enabledMeetingOptionKeys, selectedMeetingOption]
+    [bookableMeetingOptionKeys, selectedMeetingOption]
   );
 
   const meetingChoiceLabel = useMemo(() => {
-    const k = effective_meeting_option_key(enabledMeetingOptionKeys, selectedMeetingOption);
+    const k = effective_meeting_option_key(bookableMeetingOptionKeys, selectedMeetingOption);
     return k ? label_for_meeting_option_key(k) : '';
-  }, [enabledMeetingOptionKeys, selectedMeetingOption]);
+  }, [bookableMeetingOptionKeys, selectedMeetingOption]);
 
   const intakeValidation = useIntakeValidation(
     intakeForm,
@@ -267,10 +269,15 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
 
   useEffect(() => {
     setSelectedMeetingOption((prev) => {
-      if (!prev.trim()) return '';
-      return enabledMeetingOptionKeys.includes(prev as meeting_option_key) ? prev : '';
+      if (
+        prev.trim() &&
+        bookableMeetingOptionKeys.includes(prev as meeting_option_key)
+      ) {
+        return prev;
+      }
+      return default_booking_meeting_option_key(bookableMeetingOptionKeys, meetingOptions) ?? '';
     });
-  }, [enabledMeetingOptionKeys]);
+  }, [selectedType?.id, bookableMeetingOptionKeys, meetingOptions]);
 
   useEffect(() => {
     if (!intakeForm) return;
@@ -498,7 +505,7 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
       if (sendWhatsapp) intakeFormPayload.whatsapp_opt_in = 'true';
 
       const meetingKey = effective_meeting_option_key(
-        enabledMeetingOptionKeys,
+        bookableMeetingOptionKeys,
         selectedMeetingOption
       );
       if (meetingKey) {
@@ -746,7 +753,7 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
                   onBack={() => setStep(3)}
                   onConfirm={handleConfirm}
                   hideIntakeCatalogServices={hideIntakeCatalogServices}
-                  enabledMeetingOptionKeys={enabledMeetingOptionKeys}
+                  enabledMeetingOptionKeys={bookableMeetingOptionKeys}
                   selectedMeetingOption={selectedMeetingOption}
                   onMeetingOptionChange={setSelectedMeetingOption}
                 />

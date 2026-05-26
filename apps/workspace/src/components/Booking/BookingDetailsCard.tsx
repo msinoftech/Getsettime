@@ -37,6 +37,7 @@ import type {
 } from '@/src/types/booking-entities';
 import type { NormalizedIntakeForm } from '@/src/utils/intakeForm';
 import { BOOKING_STATUSES, type Booking } from '@/src/types/booking';
+import { format_booking_location_type_display } from '@/src/types/event_type_location';
 
 async function copy_text_to_clipboard(text: string): Promise<boolean> {
   if (typeof window === 'undefined') return false;
@@ -489,6 +490,15 @@ export function BookingDetailsCard({
 
   const eventDurationInner = getEventTypeDurationInner(
     booking.event_types?.duration_minutes
+  );
+
+  const bookingLocationTypeLabel = useMemo(
+    () =>
+      format_booking_location_type_display(
+        booking.location,
+        booking.event_types?.location_type ?? null
+      ),
+    [booking.location, booking.event_types?.location_type]
   );
 
   const has_service_provider_id =
@@ -944,6 +954,7 @@ export function BookingDetailsCard({
                     : 'N/A'
                 }
               />
+              <InfoCard label="Meeting type" value={bookingLocationTypeLabel} />
               {booking_info_editing && booking_inline_edit ? (
                 <>
                   <InviteeEditField label="Service Provider">

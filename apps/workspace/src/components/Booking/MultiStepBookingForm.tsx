@@ -11,9 +11,10 @@ import { DEFAULT_ACCENT_COLOR, DEFAULT_PRIMARY_COLOR } from '../../constants/boo
 import { sortEventTypesByDuration } from '../../utils/bookingFormUtils';
 import { isServicesEnabled } from '../../utils/intakeForm';
 import {
+  default_booking_meeting_option_key,
   effective_meeting_option_key,
   label_for_meeting_option_key,
-  list_enabled_meeting_option_keys,
+  list_bookable_meeting_option_keys,
   type meeting_option_key,
 } from '../../utils/meeting_options';
 import { isTimeSlotBooked, normalizeDate } from '../../utils/bookingTime';
@@ -138,23 +139,27 @@ const MultiStepBookingForm = ({ onSave, onCancel }: MultiStepBookingFormProps) =
   const resolvedMeetingOptions = providerMeetingOptions ?? settings.meeting_options;
   const resolvedNotifications = providerNotifications ?? settings.notifications;
 
-  const enabledMeetingOptionKeys = useMemo(
-    () => list_enabled_meeting_option_keys(resolvedMeetingOptions),
-    [resolvedMeetingOptions]
+  const bookableMeetingOptionKeys = useMemo(
+    () =>
+      list_bookable_meeting_option_keys(
+        selectedType?.location_type,
+        resolvedMeetingOptions
+      ),
+    [selectedType?.location_type, resolvedMeetingOptions]
   );
 
   const intakeMeetingValidation = useMemo(
     () =>
-      enabledMeetingOptionKeys.length > 1
-        ? { enabledKeys: enabledMeetingOptionKeys, selectedKey: selectedMeetingOption }
+      bookableMeetingOptionKeys.length > 1
+        ? { enabledKeys: bookableMeetingOptionKeys, selectedKey: selectedMeetingOption }
         : null,
-    [enabledMeetingOptionKeys, selectedMeetingOption]
+    [bookableMeetingOptionKeys, selectedMeetingOption]
   );
 
   const meetingChoiceLabel = useMemo(() => {
-    const k = effective_meeting_option_key(enabledMeetingOptionKeys, selectedMeetingOption);
+    const k = effective_meeting_option_key(bookableMeetingOptionKeys, selectedMeetingOption);
     return k ? label_for_meeting_option_key(k) : '';
-  }, [enabledMeetingOptionKeys, selectedMeetingOption]);
+  }, [bookableMeetingOptionKeys, selectedMeetingOption]);
 
   useEffect(() => {
     if (
@@ -255,10 +260,18 @@ const MultiStepBookingForm = ({ onSave, onCancel }: MultiStepBookingFormProps) =
 
   useEffect(() => {
     setSelectedMeetingOption((prev) => {
-      if (!prev.trim()) return '';
-      return enabledMeetingOptionKeys.includes(prev as meeting_option_key) ? prev : '';
+      if (
+        prev.trim() &&
+        bookableMeetingOptionKeys.includes(prev as meeting_option_key)
+      ) {
+        return prev;
+      }
+      return default_booking_meeting_option_key(
+        bookableMeetingOptionKeys,
+        resolvedMeetingOptions
+      ) ?? '';
     });
-  }, [enabledMeetingOptionKeys]);
+  }, [selectedType?.id, bookableMeetingOptionKeys, resolvedMeetingOptions]);
 
   useEffect(() => {
     if (!loadingSettings && general) {
@@ -406,7 +419,7 @@ const MultiStepBookingForm = ({ onSave, onCancel }: MultiStepBookingFormProps) =
       }
 
       const meetingKey = effective_meeting_option_key(
-        enabledMeetingOptionKeys,
+        bookableMeetingOptionKeys,
         selectedMeetingOption
       );
       if (meetingKey) {
@@ -640,7 +653,7 @@ const MultiStepBookingForm = ({ onSave, onCancel }: MultiStepBookingFormProps) =
                   onBack={() => setStep(3)}
                   onConfirm={handleConfirm}
                   hideIntakeCatalogServices={hideIntakeCatalogServices}
-                  enabledMeetingOptionKeys={enabledMeetingOptionKeys}
+                  enabledMeetingOptionKeys={bookableMeetingOptionKeys}
                   selectedMeetingOption={selectedMeetingOption}
                   onMeetingOptionChange={setSelectedMeetingOption}
                 />
