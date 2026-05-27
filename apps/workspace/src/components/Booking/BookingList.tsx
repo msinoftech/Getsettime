@@ -17,6 +17,7 @@ import { type Booking } from "@/src/types/booking";
 import { supabase } from "@/lib/supabaseClient";
 import { useEventTypes, useServiceProviders } from "@/src/hooks/useBookingLookups";
 import { useAuth } from "@/src/providers/AuthProvider";
+import { useCreateBookingModal } from "@/src/providers/CreateBookingModalProvider";
 import { formatDate, formatTime } from "@/src/utils/date";
 import {
   getServiceProviderName,
@@ -24,7 +25,6 @@ import {
   capitalize_booking_display_label,
 } from "@/src/utils/booking";
 import BookingForm from "./BookingForm";
-import MultiStepBookingForm from "./MultiStepBookingForm";
 import { BookingFilters } from "./BookingFilters";
 import { BookingTableRow, type DisplayBooking } from "./BookingTableRow";
 import { StatusBadge } from "./StatusBadge";
@@ -58,6 +58,7 @@ function useDebouncedValue<T>(value: T, delay: number): T {
 }
 
 const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
+  const { open: open_create_booking } = useCreateBookingModal();
   const { user } = useAuth();
   const { data: eventTypes } = useEventTypes();
   const { data: serviceProviders, workspaceOwner } = useServiceProviders();
@@ -78,7 +79,6 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
   const [showForm, setShowForm] = useState(false);
   const [editingBooking, setEditingBooking] = useState<Booking | null>(null);
   const [loading, setLoading] = useState(false);
-  const [showMultiStepForm, setShowMultiStepForm] = useState(false);
   const [deleteConfirmModal, setDeleteConfirmModal] = useState<{ id: string } | null>(null);
   const [alertModal, setAlertModal] = useState<{ message: string } | null>(null);
   const [showBookingUpdatedSuccess, setShowBookingUpdatedSuccess] =
@@ -322,9 +322,8 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
   );
 
   const handleCreate = useCallback(() => {
-    setEditingBooking(null);
-    setShowMultiStepForm(true);
-  }, []);
+    open_create_booking();
+  }, [open_create_booking]);
 
   const handleFormSave = useCallback(async () => {
     setShowForm(false);
@@ -363,34 +362,8 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
 
   const handleFormCancel = useCallback(() => {
     setShowForm(false);
-    setShowMultiStepForm(false);
     setEditingBooking(null);
   }, []);
-
-  const handleMultiStepFormSave = useCallback(async () => {
-    setShowMultiStepForm(false);
-    await fetchBookings(
-      currentPage,
-      debouncedFilter,
-      debouncedDate,
-      debouncedStatus,
-      debouncedEventType,
-      effectiveProviderFilter,
-      debouncedSort
-    );
-    await fetchWorkspaceBookingStats();
-    window.dispatchEvent(new Event('bookings-viewed-update'));
-  }, [
-    currentPage,
-    debouncedFilter,
-    debouncedDate,
-    debouncedStatus,
-    debouncedEventType,
-    effectiveProviderFilter,
-    debouncedSort,
-    fetchBookings,
-    fetchWorkspaceBookingStats,
-  ]);
 
   /** When navigating to `/bookings/[id]`, keep the same viewed / reschedule-ack behavior as the old modal close. */
   const handleBeforeViewBooking = useCallback(
@@ -473,11 +446,11 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
             </div>
 
             <button
-              onClick={() => (showMultiStepForm ? handleMultiStepFormSave() : handleCreate())}
+              onClick={handleCreate}
               className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-indigo-600 to-violet-600 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-indigo-500/20 transition hover:scale-[1.01] hover:shadow-xl hover:shadow-indigo-500/25"
             >
               <Plus className="h-4 w-4" />
-              {showMultiStepForm ? 'Cancel' : 'New Booking'}
+              New Booking
             </button>
           </div>
 
@@ -545,42 +518,6 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
                 />
               </svg>
             </button>
-          </div>
-        )}
-
-        {showMultiStepForm && (
-          <div
-            className="fixed inset-0 z-999 overflow-y-auto bg-gray-50 m-0 bg-opacity-50"
-            onClick={handleMultiStepFormSave}
-          >
-            <div
-              className="w-full mx-auto h-full relative"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <button
-                onClick={handleMultiStepFormSave}
-                className="cursor-pointer fixed z-10 top-2 right-2 text-slate-500 hover:text-slate-700 rounded-full transition-colors"
-                aria-label="Close modal"
-              >
-                <svg
-                  className="h-6 w-6"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    d="M6 18L18 6M6 6l12 12"
-                  />
-                </svg>
-              </button>
-              <MultiStepBookingForm
-                onSave={handleMultiStepFormSave}
-                onCancel={handleFormCancel}
-              />
-            </div>
           </div>
         )}
 

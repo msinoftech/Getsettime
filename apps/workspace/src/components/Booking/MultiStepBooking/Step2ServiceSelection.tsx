@@ -6,6 +6,7 @@ import {
   BOOKING_BUTTON_LABELS,
   BOOKING_EMPTY_MESSAGES,
   BOOKING_LOADING_MESSAGES,
+  BOOKING_STEP_TITLES,
   DEFAULT_ACCENT_COLOR,
 } from '@/src/constants/booking';
 import { getServiceIcon, getServiceSubtitle } from './serviceIcons';
@@ -30,8 +31,8 @@ export function Step2ServiceSelection({
   return (
     <div className="space-y-4 sm:space-y-6 animate-fadeIn">
       <div className="text-center lg:text-left">
-        <h2 className="text-2xl font-bold text-gray-900">Choose a service</h2>
-        <p className="text-xs sm:text-sm text-gray-500">What would you like to book?</p>
+        <h2 className="text-2xl font-bold text-gray-900">{BOOKING_STEP_TITLES.step2}</h2>
+        <p className="text-xs sm:text-sm text-gray-500">{BOOKING_STEP_TITLES.step2Subtitle}</p>
       </div>
 
       {loadingEventTypes ? (

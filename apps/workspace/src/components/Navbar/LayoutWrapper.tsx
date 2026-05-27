@@ -1,5 +1,9 @@
 "use client";
 import { AuthProvider, useAuth } from "../../providers/AuthProvider";
+import {
+  CreateBookingModalHost,
+  CreateBookingModalProvider,
+} from "../../providers/CreateBookingModalProvider";
 import { WorkspaceSettingsProvider } from "../../providers/WorkspaceSettingsProvider";
 import { useState, useEffect } from "react";
 import Link from "next/link";
@@ -86,6 +90,7 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
 
   return (
     <WorkspaceSettingsProvider>
+    <CreateBookingModalProvider>
     <div className="flex min-h-screen relative w-full overflow-x-hidden">
       {isSidebarOpen && (
         <div className="fixed inset-0 bg-white/50 backdrop-blur-sm z-30 lg:hidden" onClick={closeSidebar} aria-hidden="true"/>
@@ -93,13 +98,17 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
       <Sidebar isOpen={isSidebarOpen} onClose={closeSidebar} />
       <div className="flex-1 flex flex-col w-full min-w-0 ml-0 lg:ml-64 transition-all duration-300">
         <Topbar toggleSidebar={toggleSidebar} isSidebarOpen={isSidebarOpen} />
-        <main className="flex-1 p-4 lg:p-8 w-full max-w-full overflow-x-hidden bg-gray-100">
-        <div className="w-full max-w-full">
-          {children}
-        </div>
+        <main className="relative flex min-h-0 flex-1 flex-col w-full overflow-x-hidden bg-gray-100">
+          <div className="flex min-h-0 flex-1 flex-col overflow-y-auto p-4 lg:p-8">
+            <div className="w-full max-w-full">
+              {children}
+            </div>
+          </div>
+          <CreateBookingModalHost />
         </main>
       </div>
     </div>
+    </CreateBookingModalProvider>
     </WorkspaceSettingsProvider>
   );
 }

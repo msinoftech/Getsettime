@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 import DashboardIcon from "./DashboardIcon";
+import { PublicBookingLinkMenu } from "./PublicBookingLinkMenu";
+import { PublicBookingPreviewCard } from "./PublicBookingPreviewCard";
 import type { Booking } from "@/src/types/booking";
 
 function format_booking_time(booking: Booking): string {
@@ -12,11 +14,23 @@ function format_booking_time(booking: Booking): string {
   return `${day} · ${t}`;
 }
 
-function minutes_until_start(start_at: string | null): number | null {
+function format_starts_in_label(start_at: string | null): string | null {
   if (!start_at) return null;
   const diff_ms = new Date(start_at).getTime() - Date.now();
-  if (diff_ms < 0) return 0;
-  return Math.ceil(diff_ms / 60000);
+  if (diff_ms <= 0) return "Starts now";
+
+  const total_mins = Math.floor(diff_ms / 60000);
+  const days = Math.floor(total_mins / (24 * 60));
+  const hours = Math.floor((total_mins % (24 * 60)) / 60);
+  const mins = total_mins % 60;
+
+  const parts: string[] = [];
+  if (days > 0) parts.push(`${days}d`);
+  if (hours > 0) parts.push(`${hours}h`);
+  if (mins > 0) parts.push(`${mins}m`);
+
+  if (parts.length === 0) return "Starts now";
+  return `Starts in ${parts.join(" ")}`;
 }
 
 export default function DashboardHero({
@@ -33,27 +47,33 @@ export default function DashboardHero({
     next_booking?.contacts?.name?.trim() ||
     "Guest";
   const service = next_booking?.event_types?.title?.trim() || "Appointment";
-  const mins = minutes_until_start(next_booking?.start_at ?? null);
-  const starts_label =
-    next_loading ? "Loading…" : mins === null ? "No upcoming booking" : `Starts in ${mins}m`;
+  const starts_label = next_loading
+    ? "Loading…"
+    : format_starts_in_label(next_booking?.start_at ?? null) ?? "No upcoming booking";
+
+  const show_next_appointment = !next_loading && Boolean(next_booking);
 
   return (
     <section
       aria-label="dashboard-hero"
-      className="overflow-hidden rounded-[34px] bg-gradient-to-br from-[#4d46e8] via-[#5046f8] to-[#7c3aed] p-5 text-white shadow-2xl shadow-indigo-500/25 md:p-7"
+      className="relative z-20 overflow-visible rounded-[34px] bg-gradient-to-br from-[#4d46e8] via-[#5046f8] to-[#7c3aed] p-5 text-white shadow-2xl shadow-indigo-500/25 md:p-7"
     >
-      <div className="grid gap-6 lg:grid-cols-[1.25fr_0.75fr]">
-        <div>
-          <div className="mb-4 inline-flex items-center gap-2 rounded-full bg-white/15 px-3 py-1.5 text-xs font-black backdrop-blur">
+      <div className="grid grid-cols-1 items-start gap-8 lg:grid-cols-3">
+        <div className="space-y-5 lg:col-span-2">
+          <div className="inline-flex items-center gap-2 rounded-full bg-white/15 px-3 py-1.5 text-xs font-black backdrop-blur">
             <DashboardIcon name="activity" size={14} /> Real-time command center
           </div>
-          <h3 className="max-w-2xl text-3xl font-black tracking-tight md:text-5xl">
-            Manage appointments at your fingertips.
-          </h3>
-          <p className="mt-3 max-w-xl text-sm font-medium leading-6 text-white/80 md:text-base">
-            Track bookings, team availability, reminders, and automation from one place.
-          </p>
-          <div className="mt-6 flex flex-wrap gap-3">
+
+          <div>
+            <h3 className="max-w-2xl text-3xl font-black tracking-tight md:text-4xl lg:text-5xl">
+              Manage appointments at your fingertips.
+            </h3>
+            <p className="mt-3 max-w-xl text-sm font-medium leading-6 text-white/80 md:text-base">
+              Share your booking page with customers so they can book appointments anytime.
+            </p>
+          </div>
+
+          <div className="relative z-30 flex flex-wrap gap-3">
             <button
               type="button"
               onClick={onCreateBooking}
@@ -67,57 +87,50 @@ export default function DashboardHero({
             >
               View Calendar <DashboardIcon name="arrow" size={17} />
             </Link>
+            <PublicBookingLinkMenu />
           </div>
         </div>
 
-        <div className="rounded-[28px] border border-white/20 bg-white/15 p-5 backdrop-blur-xl">
-          <div className="mb-4 flex items-center justify-between">
-            <p className="text-sm font-black">Next Appointment</p>
-            {next_booking && !next_loading ? (
-              <span className="rounded-full bg-emerald-400/20 px-3 py-1 text-xs font-black text-emerald-100">
+        {next_loading ? (
+          <div className="rounded-[28px] border border-white/20 bg-white/15 p-5 backdrop-blur-xl">
+            <div className="py-10 text-center text-sm font-semibold text-white/75">Loading…</div>
+          </div>
+        ) : show_next_appointment && next_booking ? (
+          <div className="rounded-[28px] border border-white/20 bg-white/15 p-5 backdrop-blur-xl">
+            <div className="mb-4 flex items-center justify-between gap-2">
+              <p className="text-sm font-black">Next Appointment</p>
+              <span className="shrink-0 rounded-full bg-emerald-400/20 px-3 py-1 text-xs font-black text-emerald-100">
                 {starts_label}
               </span>
-            ) : null}
+            </div>
+            <div className="flex items-start gap-4">
+              <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-white text-indigo-600 shadow-lg">
+                <DashboardIcon name="video" size={24} />
+              </div>
+              <div className="min-w-0">
+                <h4 className="truncate text-xl font-black">{name}</h4>
+                <p className="text-sm font-semibold text-white/75">{service}</p>
+                <p className="mt-2 text-sm font-black">{format_booking_time(next_booking)}</p>
+              </div>
+            </div>
+            <div className="mt-5 grid grid-cols-2 gap-3">
+              <Link
+                href={`/bookings/${next_booking.id}`}
+                className="rounded-2xl bg-white px-4 py-3 text-center text-sm font-black text-indigo-600"
+              >
+                View Details
+              </Link>
+              <Link
+                href={`/bookings/${next_booking.id}`}
+                className="rounded-2xl bg-black/15 px-4 py-3 text-center text-sm font-black text-white"
+              >
+                Reschedule
+              </Link>
+            </div>
           </div>
-          {!next_loading && !next_booking ? (
-            <p className="py-8 text-center text-sm font-semibold text-white/80">
-              No upcoming bookings scheduled.
-            </p>
-          ) : next_loading ? (
-            <div className="py-10 text-center text-sm font-semibold text-white/75">Loading…</div>
-          ) : next_booking ? (
-            <>
-              <div className="flex items-start gap-4">
-                <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-white text-indigo-600 shadow-lg">
-                  <DashboardIcon name="video" size={24} />
-                </div>
-                <div className="min-w-0">
-                  <h4 className="truncate text-xl font-black">{name}</h4>
-                  <p className="text-sm font-semibold text-white/75">{service}</p>
-                  <p className="mt-2 text-sm font-black">{format_booking_time(next_booking)}</p>
-                </div>
-              </div>
-              <div className="mt-5 grid grid-cols-2 gap-3">
-                <Link
-                  href="/bookings"
-                  className="rounded-2xl bg-white px-4 py-3 text-center text-sm font-black text-indigo-600"
-                >
-                  View Details
-                </Link>
-                <Link
-                  href="/bookings"
-                  className="rounded-2xl bg-black/15 px-4 py-3 text-center text-sm font-black text-white"
-                >
-                  Reschedule
-                </Link>
-              </div>
-            </>
-          ) : (
-            <p className="py-8 text-center text-sm font-semibold text-white/80">
-              No upcoming bookings scheduled.
-            </p>
-          )}
-        </div>
+        ) : (
+          <PublicBookingPreviewCard />
+        )}
       </div>
     </section>
   );

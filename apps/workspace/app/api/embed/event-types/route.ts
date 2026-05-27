@@ -7,7 +7,8 @@ export async function GET(req: NextRequest) {
     const workspaceSlug = searchParams.get('workspace_slug');
     const workspaceId = searchParams.get('workspace_id');
     const serviceProviderId = searchParams.get('service_provider_id')?.trim() || null;
-    
+    const slugParam = searchParams.get('slug');
+
     if (!workspaceSlug && !workspaceId) {
       return NextResponse.json(
         { error: 'Workspace slug or ID is required' },
@@ -45,6 +46,48 @@ export async function GET(req: NextRequest) {
       );
     }
 
+    const slug =
+      typeof slugParam === 'string' && slugParam.trim() !== ''
+        ? decodeURIComponent(slugParam.trim())
+        : null;
+
+    if (slug) {
+      const { data: row, error: slugError } = await supabase
+        .from('event_types')
+        .select('id, title, slug, duration_minutes, owner_id, is_public, location_type')
+        .eq('workspace_id', workspaceIdResolved)
+        .eq('slug', slug)
+        .maybeSingle();
+
+      if (slugError) {
+        console.error('Error fetching event type by slug:', slugError);
+        return NextResponse.json(
+          { error: slugError.message },
+          { status: 500 }
+        );
+      }
+
+      if (!row) {
+        return NextResponse.json(
+          { error: 'Event type not found' },
+          { status: 404 }
+        );
+      }
+
+      if (
+        serviceProviderId &&
+        row.owner_id &&
+        row.owner_id !== serviceProviderId
+      ) {
+        return NextResponse.json(
+          { error: 'Event type not found' },
+          { status: 404 }
+        );
+      }
+
+      return NextResponse.json({ data: [row] });
+    }
+
     let query = supabase
       .from('event_types')
       .select('id, title, slug, duration_minutes, owner_id, is_public, location_type')
@@ -75,4 +118,3 @@ export async function GET(req: NextRequest) {
     );
   }
 }
-

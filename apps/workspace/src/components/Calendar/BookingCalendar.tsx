@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { Booking } from "@/src/types/booking";
-import { CreateBookingModal } from "@/src/components/Booking/CreateBookingModal";
+import { useCreateBookingModal } from "@/src/providers/CreateBookingModalProvider";
 import { CalendarManagementHeader } from "@/src/components/Calendar/CalendarManagementHeader";
 import {
   CalendarFiltersBar,
@@ -49,6 +49,7 @@ function start_of_month(date: Date): Date {
 
 export default function BookingCalendar() {
   const router = useRouter();
+  const { open: open_create_booking } = useCreateBookingModal();
   const today = new Date();
   const [viewDate, setViewDate] = useState(() => start_of_month(new Date()));
   const todayCellRef = useRef<HTMLDivElement | null>(null);
@@ -58,7 +59,6 @@ export default function BookingCalendar() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] =
     useState<CalendarStatusFilterOption>("all");
-  const [showMultiStepForm, setShowMultiStepForm] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
 
   const monthLabel = useMemo(
@@ -220,8 +220,10 @@ export default function BookingCalendar() {
     );
   }, []);
 
-  const handleBookingSaved = useCallback(() => {
-    setRefreshKey((k) => k + 1);
+  useEffect(() => {
+    const bump = () => setRefreshKey((k) => k + 1);
+    window.addEventListener("bookings-viewed-update", bump);
+    return () => window.removeEventListener("bookings-viewed-update", bump);
   }, []);
 
   return (
@@ -233,7 +235,7 @@ export default function BookingCalendar() {
             onSync={() => {
               router.push("/integrations");
             }}
-            onCreateBooking={() => setShowMultiStepForm(true)}
+            onCreateBooking={open_create_booking}
           />
 
           <CalendarStatsRow
@@ -268,17 +270,11 @@ export default function BookingCalendar() {
             <CalendarSidebar
               upcomingBookings={upcomingBookings}
               loadingUpcoming={loading}
-              onCreateBooking={() => setShowMultiStepForm(true)}
+              onCreateBooking={open_create_booking}
             />
           </div>
         </section>
       </div>
-
-      <CreateBookingModal
-        open={showMultiStepForm}
-        onClose={() => setShowMultiStepForm(false)}
-        onSaved={handleBookingSaved}
-      />
     </div>
   );
 }

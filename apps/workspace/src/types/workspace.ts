@@ -113,6 +113,8 @@ export type WorkspaceSettingsHook = {
   workspaceLogoResolved: string;
   /** Resolved profession label from workspace (joined name or legacy `type`) */
   workspaceProfessionLabel?: string | null;
+  /** Settings → My Link slug for public booking at `/{slug}` */
+  workspaceSlug?: string | null;
   loading: boolean;
   error: Error | null;
   refetch: () => Promise<void>;

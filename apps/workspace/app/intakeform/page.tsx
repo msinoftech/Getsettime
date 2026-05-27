@@ -384,7 +384,9 @@ export default function RoutingForm({ dark = false }) {
 
   const enabledFieldsCount = enabledDefaultCount + intakeFormSettings.custom_fields.length;
   const requiredFieldsCount = useMemo(
-    () => intakeFormSettings.custom_fields.filter((f) => f.required).length,
+    () =>
+      LOCKED_DEFAULT_INTAKE_FIELDS.size +
+      intakeFormSettings.custom_fields.filter((f) => f.required).length,
     [intakeFormSettings.custom_fields]
   );
 

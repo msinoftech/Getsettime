@@ -15,7 +15,7 @@ export const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as co
 export const BOOKING_STEP_TITLES = {
   step1: 'Select Department & Provider',
   step1Subtitle: "Choose the department and who you'd like to book with",
-  step2: 'Choose a service',
+  step2: 'Choose a Event Type',
   step2Subtitle: 'What would you like to book?',
   step3: 'Pick a date & time',
   step3Subtitle: 'Select when you\'d like to meet',
@@ -36,7 +36,7 @@ export const BOOKING_PLACEHOLDERS = {
 
 // Button labels
 export const BOOKING_BUTTON_LABELS = {
-  continueToServices: 'Continue to Services',
+  continueToServices: 'Continue',
   back: 'Back',
   continue: 'Continue',
   confirmBooking: 'Confirm Booking',

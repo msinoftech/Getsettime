@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import DashboardIcon, { type DashboardIconName } from "./DashboardIcon";
 import type { dashboard_activity_feed_item } from "@/src/types/dashboard_activity_feed_item";
 
@@ -64,7 +65,7 @@ export default function RecentActivityFeed() {
         }
         const body = (await res.json()) as { activities?: dashboard_activity_feed_item[] };
         if (alive) {
-          set_items((body.activities ?? []).slice(0, 8));
+          set_items((body.activities ?? []).slice(0, 5));
         }
       } catch {
         if (alive) set_error("Could not load activity");
@@ -109,6 +110,16 @@ export default function RecentActivityFeed() {
               </div>
             </div>
           ))}
+
+          <div className="pt-1">
+            <Link
+              href="/notifications/all"
+              className="flex w-full items-center justify-center gap-2 rounded-[32px] bg-slate-50 px-5 py-4 text-sm font-black text-indigo-600 shadow-sm ring-1 ring-slate-200/70 hover:bg-slate-100"
+            >
+              View all activity
+              <DashboardIcon name="chevronRight" size={16} />
+            </Link>
+          </div>
         </div>
       )}
     </div>

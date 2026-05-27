@@ -33,6 +33,8 @@ interface TeamMemberRow {
 
 interface UseEmbedBookingFormDataParams {
   workspace: Workspace;
+  /** When set (direct embed URL), includes public or private type for this slug without listing private types publicly. */
+  eventTypeSlug?: string;
   selectedDepartment: Department | null;
   selectedProvider: ServiceProvider | null;
   selectedType: EventType | null;
@@ -43,6 +45,7 @@ interface UseEmbedBookingFormDataParams {
 
 export function useEmbedBookingFormData({
   workspace,
+  eventTypeSlug,
   selectedDepartment,
   selectedProvider,
   selectedType,
@@ -214,6 +217,9 @@ export function useEmbedBookingFormData({
         if (effectiveProviderId) {
           params.set('service_provider_id', effectiveProviderId);
         }
+        if (eventTypeSlug) {
+          params.set('slug', eventTypeSlug);
+        }
         const res = await fetch(`/api/embed/event-types?${params.toString()}`);
         if (res.ok) {
           const result = await res.json();
@@ -226,7 +232,7 @@ export function useEmbedBookingFormData({
       }
     };
     fetchEventTypes();
-  }, [workspace.slug, effectiveProviderId]);
+  }, [workspace.slug, effectiveProviderId, eventTypeSlug]);
 
   useEffect(() => {
     if (!effectiveProviderId && needsExplicitProvider) {

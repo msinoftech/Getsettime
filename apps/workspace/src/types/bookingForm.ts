@@ -76,6 +76,9 @@ export interface Timeslot {
 export type IntakeValues = Record<string, string | string[]>;
 
 export interface MultiStepBookingFormProps {
+  variant?: 'overlay' | 'embedded';
+  /** When true, omits embedded Cancel chrome (e.g. shell modal provides Close). Default false. */
+  hide_embedded_toolbar?: boolean;
   onSave: () => void;
   onCancel: () => void;
 }

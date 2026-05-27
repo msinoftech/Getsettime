@@ -4,16 +4,19 @@ import React from 'react';
 
 interface ProgressIndicatorProps {
   step: number;
+  /** Admin create flow ends at step 4; embed retains success step 5. Default 5. */
+  totalSteps?: number;
 }
 
-export function ProgressIndicator({ step }: ProgressIndicatorProps) {
+export function ProgressIndicator({ step, totalSteps = 5 }: ProgressIndicatorProps) {
+  const steps = Array.from({ length: totalSteps }, (_, i) => i + 1);
   return (
     <div className="steps flex items-center justify-center gap-2 sm:gap-3 relative flex-wrap mb-6">
-      {[1, 2, 3, 4, 5].map((s, index) => (
+      {steps.map((s, index) => (
         <React.Fragment key={s}>
           <div className="relative">
             <div
-              className={`w-8 h-8 sm:w-6 sm:h-6 md:w-8 md:h-8 lg:w-10 lg:h-10 rounded-full flex items-center justify-center font-bold text-xs sm:text-sm transition-all duration-300 relative z-10 ${
+              className={`w-8 h-8 sm:w-6 sm:w-6 md:w-8 md:h-8 lg:w-10 lg:h-10 rounded-full flex items-center justify-center font-bold text-xs sm:text-sm transition-all duration-300 relative z-10 ${
                 s === step
                   ? 'bg-gradient-to-br from-indigo-600 to-indigo-700 text-white shadow-xl scale-110 ring-2 sm:ring-4 ring-indigo-200'
                   : s < step
@@ -33,7 +36,7 @@ export function ProgressIndicator({ step }: ProgressIndicatorProps) {
               <div className="absolute inset-0 rounded-full bg-indigo-400 animate-ping opacity-75" />
             )}
           </div>
-          {index < 4 && (
+          {index < totalSteps - 1 && (
             <div
               className={`h-1 w-4 sm:w-5 md:w-6 lg:w-8 rounded-full transition-all duration-500 hidden sm:block ${
                 s < step ? 'bg-gradient-to-r from-indigo-500 to-indigo-600' : 'bg-gray-200'

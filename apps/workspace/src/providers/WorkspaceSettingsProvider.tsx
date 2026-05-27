@@ -13,6 +13,7 @@ export function WorkspaceSettingsProvider({ children }: { children: React.ReactN
   const [workspaceName, setWorkspaceName] = useState<string | null>(null);
   const [workspaceLogo, setWorkspaceLogo] = useState<string | null>(null);
   const [workspaceProfessionLabel, setWorkspaceProfessionLabel] = useState<string | null>(null);
+  const [workspaceSlug, setWorkspaceSlug] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
 
@@ -20,6 +21,7 @@ export function WorkspaceSettingsProvider({ children }: { children: React.ReactN
     if (!user) {
       setLoading(false);
       setWorkspaceProfessionLabel(null);
+      setWorkspaceSlug(null);
       return;
     }
 
@@ -33,6 +35,7 @@ export function WorkspaceSettingsProvider({ children }: { children: React.ReactN
       if (!session?.access_token) {
         setLoading(false);
         setWorkspaceProfessionLabel(null);
+        setWorkspaceSlug(null);
         return;
       }
 
@@ -55,12 +58,16 @@ export function WorkspaceSettingsProvider({ children }: { children: React.ReactN
         if (workspaceResult?.workspace) {
           const w = workspaceResult.workspace as {
             name?: string | null;
+            slug?: string | null;
             logo_url?: string | null;
             profession_name?: string | null;
             type?: string | null;
           };
           setWorkspaceName(w.name || null);
           setWorkspaceLogo(w.logo_url || null);
+          setWorkspaceSlug(
+            typeof w.slug === 'string' && w.slug.trim() ? w.slug.trim() : null
+          );
           const prof =
             (typeof w.profession_name === "string" && w.profession_name.trim()) ||
             (typeof w.type === "string" && w.type.trim()) ||
@@ -71,6 +78,7 @@ export function WorkspaceSettingsProvider({ children }: { children: React.ReactN
         setWorkspaceName(null);
         setWorkspaceLogo(null);
         setWorkspaceProfessionLabel(null);
+        setWorkspaceSlug(null);
       }
     } catch (err) {
       setError(err instanceof Error ? err : new Error('Unknown error occurred'));
@@ -97,6 +105,7 @@ export function WorkspaceSettingsProvider({ children }: { children: React.ReactN
     workspaceLogo,
     workspaceLogoResolved,
     workspaceProfessionLabel,
+    workspaceSlug,
     loading,
     error,
     refetch: fetchSettings,

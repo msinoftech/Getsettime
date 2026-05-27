@@ -8,7 +8,6 @@ import { signOutWithAuthLog } from "@/src/lib/auth_activity_log_client";
 import { useAuth } from "../../providers/AuthProvider";
 import { useWorkspaceSettings } from "../../hooks/useWorkspaceSettings";
 import { WorkspaceBrandLogo } from "../molecules/WorkspaceBrandLogo";
-
 interface TopbarProps {
   toggleSidebar: () => void;
   isSidebarOpen: boolean;
@@ -46,9 +45,9 @@ export default function Topbar({ toggleSidebar, isSidebarOpen }: TopbarProps) {
   const {
     general,
     loading: loadingSettings,
-    workspaceProfessionLabel,
     workspaceLogoResolved,
     workspaceName,
+    workspaceProfessionLabel,
   } = useWorkspaceSettings();
 
   const accountName =
@@ -209,7 +208,7 @@ export default function Topbar({ toggleSidebar, isSidebarOpen }: TopbarProps) {
         </div>
 
         {/* Center section - can be used for search or other elements */}
-        <div className="hidden md:flex flex-1 justify-center">
+        {/* <div className="hidden md:flex flex-1 justify-center">
           <div className="relative max-w-md w-full">
             <input type="text" placeholder="Search..." className="w-full pl-10 pr-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"/>
             <div className="absolute left-3 top-2.5 text-gray-400">
@@ -218,23 +217,23 @@ export default function Topbar({ toggleSidebar, isSidebarOpen }: TopbarProps) {
               </svg>
             </div>
           </div>
-        </div>
+        </div> */}
 
-        {!loadingSettings && workspaceProfessionLabel ? (
-          <div className="hidden sm:flex items-center max-w-[11rem] md:max-w-[16rem] shrink-0 px-2">
-            <div
-              className="text-sm truncate rounded-lg border-2 border-indigo-700/80 px-3 py-1.5 shadow-sm"
-              style={{ backgroundColor: "var(--color-indigo-600)" }}
-              title={workspaceProfessionLabel}
-            >
-              <span className="text-white/90 font-normal mr-1.5">Profession</span>
-              <span className="font-bold text-white">{workspaceProfessionLabel}</span>
-            </div>
-          </div>
-        ) : null}
+        
 
-        {/* Right section with user profile */}
         <div className="flex items-center space-x-2">
+          {!loadingSettings && workspaceProfessionLabel ? (
+            <div className="hidden sm:flex items-center max-w-[11rem] md:max-w-[16rem] shrink-0 px-2">
+              <div
+                className="text-sm truncate rounded-lg border-2 border-indigo-700/80 px-3 py-1.5 shadow-sm"
+                style={{ backgroundColor: "var(--color-indigo-600)" }}
+                title={workspaceProfessionLabel}
+              >
+                <span className="text-white/90 font-normal mr-1.5">Profession</span>
+                <span className="font-bold text-white">{workspaceProfessionLabel}</span>
+              </div>
+            </div>
+          ) : null}
           <div className="relative">
             <button id="notification-button" onClick={(e) => { e.stopPropagation(); setIsNotificationOpen(!isNotificationOpen); setIsProfileMenuOpen(false);}} className="p-2 bg-gray-100 rounded-full text-gray-500 cursor-pointer hover:bg-gray-100 relative" aria-label="Notifications" aria-expanded={isNotificationOpen} aria-haspopup="true">
               <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">

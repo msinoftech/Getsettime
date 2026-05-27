@@ -400,7 +400,11 @@ export function EventTypeFormLayout({
                   <div className="flex items-center justify-between gap-3">
                     <div>
                       <p className="text-sm font-semibold text-slate-900">Public event</p>
-                      <p className="mt-1 text-sm text-slate-500">Visible on your public booking page.</p>
+                      <p className="mt-1 text-sm text-slate-500">
+                        {value.is_public
+                          ? "This event is publicly visible on your booking page."
+                          : "This event is private and hidden from public booking pages."}
+                      </p>
                     </div>
                     <button
                       type="button"

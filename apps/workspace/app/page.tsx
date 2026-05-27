@@ -1,8 +1,8 @@
 "use client";
 
-import React, { useCallback, useMemo, useState } from "react";
-import { CreateBookingModal } from "@/src/components/Booking/CreateBookingModal";
+import React, { useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/src/providers/AuthProvider";
+import { useCreateBookingModal } from "@/src/providers/CreateBookingModalProvider";
 import { useDashboardCounts } from "@/src/hooks/useDashboardCounts";
 import { useDashboardBookings } from "@/src/hooks/useDashboardBookings";
 import DashboardCalendar from "@/src/components/Dashboard/DashboardCalendar";
@@ -39,6 +39,7 @@ function reminder_fraction_today(bookings: Booking[]): { display: string; second
 }
 
 const Dashboard: React.FC = () => {
+  const { open: open_create_booking } = useCreateBookingModal();
   const { user } = useAuth();
   const {
     counts,
@@ -54,8 +55,16 @@ const Dashboard: React.FC = () => {
   });
 
   const [selected_date, set_selected_date] = useState<Date>(() => new Date());
-  const [show_booking_form, set_show_booking_form] = useState(false);
   const [dashboard_refresh_key, set_dashboard_refresh_key] = useState(0);
+
+  useEffect(() => {
+    const on_bookings_refresh = () => {
+      set_dashboard_refresh_key((k) => k + 1);
+    };
+    window.addEventListener("bookings-viewed-update", on_bookings_refresh);
+    return () =>
+      window.removeEventListener("bookings-viewed-update", on_bookings_refresh);
+  }, []);
 
   const {
     today_bookings,
@@ -65,10 +74,6 @@ const Dashboard: React.FC = () => {
     month_bookings,
     month_loading,
   } = useDashboardBookings(user, view_date, dashboard_refresh_key);
-
-  const handle_booking_saved = useCallback(() => {
-    set_dashboard_refresh_key((k) => k + 1);
-  }, []);
 
   const user_name =
     user?.user_metadata?.name || user?.email?.split("@")[0] || "User";
@@ -94,7 +99,7 @@ const Dashboard: React.FC = () => {
       <DashboardHero
         next_booking={next_appointment}
         next_loading={next_loading}
-        onCreateBooking={() => set_show_booking_form(true)}
+        onCreateBooking={open_create_booking}
       />
 
       <DashboardStatCards
@@ -137,12 +142,6 @@ const Dashboard: React.FC = () => {
       </section>
 
       <DashboardFab />
-
-      <CreateBookingModal
-        open={show_booking_form}
-        onClose={() => set_show_booking_form(false)}
-        onSaved={handle_booking_saved}
-      />
     </div>
   );
 };

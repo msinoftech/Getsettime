@@ -165,6 +165,7 @@ export async function POST(req: NextRequest) {
     const {
       workspace_id,
       event_type_id,
+      event_type_slug: event_type_slug_raw,
       service_provider_id,
       department_id,
       invitee_name,
@@ -251,6 +252,41 @@ export async function POST(req: NextRequest) {
         { error: 'Workspace not found' },
         { status: 404 }
       );
+    }
+
+    const event_type_slug_from_body =
+      typeof event_type_slug_raw === 'string' ? event_type_slug_raw.trim() : '';
+
+    if (event_type_id) {
+      const { data: event_type_access_row } = await supabase
+        .from('event_types')
+        .select('id, slug, is_public')
+        .eq('id', event_type_id)
+        .eq('workspace_id', workspace_id)
+        .maybeSingle();
+
+      if (!event_type_access_row) {
+        return NextResponse.json(
+          { error: 'Event type not found' },
+          { status: 404 }
+        );
+      }
+
+      const event_is_private = event_type_access_row.is_public !== true;
+      const row_slug =
+        typeof event_type_access_row.slug === 'string'
+          ? event_type_access_row.slug.trim()
+          : '';
+
+      if (
+        event_is_private &&
+        (!row_slug || row_slug !== event_type_slug_from_body)
+      ) {
+        return NextResponse.json(
+          { error: 'Private event type requires a valid direct link' },
+          { status: 403 }
+        );
+      }
     }
 
     // Validate availability before creating booking (startDate already validated above)

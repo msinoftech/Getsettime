@@ -6,7 +6,13 @@ import { useBookingFormData } from '../../hooks/useBookingFormData';
 import { useAutoAdvanceStep1 } from '../../hooks/useAutoAdvanceStep1';
 import { useTimeslots } from '../../hooks/useTimeslots';
 import { useIntakeValidation } from '../../hooks/useIntakeValidation';
-import type { Department, EventType, IntakeValues, ServiceProvider } from '../../types/bookingForm';
+import type {
+  Department,
+  EventType,
+  IntakeValues,
+  MultiStepBookingFormProps,
+  ServiceProvider,
+} from '../../types/bookingForm';
 import { DEFAULT_ACCENT_COLOR, DEFAULT_PRIMARY_COLOR } from '../../constants/booking';
 import { sortEventTypesByDuration } from '../../utils/bookingFormUtils';
 import { isServicesEnabled } from '../../utils/intakeForm';
@@ -17,7 +23,7 @@ import {
   list_bookable_meeting_option_keys,
   type meeting_option_key,
 } from '../../utils/meeting_options';
-import { isTimeSlotBooked, normalizeDate } from '../../utils/bookingTime';
+import { isTimeSlotBooked } from '../../utils/bookingTime';
 import { getDisplayTimezone, parseTimeStringTo24h } from '../../utils/timezone';
 
 import { BookingPreviewSidebar } from './MultiStepBooking/BookingPreviewSidebar';
@@ -25,31 +31,11 @@ import { ProgressIndicator } from './MultiStepBooking/ProgressIndicator';
 import { Step1DepartmentProvider } from './MultiStepBooking/Step1DepartmentProvider';
 import { Step2ServiceSelection } from './MultiStepBooking/Step2ServiceSelection';
 import { Step4IntakeForm } from './MultiStepBooking/Step4IntakeForm';
-import { Step5Success } from './MultiStepBooking/Step5Success';
-import { AdminNoticeBanner, AdminNoticeIcon } from './MultiStepBooking/AdminNotice';
 import { useAuth } from '@/src/providers/AuthProvider';
-
-function resolve_admin_notice(user: unknown): string | null {
-  if (!user || typeof user !== 'object') return null;
-  const metadata = (user as { user_metadata?: Record<string, unknown> | null })
-    .user_metadata;
-  if (!metadata || typeof metadata !== 'object') return null;
-  const settings = (metadata as Record<string, unknown>).event_type_settings;
-  if (!settings || typeof settings !== 'object') return null;
-  const notice = (settings as Record<string, unknown>).admin_notice;
-  if (typeof notice !== 'string') return null;
-  const trimmed = notice.trim();
-  return trimmed ? trimmed : null;
-}
 
 const Step3DateTime = lazy(() =>
   import('./MultiStepBooking/Step3DateTime').then((m) => ({ default: m.Step3DateTime }))
 );
-
-interface MultiStepBookingFormProps {
-  onSave: () => void;
-  onCancel: () => void;
-}
 
 const StepFallback = () => (
   <div className="flex items-center justify-center py-16">
@@ -57,10 +43,14 @@ const StepFallback = () => (
   </div>
 );
 
-const MultiStepBookingForm = ({ onSave, onCancel }: MultiStepBookingFormProps) => {
+const MultiStepBookingForm = ({
+  variant = 'overlay',
+  hide_embedded_toolbar = false,
+  onSave,
+  onCancel,
+}: MultiStepBookingFormProps) => {
   const { general, settings, loading: loadingSettings } = useWorkspaceSettings();
   const { user } = useAuth();
-  const admin_notice = resolve_admin_notice(user);
   const [step, setStep] = useState(1);
   const [selectedDepartment, setSelectedDepartment] = useState<Department | null>(null);
   const [selectedProvider, setSelectedProvider] = useState<ServiceProvider | null>(null);
@@ -78,8 +68,6 @@ const MultiStepBookingForm = ({ onSave, onCancel }: MultiStepBookingFormProps) =
   const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>([]);
   const [file, setFile] = useState<File | null>(null);
   const [fileError, setFileError] = useState('');
-  const [confirmed, setConfirmed] = useState(false);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [currentMonth, setCurrentMonth] = useState(new Date());
@@ -480,9 +468,8 @@ const MultiStepBookingForm = ({ onSave, onCancel }: MultiStepBookingFormProps) =
       if (!res.ok) {
         throw new Error(result.error || 'Failed to create booking');
       }
-      if (result.preview_url) setPreviewUrl(result.preview_url);
-      setConfirmed(true);
-      setStep(5);
+      window.dispatchEvent(new Event('bookings-viewed-update'));
+      onSave();
     } catch (err) {
       setError((err as Error).message || 'An error occurred');
     } finally {
@@ -493,19 +480,37 @@ const MultiStepBookingForm = ({ onSave, onCancel }: MultiStepBookingFormProps) =
   const primary = workspacePrimaryColor || DEFAULT_PRIMARY_COLOR;
   const accent = workspaceAccentColor || primary || DEFAULT_ACCENT_COLOR;
 
+  const embedded = variant === 'embedded';
+
   return (
-    <div className="w-full max-w-7xl h-auto mx-auto px-6 sm:px-4 py-4 sm:py-6 lg:py-8">
-      <div className="rounded-xl drop-shadow-xl overflow-hidden bg-gray-100 relative backdrop-blur-xl">
-        <div className="absolute inset-0 overflow-hidden pointer-events-none">
-          <div className="absolute -top-40 -right-40 w-80 h-80 rounded-full opacity-10 blur-3xl" style={{ background: `radial-gradient(circle, ${primary}, transparent)` }} />
-          <div className="absolute -bottom-40 -left-40 w-80 h-80 rounded-full opacity-10 blur-3xl" style={{ background: `radial-gradient(circle, ${accent}, transparent)` }} />
-        </div>
-        {/*admin_notice && (
-          <AdminNoticeIcon
-            notice={admin_notice}
-            className="absolute right-3 top-3 sm:right-4 sm:top-4"
+    <div
+      className={
+        embedded
+          ? 'w-full max-w-full'
+          : 'mx-auto h-auto w-full max-w-7xl px-6 py-4 sm:px-4 sm:py-6 lg:py-8'
+      }
+    >
+      <div
+        className={
+          embedded
+            ? 'relative overflow-hidden rounded-[28px] border border-slate-200/70 bg-white shadow-[0_16px_40px_-20px_rgba(15,23,42,0.18)] backdrop-blur-xl'
+            : 'relative overflow-hidden rounded-xl bg-gray-100 drop-shadow-xl backdrop-blur-xl'
+        }
+      >
+        <div className="pointer-events-none absolute inset-0 overflow-hidden">
+          <div
+            className={`absolute -right-40 ${embedded ? '-top-32 w-64 h-64 opacity-[0.07]' : '-top-40 w-80 h-80 opacity-10 blur-3xl'} rounded-full blur-3xl`}
+            style={{
+              background: `radial-gradient(circle, ${primary}, transparent)`,
+            }}
           />
-        )*/}
+          <div
+            className={`absolute ${embedded ? '-left-36 -bottom-32 h-56 w-56 opacity-[0.07]' : '-bottom-40 -left-40 h-80 w-80 opacity-10 blur-3xl'} rounded-full blur-3xl`}
+            style={{
+              background: `radial-gradient(circle, ${accent}, transparent)`,
+            }}
+          />
+        </div>
         <div className="flex flex-col lg:grid lg:grid-cols-2 relative z-10">
           <BookingPreviewSidebar
             workspaceName={workspaceName}
@@ -532,7 +537,18 @@ const MultiStepBookingForm = ({ onSave, onCancel }: MultiStepBookingFormProps) =
             meetingChoiceLabel={meetingChoiceLabel.trim() || undefined}
           />
           <div className="p-4 sm:p-6 lg:p-8 xl:p-10 bg-white relative">
-            <ProgressIndicator step={step} />
+            {embedded && !hide_embedded_toolbar && (
+              <div className="mb-4 flex justify-end lg:absolute lg:right-6 lg:top-6 lg:z-20 lg:mb-0">
+                <button
+                  type="button"
+                  onClick={onCancel}
+                  className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50"
+                >
+                  Cancel
+                </button>
+              </div>
+            )}
+            <ProgressIndicator step={step} totalSteps={4} />
             {error && (
               <div className="mb-6 p-4 bg-red-50 border border-red-200 text-red-700 rounded-xl text-sm">
                 {error}
@@ -658,22 +674,9 @@ const MultiStepBookingForm = ({ onSave, onCancel }: MultiStepBookingFormProps) =
                   onMeetingOptionChange={setSelectedMeetingOption}
                 />
               )}
-              {step === 5 && (
-                <Step5Success
-                  selectedType={selectedType}
-                  selectedDate={selectedDate}
-                  selectedTime={selectedTime}
-                  previewUrl={previewUrl}
-                />
-              )}
             </div>
           </div>
         </div>
-        {/*admin_notice && (
-          <div className="relative z-10 border-t border-slate-200 bg-white px-4 py-3 sm:px-6 lg:px-8">
-            <AdminNoticeBanner notice={admin_notice} className="mt-0" />
-          </div>
-        )*/}
       </div>
     </div>
   );
