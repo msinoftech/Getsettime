@@ -1,7 +1,13 @@
 'use client';
 
 import React, { useRef, useCallback, useEffect } from 'react';
-import type { AvailabilitySettings, Booking, EventType, Timeslot } from '@/src/types/bookingForm';
+import type {
+  AvailabilitySettings,
+  Booking,
+  EventType,
+  Timeslot,
+} from '@/src/types/bookingForm';
+import type { ServiceDurationCatalogItem } from '@/src/utils/bookingDuration';
 import {
   BOOKING_BUTTON_LABELS,
   BOOKING_EMPTY_MESSAGES,
@@ -26,6 +32,8 @@ interface Step3DateTimeProps {
   availabilitySettings: AvailabilitySettings | null;
   existingBookings: Booking[];
   selectedType: EventType | null;
+  selectedServiceIds?: string[];
+  serviceCatalog?: ServiceDurationCatalogItem[];
   departmentsCount: number;
   workspacePrimaryColor: string;
   workspaceAccentColor: string | null;
@@ -57,6 +65,8 @@ export function Step3DateTime({
   availabilitySettings,
   existingBookings,
   selectedType,
+  selectedServiceIds = [],
+  serviceCatalog = [],
   departmentsCount,
   workspacePrimaryColor,
   workspaceAccentColor,
@@ -144,7 +154,9 @@ export function Step3DateTime({
       availabilitySettings,
       selectedType,
       existingBookings,
-      minLeadTimeMinutes
+      minLeadTimeMinutes,
+      selectedServiceIds,
+      serviceCatalog
     );
 
   const hasNewSelection = Boolean(selectedDate && selectedTime);

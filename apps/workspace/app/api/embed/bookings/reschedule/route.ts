@@ -12,6 +12,10 @@ import { resolveAvailabilityForServiceProvider } from '@/src/utils/availabilityR
 import { resolveNotificationsForServiceProvider } from '@/src/utils/providerSettingsResolution';
 import { resolve_meeting_join_url_from_booking } from '@/src/utils/google_meet';
 import { merge_reschedule_metadata } from '@/src/utils/booking_reschedule';
+import {
+  resolveEffectiveDurationForBookingRequest,
+  validateBookingEndAt,
+} from '@/lib/booking-effective-duration';
 
 type DayName = 'Sun' | 'Mon' | 'Tue' | 'Wed' | 'Thu' | 'Fri' | 'Sat';
 
@@ -75,7 +79,23 @@ export async function POST(req: NextRequest) {
 
     const previousStartAt = booking.start_at;
     const previousEndAt = booking.end_at;
-    const endDate = end_at ? new Date(end_at) : new Date(startDate);
+
+    const effectiveDurationMinutes = await resolveEffectiveDurationForBookingRequest(
+      supabase,
+      booking.workspace_id,
+      booking.event_type_id,
+      booking.metadata
+    );
+    const durationValidation = validateBookingEndAt(
+      start_at,
+      end_at,
+      effectiveDurationMinutes
+    );
+    if (!durationValidation.ok) {
+      return NextResponse.json({ error: durationValidation.message }, { status: 400 });
+    }
+    const resolvedEndAt = durationValidation.resolvedEndAt;
+    const endDate = new Date(resolvedEndAt);
 
     // --- Availability validation (mirrors embed booking creation) ---
     const { data: configData } = await supabase
@@ -138,7 +158,7 @@ export async function POST(req: NextRequest) {
       const isBusy = await isSlotBusyInCalendar(
         booking.workspace_id,
         start_at,
-        end_at || start_at,
+        resolvedEndAt,
         booking.service_provider_id || undefined
       );
       if (isBusy) {
@@ -183,7 +203,7 @@ export async function POST(req: NextRequest) {
       .from('bookings')
       .update({
         start_at,
-        end_at: end_at || null,
+        end_at: resolvedEndAt || null,
         status: 'reschedule',
         is_reschedule_viewed: false,
         metadata: reschedule_metadata,
@@ -209,7 +229,7 @@ export async function POST(req: NextRequest) {
     let providerName: string | undefined;
     let departmentName: string | undefined;
     let eventTypeName = 'Appointment';
-    let durationMinutes = 30;
+    let durationMinutes = effectiveDurationMinutes;
     let arriveEarlyMin = 10;
     let arriveEarlyMax = 15;
 
@@ -222,7 +242,6 @@ export async function POST(req: NextRequest) {
           .single();
         if (et) {
           eventTypeName = et.title || eventTypeName;
-          durationMinutes = et.duration_minutes || durationMinutes;
           arriveEarlyMin = Number(et.buffer_before ?? arriveEarlyMin);
           arriveEarlyMax = Number(et.buffer_after ?? arriveEarlyMax);
         }
@@ -268,7 +287,7 @@ export async function POST(req: NextRequest) {
           eventTypeName,
           ...(departmentName?.trim() ? { departmentName: departmentName.trim() } : {}),
           startTime: start_at,
-          endTime: end_at || start_at,
+          endTime: resolvedEndAt,
           duration: durationMinutes,
           previousStartTime: previousStartAt || undefined,
           previousEndTime: previousEndAt || undefined,
@@ -325,7 +344,7 @@ export async function POST(req: NextRequest) {
           ...(departmentName?.trim() ? { department: departmentName.trim() } : {}),
           ...(providerName?.trim() ? { provider: providerName.trim() } : {}),
           start: start_at,
-          end: end_at || start_at,
+          end: resolvedEndAt,
           note: noteStr,
           arrive_early_min: arriveEarlyMin,
           arrive_early_max: arriveEarlyMax,
@@ -346,7 +365,7 @@ export async function POST(req: NextRequest) {
         const { updateCalendarEvent } = await import('@/lib/google-calendar-service');
         const calResult = await updateCalendarEvent(booking.workspace_id, gcalEventId, {
           startAt: start_at,
-          endAt: end_at || start_at,
+          endAt: resolvedEndAt,
           serviceProviderId: booking.service_provider_id || undefined,
         });
         if (!calResult.success) {

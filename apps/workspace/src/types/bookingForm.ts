@@ -62,6 +62,7 @@ export interface Service {
   name: string;
   description: string | null;
   price: number | null;
+  duration?: number | null;
   department_id?: number | null;
   status?: string;
   meta_data?: Record<string, unknown> | null;

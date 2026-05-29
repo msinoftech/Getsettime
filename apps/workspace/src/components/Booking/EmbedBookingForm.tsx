@@ -12,6 +12,11 @@ import {
   DEFAULT_PRIMARY_COLOR,
 } from '@/src/constants/booking';
 import { isServicesEnabled } from '@/src/utils/intakeForm';
+import {
+  intakeServiceIdsFromMetadata,
+  mergeServiceCatalogForDuration,
+  resolveEffectiveBookingDurationMinutes,
+} from '@/src/utils/bookingDuration';
 import { isTimeSlotBooked, normalizeDate } from '@/src/utils/bookingTime';
 import { getDisplayTimezone, parseTimeStringTo24h } from '@/src/utils/timezone';
 import {
@@ -192,7 +197,20 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
     duration: targetDuration,
   });
 
-  const timeslots = useTimeslots(selectedType, selectedDate, availabilitySettings, existingBookings, isRescheduleMode ? 60 : 0);
+  const serviceCatalogForSlots = useMemo(
+    () => mergeServiceCatalogForDuration(providerScopedCatalogServices, services),
+    [providerScopedCatalogServices, services]
+  );
+
+  const timeslots = useTimeslots(
+    selectedType,
+    selectedDate,
+    availabilitySettings,
+    existingBookings,
+    isRescheduleMode ? 60 : 0,
+    selectedServiceIds,
+    serviceCatalogForSlots
+  );
 
   const hideIntakeCatalogServices = providerScopedCatalogServices.length > 0;
 
@@ -330,6 +348,8 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
         if (etId) setRescheduleEventTypeId(etId);
         if (json.booking?.start_at) setPreviousStartAt(json.booking.start_at);
         if (json.booking?.end_at) setPreviousEndAt(json.booking.end_at);
+        const intakeIds = intakeServiceIdsFromMetadata(json.booking?.metadata);
+        if (intakeIds.length > 0) setSelectedServiceIds(intakeIds);
         setRescheduleReady(true);
       } catch {
         setRescheduleReady(true);
@@ -408,7 +428,14 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
       }
 
       const endDate = new Date(startDate);
-      endDate.setMinutes(endDate.getMinutes() + (selectedType.duration_minutes || 30));
+      endDate.setMinutes(
+        endDate.getMinutes() +
+          resolveEffectiveBookingDurationMinutes(
+            selectedType,
+            selectedServiceIds,
+            serviceCatalogForSlots
+          )
+      );
       if (isTimeSlotBooked(startDate, endDate, selectedDate, existingBookings)) {
         setError('This time slot has already been booked. Please select another time.');
         setLoading(false);
@@ -495,7 +522,14 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
       }
 
       const endDate = new Date(startDate);
-      endDate.setMinutes(endDate.getMinutes() + (selectedType.duration_minutes || 30));
+      endDate.setMinutes(
+        endDate.getMinutes() +
+          resolveEffectiveBookingDurationMinutes(
+            selectedType,
+            selectedServiceIds,
+            serviceCatalogForSlots
+          )
+      );
       if (isTimeSlotBooked(startDate, endDate, selectedDate, existingBookings)) {
         setError('This time slot has already been booked. Please refresh and select another time.');
         setLoading(false);
@@ -707,6 +741,8 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
                     availabilitySettings={availabilitySettings}
                     existingBookings={existingBookings}
                     selectedType={selectedType}
+                    selectedServiceIds={selectedServiceIds}
+                    serviceCatalog={serviceCatalogForSlots}
                     departmentsCount={departments.length}
                     workspacePrimaryColor={workspacePrimaryColor}
                     workspaceAccentColor={workspaceAccentColor}

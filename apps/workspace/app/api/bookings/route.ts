@@ -28,6 +28,10 @@ import {
   resolveNotificationsForServiceProvider,
 } from '@/src/utils/providerSettingsResolution';
 import { merge_reschedule_metadata } from '@/src/utils/booking_reschedule';
+import {
+  resolveEffectiveDurationForBookingRequest,
+  validateBookingEndAt,
+} from '@/lib/booking-effective-duration';
 
 type DayName = "Sun" | "Mon" | "Tue" | "Wed" | "Thu" | "Fri" | "Sat";
 
@@ -416,7 +420,23 @@ export async function POST(req: NextRequest) {
 
     // Validate availability before creating booking
     const startDate = new Date(start_at);
-    const endDate = end_at ? new Date(end_at) : new Date(startDate);
+
+    const effectiveDurationMinutes = await resolveEffectiveDurationForBookingRequest(
+      supabase,
+      workspaceId,
+      event_type_id,
+      metadata
+    );
+    const durationValidation = validateBookingEndAt(
+      start_at,
+      end_at,
+      effectiveDurationMinutes
+    );
+    if (!durationValidation.ok) {
+      return NextResponse.json({ error: durationValidation.message }, { status: 400 });
+    }
+    const resolvedEndAt = durationValidation.resolvedEndAt;
+    const endDate = new Date(resolvedEndAt);
 
     // Validate that the booking time is not in the past
     const now = new Date();
@@ -511,7 +531,7 @@ export async function POST(req: NextRequest) {
       const isBusy = await isSlotBusyInCalendar(
         Number(workspaceId),
         start_at,
-        end_at || start_at,
+        resolvedEndAt,
         service_provider_id || undefined
       );
       if (isBusy) {
@@ -612,7 +632,7 @@ export async function POST(req: NextRequest) {
         invitee_phone: invitee_phone?.trim() || null,
         contact_id: contactId ?? null,
         start_at: start_at,
-        end_at: end_at || null,
+        end_at: resolvedEndAt || null,
         status: status || 'pending',
         location: normalizedBookingLocation,
         payment_id: payment_id || null,
@@ -633,7 +653,7 @@ export async function POST(req: NextRequest) {
     let providerName: string | undefined;
     let departmentName: string | undefined;
     let eventTypeName = 'Appointment';
-    let durationMinutes = 30;
+    let durationMinutes = effectiveDurationMinutes;
     let arriveEarlyMin = 10;
     let arriveEarlyMax = 15;
 
@@ -651,7 +671,6 @@ export async function POST(req: NextRequest) {
 
         if (eventTypeData) {
           eventTypeName = eventTypeData.title || eventTypeName;
-          durationMinutes = eventTypeData.duration_minutes || durationMinutes;
           arriveEarlyMin = Number(eventTypeData.buffer_before ?? arriveEarlyMin);
           arriveEarlyMax = Number(eventTypeData.buffer_after ?? arriveEarlyMax);
 
@@ -719,7 +738,7 @@ export async function POST(req: NextRequest) {
         summary: `${eventTypeName}: ${invitee_name.trim()}`,
         description: metadata?.notes ? String(metadata.notes) : undefined,
         startAt: start_at,
-        endAt: end_at || start_at,
+        endAt: resolvedEndAt,
         location: calendar_event_location_string(location),
         attendeeEmail: invitee_email?.trim() || undefined,
         metadata: { bookingId: data?.id, eventTypeName },
@@ -786,7 +805,7 @@ export async function POST(req: NextRequest) {
           eventTypeName,
           ...(departmentName?.trim() ? { departmentName: departmentName.trim() } : {}),
           startTime: start_at,
-          endTime: end_at || start_at,
+          endTime: resolvedEndAt,
           duration: durationMinutes,
           notes: metadata?.notes || undefined,
           ...(clientTimezone ? { timezone: clientTimezone } : {}),
@@ -880,7 +899,7 @@ export async function POST(req: NextRequest) {
           ...(departmentName?.trim() ? { department: departmentName.trim() } : {}),
           ...(providerName?.trim() ? { provider: providerName.trim() } : {}),
           start: start_at,
-          end: end_at || start_at,
+          end: resolvedEndAt,
           note: metadata?.notes ? String(metadata.notes) : '',
           arrive_early_min: arriveEarlyMin,
           arrive_early_max: arriveEarlyMax,

@@ -41,7 +41,7 @@ export async function GET(req: NextRequest) {
 
     let query = supabase
       .from('services')
-      .select('id,name,description,price,department_id,status,meta_data')
+      .select('id,name,description,price,department_id,status,meta_data,duration')
       .eq('workspace_id', workspaceIdResolved)
       .eq('flag', true)
       .order('created_at', { ascending: false });

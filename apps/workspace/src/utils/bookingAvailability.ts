@@ -1,5 +1,9 @@
 import type { AvailabilitySettings, Booking, EventType } from '@/src/types/bookingForm';
 import {
+  resolveEffectiveBookingDurationMinutes,
+  type ServiceDurationCatalogItem,
+} from './bookingDuration';
+import {
   buildTimeslotsForDay,
   formatLocalDateString,
   getDayName,
@@ -13,7 +17,9 @@ export function isDateAvailable(
   availabilitySettings: AvailabilitySettings | null,
   selectedType: EventType | null,
   existingBookings: Booking[],
-  minLeadTimeMinutes = 0
+  minLeadTimeMinutes = 0,
+  selectedServiceIds: string[] = [],
+  serviceCatalog: ServiceDurationCatalogItem[] = []
 ): boolean {
   if (!availabilitySettings?.timesheet || !selectedType) return false;
 
@@ -50,12 +56,18 @@ export function isDateAvailable(
     if (allHoursDisabled) return false;
   }
 
+  const effectiveDuration = resolveEffectiveBookingDurationMinutes(
+    selectedType,
+    selectedServiceIds,
+    serviceCatalog
+  );
   const slots = buildTimeslotsForDay(
     selectedType,
     date,
     availabilitySettings,
     existingBookings,
-    minLeadTimeMinutes
+    minLeadTimeMinutes,
+    effectiveDuration
   );
   return slots.some((s) => !s.disabled);
 }

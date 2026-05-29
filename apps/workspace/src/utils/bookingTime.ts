@@ -186,9 +186,15 @@ export function buildTimeslotsForDay(
   selectedDate: Date,
   availabilitySettings: AvailabilitySettings | null,
   existingBookings: Booking[],
-  minLeadTimeMinutes = 0
+  minLeadTimeMinutes = 0,
+  slotDurationMinutes?: number
 ): Timeslot[] {
-  const duration = selectedType.duration_minutes || 30;
+  const duration =
+    typeof slotDurationMinutes === 'number' &&
+    Number.isFinite(slotDurationMinutes) &&
+    slotDurationMinutes >= 1
+      ? Math.trunc(slotDurationMinutes)
+      : selectedType.duration_minutes || 30;
   const dayName = getDayName(selectedDate);
   const daySchedule = availabilitySettings?.timesheet?.[dayName];
   if (!daySchedule?.enabled) return [];

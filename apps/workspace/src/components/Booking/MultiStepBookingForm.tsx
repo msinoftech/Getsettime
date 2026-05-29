@@ -23,6 +23,10 @@ import {
   list_bookable_meeting_option_keys,
   type meeting_option_key,
 } from '../../utils/meeting_options';
+import {
+  mergeServiceCatalogForDuration,
+  resolveEffectiveBookingDurationMinutes,
+} from '../../utils/bookingDuration';
 import { isTimeSlotBooked } from '../../utils/bookingTime';
 import { getDisplayTimezone, parseTimeStringTo24h } from '../../utils/timezone';
 
@@ -190,7 +194,20 @@ const MultiStepBookingForm = ({
 
   const sortedEventTypes = useMemo(() => sortEventTypesByDuration(eventTypes), [eventTypes]);
 
-  const timeslots = useTimeslots(selectedType, selectedDate, availabilitySettings, existingBookings);
+  const serviceCatalogForSlots = useMemo(
+    () => mergeServiceCatalogForDuration(providerScopedCatalogServices, services),
+    [providerScopedCatalogServices, services]
+  );
+
+  const timeslots = useTimeslots(
+    selectedType,
+    selectedDate,
+    availabilitySettings,
+    existingBookings,
+    0,
+    selectedServiceIds,
+    serviceCatalogForSlots
+  );
 
   const hideIntakeCatalogServices = providerScopedCatalogServices.length > 0;
 
@@ -380,7 +397,14 @@ const MultiStepBookingForm = ({
       }
 
       const endDate = new Date(startDate);
-      endDate.setMinutes(endDate.getMinutes() + (selectedType.duration_minutes || 30));
+      endDate.setMinutes(
+        endDate.getMinutes() +
+          resolveEffectiveBookingDurationMinutes(
+            selectedType,
+            selectedServiceIds,
+            serviceCatalogForSlots
+          )
+      );
       if (isTimeSlotBooked(startDate, endDate, selectedDate, existingBookings)) {
         setError('This time slot has already been booked. Please refresh and select another time.');
         setLoading(false);
@@ -609,6 +633,8 @@ const MultiStepBookingForm = ({
                     availabilitySettings={availabilitySettings}
                     existingBookings={existingBookings}
                     selectedType={selectedType}
+                    selectedServiceIds={selectedServiceIds}
+                    serviceCatalog={serviceCatalogForSlots}
                     departmentsCount={departments.length}
                     workspacePrimaryColor={workspacePrimaryColor}
                     workspaceAccentColor={workspaceAccentColor}

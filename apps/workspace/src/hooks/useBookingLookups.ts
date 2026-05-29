@@ -322,7 +322,7 @@ export function useServiceProviders() {
               id: m.id,
               email: m.email ?? '',
               departments,
-              deactivated: m.deactivated === true,
+              deactivated: Boolean(m.deactivated),
               is_workspace_owner: m.is_workspace_owner === true,
               raw_user_meta_data: {
                 full_name: m.raw_user_meta_data?.full_name,

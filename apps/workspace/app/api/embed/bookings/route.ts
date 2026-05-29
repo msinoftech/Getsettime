@@ -28,6 +28,10 @@ import {
   resolveNotificationsForServiceProvider,
   resolveMeetingOptionsForServiceProvider,
 } from '@/src/utils/providerSettingsResolution';
+import {
+  resolveEffectiveDurationForBookingRequest,
+  validateBookingEndAt,
+} from '@/lib/booking-effective-duration';
 
 type DayName = "Sun" | "Mon" | "Tue" | "Wed" | "Thu" | "Fri" | "Sat";
 
@@ -290,8 +294,23 @@ export async function POST(req: NextRequest) {
     }
 
     // Validate availability before creating booking (startDate already validated above)
-    const endDate = end_at ? new Date(end_at) : new Date(startDate);
-    
+    const effectiveDurationMinutes = await resolveEffectiveDurationForBookingRequest(
+      supabase,
+      workspace_id,
+      event_type_id,
+      intake_form && typeof intake_form === 'object' ? { intake_form } : null
+    );
+    const durationValidation = validateBookingEndAt(
+      start_at,
+      end_at,
+      effectiveDurationMinutes
+    );
+    if (!durationValidation.ok) {
+      return NextResponse.json({ error: durationValidation.message }, { status: 400 });
+    }
+    const resolvedEndAt = durationValidation.resolvedEndAt;
+    const endDate = new Date(resolvedEndAt);
+
     // Fetch availability settings
     const { data: configData } = await supabase
       .from('configurations')
@@ -374,7 +393,7 @@ export async function POST(req: NextRequest) {
     // Check Google Calendar for busy slots (if integrated)
     try {
       const { isSlotBusyInCalendar } = await import('@/lib/google-calendar-service');
-      const endAt = end_at || start_at;
+      const endAt = resolvedEndAt;
       const isBusy = await isSlotBusyInCalendar(
         workspace_id,
         start_at,
@@ -501,7 +520,7 @@ export async function POST(req: NextRequest) {
         invitee_phone: invitee_phone?.trim() || null,
         contact_id: contactId ?? null,
         start_at,
-        end_at: end_at || null,
+        end_at: resolvedEndAt || null,
         status: bookingStatus,
         location: locationForInsert,
         payment_id: null,
@@ -524,7 +543,7 @@ export async function POST(req: NextRequest) {
     let providerName: string | undefined;
     let departmentName: string | undefined;
     let eventTypeName = 'Appointment';
-    let durationMinutes = 30;
+    let durationMinutes = effectiveDurationMinutes;
     let arriveEarlyMin = 10;
     let arriveEarlyMax = 15;
 
@@ -538,7 +557,6 @@ export async function POST(req: NextRequest) {
 
         if (eventTypeData) {
           eventTypeName = eventTypeData.title || eventTypeName;
-          durationMinutes = eventTypeData.duration_minutes || durationMinutes;
           arriveEarlyMin = Number(eventTypeData.buffer_before ?? arriveEarlyMin);
           arriveEarlyMax = Number(eventTypeData.buffer_after ?? arriveEarlyMax);
         }
@@ -600,7 +618,7 @@ export async function POST(req: NextRequest) {
     try {
       const wantsMeet = booking_wants_google_meet(locationForInsert);
       const { createCalendarEvent } = await import('@/lib/google-calendar-service');
-      const endAtCal = end_at || start_at;
+      const endAtCal = resolvedEndAt;
       const tzCal =
         typeof clientTimezone === 'string' && clientTimezone.trim()
           ? clientTimezone.trim()
@@ -681,7 +699,7 @@ export async function POST(req: NextRequest) {
           eventTypeName,
           ...(departmentName?.trim() ? { departmentName: departmentName.trim() } : {}),
           startTime: start_at,
-          endTime: end_at || start_at,
+          endTime: resolvedEndAt,
           duration: durationMinutes,
           notes: metadataPayload.notes ? String(metadataPayload.notes) : undefined,
           ...(clientTimezone ? { timezone: clientTimezone } : {}),
@@ -774,7 +792,7 @@ export async function POST(req: NextRequest) {
           ...(departmentName?.trim() ? { department: departmentName.trim() } : {}),
           ...(providerName?.trim() ? { provider: providerName.trim() } : {}),
           start: start_at,
-          end: end_at || start_at,
+          end: resolvedEndAt,
           note: metadataPayload.notes ? String(metadataPayload.notes) : '',
           arrive_early_min: arriveEarlyMin,
           arrive_early_max: arriveEarlyMax,

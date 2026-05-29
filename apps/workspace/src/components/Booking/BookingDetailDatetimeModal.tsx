@@ -1,12 +1,17 @@
 'use client';
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import type { Department, EventType, ServiceProvider } from '@/src/types/bookingForm';
+import type { Department, EventType, Service, ServiceProvider } from '@/src/types/bookingForm';
 import { useBookingFormData } from '@/src/hooks/useBookingFormData';
 import { useTimeslots } from '@/src/hooks/useTimeslots';
 import { Step3DateTime } from '@/src/components/Booking/MultiStepBooking/Step3DateTime';
 import type { AvailabilitySettings } from '@/src/types/bookingForm';
 import type { Booking as BusySlotBooking } from '@/src/types/bookingForm';
+import {
+  intakeServiceIdsFromMetadata,
+  mergeServiceCatalogForDuration,
+  resolveEffectiveBookingDurationMinutes,
+} from '@/src/utils/bookingDuration';
 import { isTimeSlotBooked, normalizeDate } from '@/src/utils/bookingTime';
 import { getDisplayTimezone, parseTimeStringTo24h } from '@/src/utils/timezone';
 import type { Booking } from '@/src/types/booking';
@@ -81,6 +86,12 @@ export function BookingDetailDatetimeModal({
     })
   );
   const [error, setError] = useState<string | null>(null);
+  const [rescheduleServiceCatalog, setRescheduleServiceCatalog] = useState<Service[]>([]);
+
+  const intakeServiceIds = useMemo(
+    () => intakeServiceIdsFromMetadata(booking.metadata),
+    [booking.metadata]
+  );
 
   const onAvailabilityChange = useCallback(() => {
     setSelectedDate(null);
@@ -96,6 +107,7 @@ export function BookingDetailDatetimeModal({
     loadingBookings,
     loadingDepartments,
     loadingProviders,
+    services,
     needsExplicitProvider,
   } = useBookingFormData({
     selectedDepartment,
@@ -114,14 +126,57 @@ export function BookingDetailDatetimeModal({
     return list.filter((b) => b.id !== exclude_id);
   }, [existingBookings, exclude_id]);
 
+  const serviceCatalogForSlots = useMemo(
+    () =>
+      mergeServiceCatalogForDuration(
+        services.filter((s) => intakeServiceIds.includes(s.id)),
+        rescheduleServiceCatalog
+      ),
+    [services, intakeServiceIds, rescheduleServiceCatalog]
+  );
+
   const minLead = mode === 'reschedule' ? 60 : 0;
   const timeslots = useTimeslots(
     selectedType,
     selectedDate,
     availabilitySettings as AvailabilitySettings | null,
     existing_for_slots as BusySlotBooking[],
-    minLead
+    minLead,
+    intakeServiceIds,
+    serviceCatalogForSlots
   );
+
+  useEffect(() => {
+    if (!open || intakeServiceIds.length === 0) {
+      setRescheduleServiceCatalog([]);
+      return;
+    }
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const { supabase } = await import('@/lib/supabaseClient');
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+        if (!session?.access_token || cancelled) return;
+        const res = await fetch('/api/services', {
+          headers: { Authorization: `Bearer ${session.access_token}` },
+        });
+        if (!res.ok || cancelled) return;
+        const data = (await res.json()) as { services?: Service[] };
+        const filtered = (data.services ?? []).filter((s) =>
+          intakeServiceIds.includes(s.id)
+        );
+        if (!cancelled) setRescheduleServiceCatalog(filtered);
+      } catch {
+        if (!cancelled) setRescheduleServiceCatalog([]);
+      }
+    };
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, intakeServiceIds]);
 
   useEffect(() => {
     if (!open) return;
@@ -229,7 +284,12 @@ export function BookingDetailDatetimeModal({
     }
     const endDate = new Date(startDate);
     endDate.setMinutes(
-      endDate.getMinutes() + (selectedType.duration_minutes || 30)
+      endDate.getMinutes() +
+        resolveEffectiveBookingDurationMinutes(
+          selectedType,
+          intakeServiceIds,
+          serviceCatalogForSlots
+        )
     );
     if (
       isTimeSlotBooked(
@@ -312,6 +372,8 @@ export function BookingDetailDatetimeModal({
               availabilitySettings={availabilitySettings}
               existingBookings={existing_for_slots as BusySlotBooking[]}
               selectedType={selectedType}
+              selectedServiceIds={intakeServiceIds}
+              serviceCatalog={serviceCatalogForSlots}
               departmentsCount={departments.length}
               workspacePrimaryColor={workspacePrimaryColor}
               workspaceAccentColor={workspaceAccentColor}

@@ -49,7 +49,10 @@ import {
   parse_workspace_provider_links,
   type workspace_provider_links_settings,
 } from "@/lib/provider_booking_link";
-import { userActsAsServiceProviderFromMetadata } from "@/lib/service_provider_role";
+import {
+  userActsAsServiceProviderFromMetadata,
+  userIsWorkspaceAdminWithAdditionalServiceProviderFromSupabaseUser,
+} from "@/lib/service_provider_role";
 import {
   copy_text_to_clipboard,
   resolve_event_type_public_booking_url,
@@ -193,6 +196,8 @@ export default function EventTypes() {
   const [serviceProviderOwnerIds, setServiceProviderOwnerIds] = useState<Set<string>>(
     () => new Set()
   );
+  const [teamDeactivatedServiceProviderIds, setTeamDeactivatedServiceProviderIds] =
+    useState<Set<string>>(() => new Set());
   const [loadingSlug, setLoadingSlug] = useState(true);
   const [copiedId, setCopiedId] = useState<number | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
@@ -553,12 +558,19 @@ export default function EventTypes() {
       return;
     }
 
-    const ownerActsAsServiceProvider = Boolean(
+    const ownerIsServiceProvider = Boolean(
       item.owner_id &&
         (serviceProviderOwnerIds.has(item.owner_id) ||
           (item.owner_id === user?.id &&
             user?.user_metadata?.role === ROLE_SERVICE_PROVIDER))
     );
+
+    const useWorkspaceLinkForOwnEventType =
+      userIsWorkspaceAdminWithAdditionalServiceProviderFromSupabaseUser(user) &&
+      Boolean(item.owner_id && item.owner_id === user?.id);
+
+    const ownerActsAsServiceProvider =
+      ownerIsServiceProvider && !useWorkspaceLinkForOwnEventType;
 
     const resolved = resolve_event_type_public_booking_url(
       workspaceSlug,
@@ -638,6 +650,7 @@ export default function EventTypes() {
   useEffect(() => {
     if (!user) {
       setServiceProviderOwnerIds(new Set());
+      setTeamDeactivatedServiceProviderIds(new Set());
       set_owner_names_by_id({});
       return;
     }
@@ -659,6 +672,7 @@ export default function EventTypes() {
         const data = await response.json();
         const names: Record<string, string> = {};
         const service_provider_ids = new Set<string>();
+        const deactivated_service_provider_ids_from_team = new Set<string>();
 
         for (const member of (data.teamMembers || []) as Array<{
           id?: string;
@@ -666,19 +680,24 @@ export default function EventTypes() {
           role?: string | null;
           is_workspace_owner?: boolean;
           additional_roles?: string[] | null;
+          deactivated?: boolean;
         }>) {
           if (member.id && member.name && show_owner_labels) {
             names[member.id] = member.name;
           }
-          if (
+          const acts_as_service_provider = Boolean(
             member.id &&
-            userActsAsServiceProviderFromMetadata({
-              role: member.role,
-              is_workspace_owner: member.is_workspace_owner,
-              additional_roles: member.additional_roles,
-            })
-          ) {
+              userActsAsServiceProviderFromMetadata({
+                role: member.role,
+                is_workspace_owner: member.is_workspace_owner,
+                additional_roles: member.additional_roles,
+              })
+          );
+          if (acts_as_service_provider && member.id) {
             service_provider_ids.add(member.id);
+            if (Boolean(member.deactivated)) {
+              deactivated_service_provider_ids_from_team.add(member.id);
+            }
           }
         }
 
@@ -688,6 +707,9 @@ export default function EventTypes() {
 
         if (!cancelled) {
           setServiceProviderOwnerIds(service_provider_ids);
+          setTeamDeactivatedServiceProviderIds(
+            deactivated_service_provider_ids_from_team
+          );
           if (show_owner_labels) {
             set_owner_names_by_id(names);
           } else {
@@ -705,18 +727,25 @@ export default function EventTypes() {
     };
   }, [user, show_owner_labels]);
 
-  const active_service_providers = useMemo(
-    () => serviceProviders.filter((p) => !p.deactivated),
-    [serviceProviders]
-  );
+  const deactivated_service_provider_ids = useMemo(() => {
+    const ids = new Set<string>();
+    for (const provider of serviceProviders) {
+      if (provider.deactivated) ids.add(provider.id);
+    }
+    for (const id of teamDeactivatedServiceProviderIds) {
+      ids.add(id);
+    }
+    return ids;
+  }, [serviceProviders, teamDeactivatedServiceProviderIds]);
 
-  const deactivated_service_provider_ids = useMemo(
-    () =>
-      new Set(
-        serviceProviders.filter((p) => p.deactivated).map((p) => p.id)
-      ),
-    [serviceProviders]
-  );
+  const service_provider_filter_label = (providerId: string) => {
+    const name = capitalize_booking_display_label(
+      getServiceProviderName(providerId, serviceProviders)
+    );
+    return deactivated_service_provider_ids.has(providerId)
+      ? `${name} (Inactive)`
+      : name;
+  };
 
   const user_role =
     typeof user?.user_metadata?.role === "string" ? user.user_metadata.role : "";
@@ -727,20 +756,19 @@ export default function EventTypes() {
     user_role === ROLE_STAFF;
 
   const show_service_provider_filter =
-    can_filter_event_types_by_provider && active_service_providers.length > 1;
+    can_filter_event_types_by_provider && serviceProviders.length > 1;
 
   const sorted_service_providers = useMemo(
     () =>
-      [...active_service_providers].sort((a, b) =>
-        capitalize_booking_display_label(
-          getServiceProviderName(a.id, serviceProviders)
-        ).localeCompare(
-          capitalize_booking_display_label(
-            getServiceProviderName(b.id, serviceProviders)
-          )
-        )
-      ),
-    [active_service_providers, serviceProviders]
+      [...serviceProviders].sort((a, b) => {
+        const aInactive = deactivated_service_provider_ids.has(a.id) ? 1 : 0;
+        const bInactive = deactivated_service_provider_ids.has(b.id) ? 1 : 0;
+        if (aInactive !== bInactive) return aInactive - bInactive;
+        return service_provider_filter_label(a.id).localeCompare(
+          service_provider_filter_label(b.id)
+        );
+      }),
+    [serviceProviders, deactivated_service_provider_ids]
   );
 
   const total_event_types = items.length;
@@ -921,9 +949,7 @@ export default function EventTypes() {
                   <option value="">All service providers</option>
                   {sorted_service_providers.map((sp) => (
                     <option key={sp.id} value={sp.id}>
-                      {capitalize_booking_display_label(
-                        getServiceProviderName(sp.id, serviceProviders)
-                      )}
+                      {service_provider_filter_label(sp.id)}
                     </option>
                   ))}
                 </select>

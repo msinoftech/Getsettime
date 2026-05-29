@@ -645,6 +645,8 @@ export function BookingDetailsCard({
     : '';
 
   const booking_status_label = booking.status || 'Pending';
+  const is_booking_cancelled =
+    (booking.status || '').trim().toLowerCase() === 'cancelled';
 
   const handle_save_admin_notice = async () => {
     if (!onSaveAdminNotice) return;
@@ -812,7 +814,13 @@ export function BookingDetailsCard({
             <button
               type="button"
               onClick={onSendReminder}
-              className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-medium text-blue-700 shadow-sm transition hover:bg-blue-100"
+              disabled={is_booking_cancelled}
+              title={
+                is_booking_cancelled
+                  ? 'Reminders cannot be sent for cancelled bookings'
+                  : undefined
+              }
+              className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-medium text-blue-700 shadow-sm transition hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-blue-50"
             >
               Send Reminder
             </button>
