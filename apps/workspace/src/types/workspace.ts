@@ -101,6 +101,8 @@ export type WorkspaceSettings = {
   intake_form?: IntakeFormSettings;
   meeting_options?: meeting_options_settings;
   notifications?: workspace_notifications_settings;
+  /** Public booking link slugs keyed by service provider user id */
+  links?: Record<string, { slug?: string }>;
 };
 
 export type WorkspaceSettingsHook = {
@@ -115,6 +117,8 @@ export type WorkspaceSettingsHook = {
   workspaceProfessionLabel?: string | null;
   /** Settings → My Link slug for public booking at `/{slug}` */
   workspaceSlug?: string | null;
+  /** Logged-in service provider link slug at `/{workspaceSlug}/{slug}` */
+  serviceProviderLinkSlug?: string | null;
   loading: boolean;
   error: Error | null;
   refetch: () => Promise<void>;

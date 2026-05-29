@@ -715,10 +715,10 @@ export default function ServicesPage() {
                 Department Service Management
               </p>
               <h1 className="text-2xl font-semibold tracking-tight text-slate-900 md:text-3xl">
-                Services under department with doctor assignment
+                Services under department with consultant assignment
               </h1>
               <p className="mt-2 max-w-3xl text-sm text-slate-500 md:text-base">
-                Manage department services, assigned doctors, and exact doctor-service access from one admin screen.
+                Manage department services, assigned consultants, and exact consultant-service access from one admin screen.
               </p>
             </div>
 
@@ -758,7 +758,7 @@ export default function ServicesPage() {
               <p className="mt-1 text-sm text-slate-500">
                 {isLoggedInServiceProvider
                   ? "Your assigned departments. Select one to manage its services."
-                  : "Select one department to manage services and doctor mapping."}
+                  : "Select one department to manage services and consultant mapping."}
               </p>
             </div>
 
@@ -798,7 +798,7 @@ export default function ServicesPage() {
                         </div>
                         <div className="mt-2 flex flex-wrap gap-2">
                           <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600">
-                            {doctorCount} doctor{doctorCount !== 1 ? "s" : ""}
+                            {doctorCount} consultant{doctorCount !== 1 ? "s" : ""}
                           </span>
                           <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700">
                             {svcCount} service{svcCount !== 1 ? "s" : ""}
@@ -859,7 +859,7 @@ export default function ServicesPage() {
               </div>
 
               <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-                <p className="text-sm text-slate-500">Doctor-service assignments</p>
+                <p className="text-sm text-slate-500">Consultant-service assignments</p>
                 <h3 className="mt-2 text-3xl font-semibold tracking-tight text-slate-900">
                   {totalAssignments}
                 </h3>
@@ -1030,10 +1030,10 @@ export default function ServicesPage() {
                 <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                   <div>
                     <h2 className="text-lg font-semibold text-slate-900">
-                      Doctor-service assignment matrix
+                      Consultant-service assignment matrix
                     </h2>
                     <p className="mt-1 text-sm text-slate-500">
-                      Assign exact services to each doctor under{" "}
+                      Assign exact services to each consultant under{" "}
                       {selectedDepartment?.name ?? "the selected department"}.
                     </p>
                   </div>
@@ -1043,7 +1043,7 @@ export default function ServicesPage() {
                     <input
                       value={doctorSearch}
                       onChange={(e) => setDoctorSearch(e.target.value)}
-                      placeholder="Search doctors..."
+                      placeholder="Search consultants..."
                       className="h-11 w-full rounded-2xl border border-slate-200 bg-slate-50 pl-10 pr-4 text-sm outline-none transition focus:border-indigo-500 focus:bg-white focus:ring-4 focus:ring-indigo-100"
                     />
                   </div>
@@ -1053,13 +1053,13 @@ export default function ServicesPage() {
                   <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-8 text-center">
                     <p className="text-sm font-semibold text-slate-700">
                       {filteredDoctors.length === 0
-                        ? "No doctors assigned to this department yet"
+                        ? "No consultants assigned to this department yet"
                         : "No services to map against"}
                     </p>
                     <p className="mt-1 text-xs text-slate-500">
                       {filteredDoctors.length === 0
-                        ? "Assign doctors to this department first on the Departments page."
-                        : "Add a service to this department to start mapping doctors."}
+                        ? "Assign consultants to this department first on the Departments page."
+                        : "Add a service to this department to start mapping consultants."}
                     </p>
                   </div>
                 ) : (
@@ -1069,7 +1069,7 @@ export default function ServicesPage() {
                         <thead className="bg-slate-50">
                           <tr>
                             <th className="sticky left-0 z-20 min-w-[250px] border-b border-slate-200 bg-slate-50 px-4 py-4 text-left text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
-                              Doctors
+                              Consultants
                             </th>
 
                             {filteredServices.map((service) => (
@@ -1214,7 +1214,7 @@ export default function ServicesPage() {
                       Rule 1
                     </p>
                     <p className="mt-2 text-sm text-slate-700">
-                      A doctor can only be assigned to services inside the selected department.
+                      A consultant can only be assigned to services inside the selected department.
                     </p>
                   </div>
 
@@ -1232,7 +1232,7 @@ export default function ServicesPage() {
                       Rule 3
                     </p>
                     <p className="mt-2 text-sm text-slate-700">
-                      If no doctor is assigned to a service, mark it unavailable for booking.
+                      If no consultant is assigned to a service, mark it unavailable for booking.
                     </p>
                   </div>
                 </div>

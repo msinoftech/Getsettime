@@ -35,6 +35,8 @@ interface UseEmbedBookingFormDataParams {
   workspace: Workspace;
   /** When set (direct embed URL), includes public or private type for this slug without listing private types publicly. */
   eventTypeSlug?: string;
+  /** When set (provider public link), scopes departments, services, event types, and availability to this provider. */
+  fixedServiceProviderId?: string;
   selectedDepartment: Department | null;
   selectedProvider: ServiceProvider | null;
   selectedType: EventType | null;
@@ -46,6 +48,7 @@ interface UseEmbedBookingFormDataParams {
 export function useEmbedBookingFormData({
   workspace,
   eventTypeSlug,
+  fixedServiceProviderId,
   selectedDepartment,
   selectedProvider,
   selectedType,
@@ -57,9 +60,14 @@ export function useEmbedBookingFormData({
   const [loadingDepartments, setLoadingDepartments] = useState(true);
   const [workspaceMembers, setWorkspaceMembers] = useState<TeamMemberRow[]>([]);
 
+  const scopedMembers = useMemo(() => {
+    if (!fixedServiceProviderId) return workspaceMembers;
+    return workspaceMembers.filter((m) => m.id === fixedServiceProviderId);
+  }, [workspaceMembers, fixedServiceProviderId]);
+
   const departments = useMemo(
-    () => filterBookableDepartments(allDepartments, workspaceMembers),
-    [allDepartments, workspaceMembers]
+    () => filterBookableDepartments(allDepartments, scopedMembers),
+    [allDepartments, scopedMembers]
   );
   const [workspaceOwnerUserId, setWorkspaceOwnerUserId] = useState<string | null>(null);
   const [eventTypes, setEventTypes] = useState<EventType[]>([]);
@@ -85,7 +93,7 @@ export function useEmbedBookingFormData({
 
   const providersActingInDepartment = useMemo((): ServiceProvider[] => {
     if (!selectedDepartment) return [];
-    return workspaceMembers
+    return scopedMembers
       .filter(
         (m) =>
           !m.deactivated &&
@@ -106,14 +114,15 @@ export function useEmbedBookingFormData({
         role: m.role ?? null,
         admin_notice: m.admin_notice,
       }));
-  }, [selectedDepartment, workspaceMembers]);
+  }, [selectedDepartment, scopedMembers]);
 
-  const showProviderPicker = useMemo(
-    () => providersActingInDepartment.length > 0,
-    [providersActingInDepartment]
-  );
+  const showProviderPicker = useMemo(() => {
+    if (fixedServiceProviderId) return false;
+    return providersActingInDepartment.length > 0;
+  }, [fixedServiceProviderId, providersActingInDepartment]);
 
   const effectiveProviderId = useMemo(() => {
+    if (fixedServiceProviderId) return fixedServiceProviderId;
     if (!selectedDepartment) return null;
     if (!showProviderPicker) return workspaceOwnerUserId;
     if (selectedProvider?.id) return selectedProvider.id;
@@ -122,6 +131,7 @@ export function useEmbedBookingFormData({
     }
     return null;
   }, [
+    fixedServiceProviderId,
     selectedDepartment,
     showProviderPicker,
     workspaceOwnerUserId,
@@ -130,7 +140,10 @@ export function useEmbedBookingFormData({
   ]);
 
   const needsExplicitProvider =
-    departments.length > 0 && selectedDepartment !== null && showProviderPicker;
+    !fixedServiceProviderId &&
+    departments.length > 0 &&
+    selectedDepartment !== null &&
+    showProviderPicker;
 
   const bookableEventTypes = useMemo(() => {
     if (needsExplicitProvider && !effectiveProviderId) return [];
@@ -165,12 +178,26 @@ export function useEmbedBookingFormData({
     fetchSettings();
   }, [workspace.id, effectiveProviderId]);
 
+  const scopedAdminNotice = useMemo(() => {
+    if (!fixedServiceProviderId) return workspaceOwnerAdminNotice;
+    const member = scopedMembers.find((m) => m.id === fixedServiceProviderId);
+    const notice = member?.admin_notice;
+    return typeof notice === 'string' && notice.trim() !== '' ? notice.trim() : null;
+  }, [fixedServiceProviderId, scopedMembers, workspaceOwnerAdminNotice]);
+
   useEffect(() => {
     const fetchDepartmentsAndTeam = async () => {
       try {
+        const providerQuery = fixedServiceProviderId
+          ? `&service_provider_id=${encodeURIComponent(fixedServiceProviderId)}`
+          : '';
         const [depRes, tmRes] = await Promise.all([
-          fetch(`/api/embed/departments?workspace_id=${workspace.id}`),
-          fetch(`/api/embed/team-members?workspace_id=${workspace.id}`),
+          fetch(
+            `/api/embed/departments?workspace_id=${workspace.id}${providerQuery}`
+          ),
+          fetch(
+            `/api/embed/team-members?workspace_id=${workspace.id}${providerQuery}`
+          ),
         ]);
         if (depRes.ok) {
           const depData = await depRes.json();
@@ -199,7 +226,7 @@ export function useEmbedBookingFormData({
       }
     };
     fetchDepartmentsAndTeam();
-  }, [workspace.id]);
+  }, [workspace.id, fixedServiceProviderId]);
 
   useEffect(() => {
     if (!selectedDepartment) {
@@ -242,7 +269,9 @@ export function useEmbedBookingFormData({
       setLoadingAvailability(false);
       return;
     }
-    if (loadingDepartments && departments.length === 0) return;
+    if (loadingDepartments && departments.length === 0 && !fixedServiceProviderId) {
+      return;
+    }
 
     const fetchAvailability = async () => {
       setLoadingAvailability(true);
@@ -250,7 +279,13 @@ export function useEmbedBookingFormData({
       setExistingBookings([]);
       onAvailabilityChange?.();
       try {
-        const res = await fetch(`/api/embed/settings?workspace_id=${workspace.id}`);
+        const providerQuery =
+          effectiveProviderId != null
+            ? `&service_provider_id=${encodeURIComponent(effectiveProviderId)}`
+            : '';
+        const res = await fetch(
+          `/api/embed/settings?workspace_id=${workspace.id}${providerQuery}`
+        );
         if (!res.ok) {
           setLoadingAvailability(false);
           return;
@@ -276,6 +311,7 @@ export function useEmbedBookingFormData({
     loadingDepartments,
     workspace.id,
     needsExplicitProvider,
+    fixedServiceProviderId,
     onAvailabilityChange,
   ]);
 
@@ -334,7 +370,11 @@ export function useEmbedBookingFormData({
     const fetchServices = async () => {
       setLoadingServices(true);
       try {
-        const res = await fetch(`/api/embed/services?workspace_id=${workspace.id}`);
+        const params = new URLSearchParams({ workspace_id: workspace.id });
+        if (effectiveProviderId) {
+          params.set('service_provider_id', effectiveProviderId);
+        }
+        const res = await fetch(`/api/embed/services?${params.toString()}`);
         if (res.ok) {
           const data: { services?: Service[] } = await res.json();
           const all = data.services || [];
@@ -347,7 +387,7 @@ export function useEmbedBookingFormData({
       }
     };
     fetchServices();
-  }, [effectiveIntakeForm, workspace.id]);
+  }, [effectiveIntakeForm, workspace.id, effectiveProviderId]);
 
   useEffect(() => {
     if (!selectedDepartment || !effectiveProviderId) {
@@ -392,9 +432,10 @@ export function useEmbedBookingFormData({
     loadingProviderScopedCatalog,
     workspaceOwnerUserId,
     showProviderPicker,
+    effectiveProviderId,
     intakeForm: effectiveIntakeForm,
     generalSettings,
-    workspaceOwnerAdminNotice,
+    workspaceOwnerAdminNotice: scopedAdminNotice,
     meetingOptions: meetingOptionsSettings,
   };
 }

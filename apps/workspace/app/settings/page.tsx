@@ -4,6 +4,8 @@ import React, { useMemo, useRef, useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { TIMEZONE_OPTIONS } from "@/src/constants/timezone";
+import { ROLE_MANAGER, ROLE_SERVICE_PROVIDER, ROLE_STAFF, ROLE_WORKSPACE_ADMIN } from "@/src/constants/roles";
+import { useAuth } from "@/src/providers/AuthProvider";
 import { useWorkspaceSettings } from "@/src/hooks/useWorkspaceSettings";
 import { WorkspaceBrandLogo } from "@/src/components/molecules/WorkspaceBrandLogo";
 import { resolve_workspace_logo_src } from "@/src/utils/workspace_logo";
@@ -44,9 +46,20 @@ function get_preview_url(slug: string, host: string): string {
   return `${host}/${path}`;
 }
 
+function get_provider_preview_url(
+  workspaceSlug: string,
+  providerSlug: string,
+  host: string
+): string {
+  const workspace = workspaceSlug.trim() || "your-workspace";
+  const provider = providerSlug.trim() || "your-link";
+  return `${host}/${workspace}/${provider}`;
+}
+
 type snapshot = {
   accountName: string;
   workspaceSlug: string;
+  serviceProviderSlug: string;
   primaryColor: string;
   accentColor: string;
   timezone: string;
@@ -69,11 +82,23 @@ type snapshot = {
 
 export default function SettingsPage() {
   const router = useRouter();
+  const { user } = useAuth();
   const { refetch: refetchWorkspaceShell } = useWorkspaceSettings();
   const bookingHost = useMemo(() => get_public_booking_host(), []);
+  const userRole = user?.user_metadata?.role as string | undefined;
+  const isServiceProvider = userRole === ROLE_SERVICE_PROVIDER;
+  const isStaff = userRole === ROLE_STAFF;
+  const canEditAllSettings =
+    userRole === ROLE_WORKSPACE_ADMIN || userRole === ROLE_MANAGER;
+  const isReadOnly = isStaff;
+  const canEditProviderSlug = isServiceProvider && !isReadOnly;
+  const canSave = canEditAllSettings || canEditProviderSlug;
+  const nonLinkFieldsDisabled = isReadOnly || isServiceProvider;
+  const loggedInUserId = user?.id ?? null;
 
   const [accountName, setAccountName] = useState("");
   const [workspaceSlug, setWorkspaceSlug] = useState("");
+  const [serviceProviderSlug, setServiceProviderSlug] = useState("");
   const [primaryColor, setPrimaryColor] = useState("#2ECC71");
   const [accentColor, setAccentColor] = useState("#673AB7");
   const [timezone, setTimezone] = useState("");
@@ -105,14 +130,26 @@ export default function SettingsPage() {
 
   const snapshotRef = useRef<snapshot | null>(null);
 
-  const previewUrl = useMemo(
-    () => get_preview_url(workspaceSlug, bookingHost),
-    [workspaceSlug, bookingHost]
-  );
+  const previewUrl = useMemo(() => {
+    if (isServiceProvider) {
+      return get_provider_preview_url(
+        workspaceSlug,
+        serviceProviderSlug,
+        bookingHost
+      );
+    }
+    return get_preview_url(workspaceSlug, bookingHost);
+  }, [
+    isServiceProvider,
+    workspaceSlug,
+    serviceProviderSlug,
+    bookingHost,
+  ]);
 
   const applySnapshot = (s: snapshot) => {
     setAccountName(s.accountName);
     setWorkspaceSlug(s.workspaceSlug);
+    setServiceProviderSlug(s.serviceProviderSlug);
     setPrimaryColor(s.primaryColor);
     setAccentColor(s.accentColor);
     setTimezone(s.timezone);
@@ -138,6 +175,7 @@ export default function SettingsPage() {
     const snap: snapshot = {
       accountName: "",
       workspaceSlug: "",
+      serviceProviderSlug: "",
       primaryColor: "#2ECC71",
       accentColor: "#673AB7",
       timezone: "",
@@ -274,6 +312,18 @@ export default function SettingsPage() {
           snap.autoConfirm = notifications["auto-confirm-booking"] === true;
           snap.emailReminder = notifications["email-reminder"] !== false;
           snap.whatsappReminder = notifications["sms-reminder"] === true;
+
+          const {
+            data: { user: authUser },
+          } = await supabase.auth.getUser();
+          const authRole = authUser?.user_metadata?.role as string | undefined;
+          if (authRole === ROLE_SERVICE_PROVIDER && authUser?.id) {
+            const links = (settings.links || {}) as Record<
+              string,
+              { slug?: string }
+            >;
+            snap.serviceProviderSlug = links[authUser.id]?.slug ?? "";
+          }
         }
       }
 
@@ -287,6 +337,8 @@ export default function SettingsPage() {
   };
 
   const handleLogoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!canEditAllSettings) return;
+
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -345,11 +397,29 @@ export default function SettingsPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canSave) return;
+
     setLinkError(null);
     setSaveMessage(null);
 
     const trimmedSlug = workspaceSlug.trim();
-    if (!trimmedSlug) {
+    const trimmedProviderSlug = serviceProviderSlug.trim();
+
+    if (isServiceProvider) {
+      if (!trimmedProviderSlug) {
+        setLinkError("Provider link is required");
+        setSaveMessage({ type: "error", text: "Provider link is required." });
+        return;
+      }
+      if (!trimmedSlug) {
+        setLinkError("Workspace link is not configured");
+        setSaveMessage({
+          type: "error",
+          text: "Workspace booking link is not configured yet.",
+        });
+        return;
+      }
+    } else if (!trimmedSlug) {
       setLinkError("Link is required");
       setSaveMessage({ type: "error", text: "Link is required." });
       return;
@@ -363,6 +433,64 @@ export default function SettingsPage() {
         data: { session },
       } = await supabase.auth.getSession();
       const token = session?.access_token;
+
+      if (isServiceProvider && loggedInUserId) {
+        const settingsResponse = await fetch("/api/settings", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({
+            settings: {
+              links: {
+                [loggedInUserId]: { slug: trimmedProviderSlug.toLowerCase() },
+              },
+            },
+          }),
+        });
+
+        if (!settingsResponse.ok) {
+          const result = await settingsResponse.json().catch(() => ({}));
+          const message =
+            typeof result.error === "string"
+              ? result.error
+              : "Failed to save settings";
+          setLinkError(message);
+          throw new Error(message);
+        }
+
+        setSaveMessage({ type: "success", text: "Provider link saved successfully!" });
+        setTimeout(() => setSaveMessage(null), 3000);
+        void refetchWorkspaceShell();
+        snapshotRef.current = {
+          ...(snapshotRef.current ?? {
+            accountName: "",
+            workspaceSlug: trimmedSlug,
+            serviceProviderSlug: trimmedProviderSlug,
+            primaryColor,
+            accentColor,
+            timezone,
+            logoFileName,
+            logoUrl,
+            businessEmail,
+            businessPhone,
+            dateFormat,
+            timeFormat,
+            language,
+            currency,
+            useGradientBookingBg,
+            roundedUiStyle,
+            autoConfirm,
+            allowReschedule,
+            allowCancellation,
+            emailReminder,
+            whatsappReminder,
+          }),
+          serviceProviderSlug: trimmedProviderSlug,
+        };
+        return;
+      }
 
       const workspaceResponse = await fetch("/api/workspace", {
         method: "PUT",
@@ -382,7 +510,10 @@ export default function SettingsPage() {
         throw new Error(result.error || "Failed to save workspace settings");
       }
 
-      const settingsData = {
+      const settingsData: {
+        general: Record<string, unknown>;
+        notifications: Record<string, unknown>;
+      } = {
         general: {
           primaryColor,
           accentColor,
@@ -415,10 +546,15 @@ export default function SettingsPage() {
       });
 
       if (!settingsResponse.ok) {
-        console.warn(
-          "Failed to save extended settings:",
-          await settingsResponse.json().catch(() => ({}))
-        );
+        const result = await settingsResponse.json().catch(() => ({}));
+        const message =
+          typeof result.error === "string"
+            ? result.error
+            : "Failed to save settings";
+        if (isServiceProvider) {
+          setLinkError(message);
+        }
+        throw new Error(message);
       }
 
       setSaveMessage({ type: "success", text: "Settings saved successfully!" });
@@ -427,6 +563,7 @@ export default function SettingsPage() {
       snapshotRef.current = {
         accountName,
         workspaceSlug,
+        serviceProviderSlug,
         primaryColor,
         accentColor,
         timezone,
@@ -488,7 +625,9 @@ export default function SettingsPage() {
 
   const checklist_items: { label: string; done: boolean }[] = [
     { label: "Workspace name added", done: accountName.trim().length > 0 },
-    { label: "Booking link configured", done: workspaceSlug.trim().length > 0 },
+    { label: "Booking link configured", done: isServiceProvider
+        ? workspaceSlug.trim().length > 0 && serviceProviderSlug.trim().length > 0
+        : workspaceSlug.trim().length > 0 },
     {
       label: "Brand colors selected",
       done: /^#[0-9A-Fa-f]{6}$/.test(primaryColor) && /^#[0-9A-Fa-f]{6}$/.test(accentColor),
@@ -520,8 +659,11 @@ export default function SettingsPage() {
                     Settings
                   </h1>
                   <p className="mt-2 max-w-2xl text-sm text-indigo-50 md:text-base">
-                    Manage your account profile, booking link, brand colors,
-                    timezone, and workspace identity.
+                    {isReadOnly
+                      ? "View workspace profile, booking link, branding, and booking rules."
+                      : isServiceProvider
+                        ? "Update your personal provider booking link. Other workspace settings are managed by your admin."
+                        : "Manage your account profile, booking link, brand colors, timezone, and workspace identity."}
                   </p>
                 </div>
 
@@ -534,6 +676,20 @@ export default function SettingsPage() {
                 </Link>
               </div>
             </div>
+
+            {(isReadOnly || isServiceProvider) && (
+              <div
+                className={`mx-5 mt-5 rounded-2xl border px-4 py-3 text-sm font-medium md:mx-8 ${
+                  isReadOnly
+                    ? "border-amber-200 bg-amber-50 text-amber-900"
+                    : "border-indigo-200 bg-indigo-50 text-indigo-900"
+                }`}
+              >
+                {isReadOnly
+                  ? "You have view-only access to workspace settings."
+                  : "You can edit only your provider booking link on this page."}
+              </div>
+            )}
 
             <div className="grid gap-6 p-5 md:p-8 lg:grid-cols-[1fr_360px]">
               <div className="space-y-5">
@@ -566,7 +722,8 @@ export default function SettingsPage() {
                         type="text"
                         value={accountName}
                         onChange={(e) => setAccountName(e.target.value)}
-                        className="h-14 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-base font-medium outline-none transition focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-100"
+                        disabled={nonLinkFieldsDisabled}
+                        className="h-14 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-base font-medium outline-none transition focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:opacity-60"
                         placeholder="Enter account name"
                       />
                     </label>
@@ -575,30 +732,67 @@ export default function SettingsPage() {
                       <span className="mb-2 block text-sm font-bold text-slate-700">
                         My Link
                       </span>
-                      <div
-                        className={`flex overflow-hidden rounded-2xl border bg-slate-50 transition focus-within:bg-white focus-within:ring-4 focus-within:ring-indigo-100 ${
-                          linkError
-                            ? "border-red-400 focus-within:border-red-500"
-                            : "border-slate-200 focus-within:border-indigo-400"
-                        }`}
-                      >
-                        <div className="hidden items-center gap-2 border-r border-slate-200 bg-white px-4 text-sm font-semibold text-slate-500 md:flex">
-                          <SettingsIcon name="link" className="h-4 w-4" />
-                          {bookingHost}/
+                      {isServiceProvider ? (
+                        <>
+                          <div
+                            className={`flex overflow-hidden rounded-2xl border bg-slate-50 transition focus-within:bg-white focus-within:ring-4 focus-within:ring-indigo-100 ${
+                              linkError
+                                ? "border-red-400 focus-within:border-red-500"
+                                : "border-slate-200 focus-within:border-indigo-400"
+                            }`}
+                          >
+                            <div className="hidden items-center gap-2 border-r border-slate-200 bg-white px-4 text-sm font-semibold text-slate-500 md:flex">
+                              <SettingsIcon name="link" className="h-4 w-4" />
+                              {bookingHost}/{workspaceSlug || "workspace"}/
+                            </div>
+                            <input
+                              type="text"
+                              value={serviceProviderSlug}
+                              onChange={(e) => {
+                                setServiceProviderSlug(e.target.value);
+                                if (linkError) setLinkError(null);
+                              }}
+                              disabled={!canEditProviderSlug}
+                              className="h-14 min-w-0 flex-1 bg-transparent px-4 text-base font-medium outline-none disabled:cursor-not-allowed disabled:opacity-60"
+                              placeholder="your-provider-link"
+                              required={canEditProviderSlug}
+                              aria-invalid={linkError ? true : undefined}
+                            />
+                          </div>
+                          <p className="mt-2 text-xs text-slate-500">
+                            Workspace link:{" "}
+                            <span className="font-medium text-slate-700">
+                              {workspaceSlug || "Not configured"}
+                            </span>
+                          </p>
+                        </>
+                      ) : (
+                        <div
+                          className={`flex overflow-hidden rounded-2xl border bg-slate-50 transition focus-within:bg-white focus-within:ring-4 focus-within:ring-indigo-100 ${
+                            linkError
+                              ? "border-red-400 focus-within:border-red-500"
+                              : "border-slate-200 focus-within:border-indigo-400"
+                          }`}
+                        >
+                          <div className="hidden items-center gap-2 border-r border-slate-200 bg-white px-4 text-sm font-semibold text-slate-500 md:flex">
+                            <SettingsIcon name="link" className="h-4 w-4" />
+                            {bookingHost}/
+                          </div>
+                          <input
+                            type="text"
+                            value={workspaceSlug}
+                            onChange={(e) => {
+                              setWorkspaceSlug(e.target.value);
+                              if (linkError) setLinkError(null);
+                            }}
+                            disabled={!canEditAllSettings}
+                            className="h-14 min-w-0 flex-1 bg-transparent px-4 text-base font-medium outline-none disabled:cursor-not-allowed disabled:opacity-60"
+                            placeholder="your-link"
+                            required={canEditAllSettings}
+                            aria-invalid={linkError ? true : undefined}
+                          />
                         </div>
-                        <input
-                          type="text"
-                          value={workspaceSlug}
-                          onChange={(e) => {
-                            setWorkspaceSlug(e.target.value);
-                            if (linkError) setLinkError(null);
-                          }}
-                          className="h-14 min-w-0 flex-1 bg-transparent px-4 text-base font-medium outline-none"
-                          placeholder="your-link"
-                          required
-                          aria-invalid={linkError ? true : undefined}
-                        />
-                      </div>
+                      )}
                       {linkError ? (
                         <p className="mt-2 text-sm font-medium text-red-600">
                           {linkError}
@@ -608,7 +802,7 @@ export default function SettingsPage() {
                           href={previewHref}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="mt-2 block text-sm font-medium text-indigo-600 hover:underline"
+                          className="mt-2 text-sm font-medium text-indigo-600 hover:underline"
                         >
                           {previewUrl}
                         </a>
@@ -624,7 +818,8 @@ export default function SettingsPage() {
                           type="email"
                           value={businessEmail}
                           onChange={(e) => setBusinessEmail(e.target.value)}
-                          className="h-14 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-base font-medium outline-none transition focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-100"
+                          disabled={nonLinkFieldsDisabled}
+                          className="h-14 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-base font-medium outline-none transition focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:opacity-60"
                           placeholder="you@company.com"
                         />
                       </label>
@@ -636,7 +831,8 @@ export default function SettingsPage() {
                           type="tel"
                           value={businessPhone}
                           onChange={(e) => setBusinessPhone(e.target.value)}
-                          className="h-14 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-base font-medium outline-none transition focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-100"
+                          disabled={nonLinkFieldsDisabled}
+                          className="h-14 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-base font-medium outline-none transition focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:opacity-60"
                           placeholder="+1 …"
                         />
                       </label>
@@ -664,22 +860,26 @@ export default function SettingsPage() {
                       label="Primary Color (Main brand color)"
                       color={primaryColor}
                       setColor={setPrimaryColor}
+                      disabled={nonLinkFieldsDisabled}
                     />
                     <ColorRow
                       label="Accent Color (CTA / highlights)"
                       color={accentColor}
                       setColor={setAccentColor}
+                      disabled={nonLinkFieldsDisabled}
                     />
 
                     <ToggleRow
                       label="Use gradient background on booking page."
                       value={useGradientBookingBg}
                       setValue={setUseGradientBookingBg}
+                      disabled={nonLinkFieldsDisabled}
                     />
                     <ToggleRow
                       label="Enable rounded UI style (modern look)."
                       value={roundedUiStyle}
                       setValue={setRoundedUiStyle}
+                      disabled={nonLinkFieldsDisabled}
                     />
                   </div>
 
@@ -727,7 +927,8 @@ export default function SettingsPage() {
                       <select
                         value={timezone}
                         onChange={(e) => setTimezone(e.target.value)}
-                        className="h-14 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-base font-medium outline-none transition focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-100"
+                        disabled={nonLinkFieldsDisabled}
+                        className="h-14 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-base font-medium outline-none transition focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:opacity-60"
                       >
                         <option value="">Use visitor&apos;s timezone</option>
                         {TIMEZONE_OPTIONS.map((option) => (
@@ -746,14 +947,20 @@ export default function SettingsPage() {
                         <div className="flex h-14 min-w-0 items-center rounded-2xl border border-slate-200 bg-slate-50 px-4 text-base font-medium text-slate-700">
                           <span className="truncate">{logoFileName}</span>
                         </div>
-                        <label className="inline-flex h-14 cursor-pointer items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-5 text-sm font-bold text-slate-700 transition hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-700">
+                        <label
+                          className={`inline-flex h-14 items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-5 text-sm font-bold text-slate-700 transition ${
+                            canEditAllSettings
+                              ? "cursor-pointer hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-700"
+                              : "cursor-not-allowed opacity-60"
+                          }`}
+                        >
                           <SettingsIcon name="upload" className="h-4 w-4" />
                           {isUploadingLogo ? "Uploading…" : "Browse"}
                           <input
                             type="file"
                             accept="image/*"
                             onChange={handleLogoChange}
-                            disabled={isUploadingLogo}
+                            disabled={isUploadingLogo || !canEditAllSettings}
                             className="hidden"
                           />
                         </label>
@@ -809,24 +1016,28 @@ export default function SettingsPage() {
                       value={dateFormat}
                       setValue={setDateFormat}
                       options={[...DATE_FORMAT_OPTIONS]}
+                      disabled={nonLinkFieldsDisabled}
                     />
                     <SelectField
                       label="Time Format"
                       value={timeFormat}
                       setValue={setTimeFormat}
                       options={[...TIME_FORMAT_OPTIONS]}
+                      disabled={nonLinkFieldsDisabled}
                     />
                     <SelectField
                       label="Default Language"
                       value={language}
                       setValue={setLanguage}
                       options={[...LANGUAGE_OPTIONS]}
+                      disabled={nonLinkFieldsDisabled}
                     />
                     <SelectField
                       label="Currency"
                       value={currency}
                       setValue={setCurrency}
                       options={[...CURRENCY_OPTIONS]}
+                      disabled={nonLinkFieldsDisabled}
                     />
                   </div>
                 </div>
@@ -850,26 +1061,31 @@ export default function SettingsPage() {
                       label="Auto-confirm new bookings"
                       value={autoConfirm}
                       setValue={setAutoConfirm}
+                      disabled={nonLinkFieldsDisabled}
                     />
                     <ToggleRow
                       label="Allow customer reschedule"
                       value={allowReschedule}
                       setValue={setAllowReschedule}
+                      disabled={nonLinkFieldsDisabled}
                     />
                     <ToggleRow
                       label="Allow customer cancellation"
                       value={allowCancellation}
                       setValue={setAllowCancellation}
+                      disabled={nonLinkFieldsDisabled}
                     />
                     <ToggleRow
                       label="Email reminders"
                       value={emailReminder}
                       setValue={setEmailReminder}
+                      disabled={nonLinkFieldsDisabled}
                     />
                     <ToggleRow
                       label="WhatsApp reminders"
                       value={whatsappReminder}
                       setValue={setWhatsappReminder}
+                      disabled={nonLinkFieldsDisabled}
                     />
                   </div>
                 </div>
@@ -957,25 +1173,31 @@ export default function SettingsPage() {
               </div>
             )}
 
-            <div className="sticky bottom-0 border-t border-slate-200 bg-white/90 px-5 py-4 backdrop-blur md:px-8">
-              <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
-                <button
-                  type="button"
-                  onClick={handleCancel}
-                  className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-6 py-3 text-sm font-bold text-slate-700 transition hover:bg-slate-50"
-                >
-                  <SettingsIcon name="close" className="h-4 w-4" /> Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={isSaving}
-                  className="inline-flex items-center justify-center gap-2 rounded-2xl bg-indigo-600 px-6 py-3 text-sm font-bold text-white shadow-lg shadow-indigo-600/25 transition hover:-translate-y-0.5 hover:bg-indigo-700 disabled:pointer-events-none disabled:opacity-50"
-                >
-                  <SettingsIcon name="save" className="h-4 w-4" />
-                  {isSaving ? "Saving…" : "Save Changes"}
-                </button>
+            {canSave ? (
+              <div className="sticky bottom-0 border-t border-slate-200 bg-white/90 px-5 py-4 backdrop-blur md:px-8">
+                <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+                  <button
+                    type="button"
+                    onClick={handleCancel}
+                    className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-6 py-3 text-sm font-bold text-slate-700 transition hover:bg-slate-50"
+                  >
+                    <SettingsIcon name="close" className="h-4 w-4" /> Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isSaving}
+                    className="inline-flex items-center justify-center gap-2 rounded-2xl bg-indigo-600 px-6 py-3 text-sm font-bold text-white shadow-lg shadow-indigo-600/25 transition hover:-translate-y-0.5 hover:bg-indigo-700 disabled:pointer-events-none disabled:opacity-50"
+                  >
+                    <SettingsIcon name="save" className="h-4 w-4" />
+                    {isSaving
+                      ? "Saving…"
+                      : isServiceProvider
+                        ? "Save Provider Link"
+                        : "Save Changes"}
+                  </button>
+                </div>
               </div>
-            </div>
+            ) : null}
           </section>
         </form>
       </div>
@@ -988,11 +1210,13 @@ function SelectField({
   value,
   setValue,
   options,
+  disabled = false,
 }: {
   label: string;
   value: string;
   setValue: (value: string) => void;
   options: string[];
+  disabled?: boolean;
 }) {
   return (
     <label className="block">
@@ -1002,7 +1226,8 @@ function SelectField({
       <select
         value={value}
         onChange={(e) => setValue(e.target.value)}
-        className="h-14 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-base font-medium outline-none transition focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-100"
+        disabled={disabled}
+        className="h-14 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-base font-medium outline-none transition focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:opacity-60"
       >
         {options.map((option) => (
           <option key={option} value={option}>
@@ -1018,16 +1243,21 @@ function ToggleRow({
   label,
   value,
   setValue,
+  disabled = false,
 }: {
   label: string;
   value: boolean;
   setValue: (value: boolean) => void;
+  disabled?: boolean;
 }) {
   return (
     <button
       type="button"
-      onClick={() => setValue(!value)}
-      className="flex items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-left transition hover:border-indigo-200 hover:bg-indigo-50"
+      onClick={() => {
+        if (!disabled) setValue(!value);
+      }}
+      disabled={disabled}
+      className="flex items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-left transition hover:border-indigo-200 hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:border-slate-200 disabled:hover:bg-slate-50"
     >
       <span className="text-sm font-bold text-slate-700">{label}</span>
       <span
@@ -1046,10 +1276,12 @@ function ColorRow({
   label,
   color,
   setColor,
+  disabled = false,
 }: {
   label: string;
   color: string;
   setColor: (value: string) => void;
+  disabled?: boolean;
 }) {
   return (
     <label className="block">
@@ -1061,12 +1293,14 @@ function ColorRow({
           type="color"
           value={color}
           onChange={(e) => setColor(e.target.value)}
-          className="h-14 w-full cursor-pointer rounded-2xl border border-slate-200 bg-white p-1 shadow-inner"
+          disabled={disabled}
+          className="h-14 w-full cursor-pointer rounded-2xl border border-slate-200 bg-white p-1 shadow-inner disabled:cursor-not-allowed disabled:opacity-60"
         />
         <input
           value={color}
           onChange={(e) => setColor(e.target.value)}
-          className="h-14 rounded-2xl border border-slate-200 bg-slate-50 px-4 text-center text-base font-bold text-slate-800 outline-none transition focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-100"
+          disabled={disabled}
+          className="h-14 rounded-2xl border border-slate-200 bg-slate-50 px-4 text-center text-base font-bold text-slate-800 outline-none transition focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:opacity-60"
         />
       </div>
     </label>

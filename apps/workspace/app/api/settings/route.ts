@@ -3,7 +3,7 @@ import { createSupabaseServerClient } from '@app/db';
 import { createClient } from '@supabase/supabase-js';
 import { appendActivityLog } from '@/lib/activity-log';
 import { workspace_meeting_options_to_location } from '@/src/utils/meeting_options';
-import { ROLE_SERVICE_PROVIDER } from '@/src/constants/roles';
+import { ROLE_SERVICE_PROVIDER, ROLE_STAFF, MANAGE_ROLES } from '@/src/constants/roles';
 import {
   ensureDefaultEventTypePublic,
   resolveDefaultEventTypeId,
@@ -26,6 +26,11 @@ import {
   resolveNotificationsForServiceProvider,
   resolveMeetingOptionsForServiceProvider,
 } from '@/src/utils/providerSettingsResolution';
+import {
+  assert_provider_link_slug_available,
+  merge_workspace_provider_links,
+  normalize_provider_link_slug,
+} from '@/lib/provider_booking_link';
 
 const LOCKED_INTAKE_FORM_KEYS = [
   'name',
@@ -157,6 +162,23 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Workspace ID not found' }, { status: 400 });
     }
 
+    const userRole = user.user_metadata?.role as string | undefined;
+    if (userRole === ROLE_STAFF) {
+      return NextResponse.json(
+        { error: 'Staff cannot modify workspace settings' },
+        { status: 403 }
+      );
+    }
+
+    const canSaveSettings =
+      userRole === ROLE_SERVICE_PROVIDER || MANAGE_ROLES.includes(userRole ?? '');
+    if (!canSaveSettings) {
+      return NextResponse.json(
+        { error: 'You do not have permission to modify workspace settings' },
+        { status: 403 }
+      );
+    }
+
     const body = await req.json();
     let newSettings = body?.settings;
 
@@ -164,7 +186,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Invalid settings data' }, { status: 400 });
     }
 
-    const userRole = user.user_metadata?.role as string | undefined;
     if (userRole === ROLE_SERVICE_PROVIDER) {
       if (newSettings.availability && typeof newSettings.availability === 'object') {
         const sanitized = sanitizeServiceProviderAvailabilityPatch(
@@ -217,6 +238,41 @@ export async function POST(req: NextRequest) {
           delete (newSettings as Record<string, unknown>)[key];
         }
       }
+
+      if (Object.prototype.hasOwnProperty.call(newSettings, 'links')) {
+        const incomingLinks = newSettings.links;
+        if (incomingLinks && typeof incomingLinks === 'object') {
+          const selfEntry = (incomingLinks as Record<string, unknown>)[user.id];
+          const slugRaw =
+            selfEntry &&
+            typeof selfEntry === 'object' &&
+            typeof (selfEntry as { slug?: unknown }).slug === 'string'
+              ? (selfEntry as { slug: string }).slug
+              : '';
+          const normalizedSlug = normalize_provider_link_slug(slugRaw);
+          if (!normalizedSlug) {
+            return NextResponse.json(
+              { error: 'Provider link slug is required' },
+              { status: 400 }
+            );
+          }
+          const slugError = await assert_provider_link_slug_available(
+            createSupabaseServerClient(),
+            workspaceId,
+            normalizedSlug,
+            user.id
+          );
+          if (slugError) {
+            return NextResponse.json({ error: slugError }, { status: 400 });
+          }
+          newSettings = {
+            ...newSettings,
+            links: { [user.id]: { slug: normalizedSlug } },
+          };
+        } else {
+          delete (newSettings as Record<string, unknown>).links;
+        }
+      }
     }
 
     const supabase = createSupabaseServerClient();
@@ -246,6 +302,12 @@ export async function POST(req: NextRequest) {
         ...(existingSettings.general || {}),
         ...(newSettings.general || {}),
       },
+      links: merge_workspace_provider_links(
+        existingSettings.links,
+        newSettings.links,
+        userRole,
+        user.id
+      ),
       availability: mergeAvailabilitySettings(
         (existingSettings.availability || {}) as Record<string, unknown>,
         (newSettings.availability || {}) as Record<string, unknown>

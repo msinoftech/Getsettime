@@ -75,9 +75,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Check if user has permission (workspace_admin or manager)
+    // Check if user has permission (workspace owner or workspace admin)
     const userRole = user.user_metadata?.role;
-    if (userRole !== 'workspace_admin' && userRole !== 'manager') {
+    const isWorkspaceOwner = user.user_metadata?.is_workspace_owner === true;
+    if (!isWorkspaceOwner && userRole !== 'workspace_admin') {
       return NextResponse.json({ error: 'Forbidden: Access denied' }, { status: 403 });
     }
 

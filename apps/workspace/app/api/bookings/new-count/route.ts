@@ -31,13 +31,26 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'Workspace ID not found' }, { status: 400 });
     }
 
-    const { count, error } = await supabase
+    const userRole =
+      typeof user.user_metadata?.role === 'string'
+        ? user.user_metadata.role
+        : '';
+    const isServiceProvider = userRole === 'service_provider';
+
+    let query = supabase
       .from('bookings')
       .select('*', { count: 'exact', head: true })
       .eq('workspace_id', workspaceId)
+      .neq('status', 'deleted')
       .or(
         'is_viewed.eq.false,and(is_reschedule_viewed.eq.false,status.eq.reschedule)'
       );
+
+    if (isServiceProvider) {
+      query = query.eq('service_provider_id', user.id);
+    }
+
+    const { count, error } = await query;
 
     if (error) {
       console.error('Error fetching new bookings count:', error);

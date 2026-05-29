@@ -26,6 +26,7 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const workspaceSlug = searchParams.get('workspace_slug');
     const workspaceId = searchParams.get('workspace_id');
+    const serviceProviderId = searchParams.get('service_provider_id')?.trim() || '';
     
     if (!workspaceSlug && !workspaceId) {
       return NextResponse.json(
@@ -100,7 +101,11 @@ export async function GET(req: NextRequest) {
         const matches = userWorkspaceId && 
                (userWorkspaceId == workspaceIdResolved || 
                 String(userWorkspaceId) === String(workspaceIdResolved));
-        return matches;
+        if (!matches) return false;
+        if (serviceProviderId) {
+          return u.id === serviceProviderId;
+        }
+        return true;
       })
       .map((u) => {
         const meta = u.user_metadata as Record<string, unknown> | undefined;

@@ -52,7 +52,8 @@ export async function GET(req: NextRequest) {
       let q = supabase
         .from("bookings")
         .select("*", { count: "exact", head: true })
-        .eq("workspace_id", w);
+        .eq("workspace_id", w)
+        .neq("status", "deleted");
       if (isServiceProvider) {
         q = q.eq("service_provider_id", user.id);
       }

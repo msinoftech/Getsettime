@@ -46,7 +46,7 @@ body{
   table td {
     border-bottom: 1px solid #ddd;
     display: block; 
-    text-align: right;
+    /* text-align: right; */
   }
 
   table td::before {

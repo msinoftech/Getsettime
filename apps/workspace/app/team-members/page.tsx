@@ -31,7 +31,6 @@ import { useAuth } from "@/src/providers/AuthProvider";
 import { ConfirmModal } from "@/src/components/ui/ConfirmModal";
 import { TeamMemberSkeleton } from "@/src/components/ui/TeamMemberSkeleton";
 import {
-  MANAGE_ROLES,
   ROLE_SERVICE_PROVIDER,
   ROLE_WORKSPACE_ADMIN,
   SERVICE_PROVIDER_ASSIGNABLE_ADDITIONAL_ROLES,
@@ -196,11 +195,9 @@ export default function TeamMembersPage() {
     currentUser?.user_metadata?.is_workspace_owner === true;
   const canAssignServiceProviderAdditionalRoles =
     currentUserIsOwner || currentUserRole === ROLE_WORKSPACE_ADMIN;
-  // Owner OR workspace_admin OR manager may manage team members.
-  // Service providers and customers see no management buttons.
+  // Only workspace owner or workspace admin may edit team members and change roles.
   const canManageMembers =
-    currentUserIsOwner ||
-    (currentUserRole !== null && MANAGE_ROLES.includes(currentUserRole));
+    currentUserIsOwner || currentUserRole === ROLE_WORKSPACE_ADMIN;
 
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
@@ -1284,6 +1281,11 @@ export default function TeamMembersPage() {
         editingMember={editingMember!}
         departments={departments}
         memberFormData={memberFormData}
+        statusLabel={
+          editingMember
+            ? getStatusLabel(getMemberUiStatus(editingMember, departments))
+            : ""
+        }
         canAssignServiceProviderAdditionalRoles={canAssignServiceProviderAdditionalRoles}
         otherActiveServiceProviderCount={
           editingMember

@@ -245,7 +245,7 @@ export default function DepartmentsPage() {
     return serviceProviders.map((sp) => ({
       id: sp.id,
       name: serviceProviderDisplayName(sp),
-      role: "Doctor",
+      role: "Consultant",
       inactive: sp.deactivated === true,
       assignedDepartmentIds: providerAssignments.get(sp.id) ?? [],
     }));
@@ -869,12 +869,12 @@ export default function DepartmentsPage() {
 
                   <h1 className="text-2xl font-bold tracking-tight text-slate-900 md:text-3xl">
                     {showFullDoctorFlow
-                      ? "Department & Doctor Assignment"
+                      ? "Department & Consultant Assignment"
                       : "Departments"}
                   </h1>
                   <p className="mt-2 text-sm leading-6 text-slate-600 md:text-base">
                     {showFullDoctorFlow
-                      ? "Manage departments, assign doctors to multiple specialties, and keep your clinic structure organized with a clear admin experience."
+                      ? "Manage departments, assign consultants to multiple specialties, and keep your clinic structure organized with a clear admin experience."
                       : "Add and manage department names, visibility, and status. They appear on your booking form when active."}
                   </p>
                 </div>
@@ -886,7 +886,7 @@ export default function DepartmentsPage() {
                       <input
                         value={search}
                         onChange={(e) => setSearch(e.target.value)}
-                        placeholder="Search doctor name..."
+                        placeholder="Search consultant name..."
                         className="w-full rounded-2xl border border-slate-300 bg-white py-3 pl-10 pr-4 text-sm outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100"
                       />
                     </div>
@@ -1162,7 +1162,7 @@ export default function DepartmentsPage() {
                             </div>
 
                             <p className="mt-1 text-xs text-slate-500">
-                              {count} doctor{count !== 1 ? "s" : ""}
+                              {count} consultant{count !== 1 ? "s" : ""}
                             </p>
                           </button>
 
@@ -1304,14 +1304,14 @@ export default function DepartmentsPage() {
                     </div>
 
                     <p className="mt-1 text-sm text-slate-500">
-                      View doctors assigned to this department and quickly add
+                      View consultants assigned to this department and quickly add
                       new ones.
                     </p>
 
                     {selectedDepartment?.status === "inactive" && (
                       <div className="mt-3 inline-flex items-center gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700">
                         <AlertCircle className="h-4 w-4" />
-                        This department is inactive. New doctor assignment is
+                        This department is inactive. New consultant assignment is
                         disabled.
                       </div>
                     )}
@@ -1486,10 +1486,10 @@ export default function DepartmentsPage() {
                   <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
                     <div>
                       <h3 className="text-base font-semibold text-slate-900">
-                        Assigned Doctors
+                        Assigned Consultants
                       </h3>
                       <p className="text-sm text-slate-500">
-                        Doctors currently in {selectedDepartment?.name ?? "—"}
+                        Consultants currently in {selectedDepartment?.name ?? "—"}
                       </p>
                     </div>
 
@@ -1502,10 +1502,10 @@ export default function DepartmentsPage() {
                     {visibleAssignedDoctors.length === 0 ? (
                       <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center">
                         <p className="text-sm font-semibold text-slate-700">
-                          No assigned doctors found
+                          No assigned consultants found
                         </p>
                         <p className="mt-1 text-xs text-slate-500">
-                          Assigned doctors will appear here for this department.
+                          Assigned consultants will appear here for this department.
                         </p>
                       </div>
                     ) : (
@@ -1525,10 +1525,10 @@ export default function DepartmentsPage() {
                   <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
                     <div>
                       <h3 className="text-base font-semibold text-slate-900">
-                        Available Doctors
+                        Available Consultants
                       </h3>
                       <p className="text-sm text-slate-500">
-                        Doctors available for assignment
+                        Consultants available for assignment
                       </p>
                     </div>
 
@@ -1541,7 +1541,7 @@ export default function DepartmentsPage() {
                     {visibleAvailableDoctors.length === 0 ? (
                       <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center">
                         <p className="text-sm font-semibold text-slate-700">
-                          No available doctors found
+                          No available consultants found
                         </p>
                         <p className="mt-1 text-xs text-slate-500">
                           All matching doctors are already assigned.
@@ -1570,7 +1570,7 @@ export default function DepartmentsPage() {
                       Better clinic control with multi-department assignment
                     </h3>
                     <p className="mt-1 text-sm text-slate-600">
-                      This structure helps workspace admins manage doctors faster,
+                      This structure helps workspace admins manage consultants faster,
                       avoid confusion during booking, and maintain cleaner service allocation.
                     </p>
                   </div>

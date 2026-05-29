@@ -3,7 +3,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 import { useWorkspaceSettings } from '@/src/hooks/useWorkspaceSettings';
-import { build_workspace_public_booking_url } from '@/src/utils/public_booking_link';
+import { build_service_provider_public_booking_url, build_workspace_public_booking_url } from '@/src/utils/public_booking_link';
+import { ROLE_SERVICE_PROVIDER } from '@/src/constants/roles';
+import { useAuth } from '@/src/providers/AuthProvider';
 
 type PreviewEventType = {
   title: string;
@@ -20,22 +22,32 @@ function format_preview_slot(total_minutes: number): string {
 }
 
 export function PublicBookingPreviewCard() {
+  const { user } = useAuth();
   const {
     loading: loading_settings,
     workspaceSlug,
+    serviceProviderLinkSlug,
     workspaceName,
     general,
   } = useWorkspaceSettings();
+
+  const is_service_provider =
+    (user?.user_metadata?.role as string | undefined) === ROLE_SERVICE_PROVIDER;
   const [preview_event, set_preview_event] = useState<PreviewEventType | null>(null);
 
   const workspace_title =
     workspaceName?.trim() || general.accountName?.trim() || 'Your workspace';
   const initial = workspace_title.charAt(0).toUpperCase() || 'G';
 
-  const booking_url = useMemo(
-    () => build_workspace_public_booking_url(workspaceSlug),
-    [workspaceSlug]
-  );
+  const booking_url = useMemo(() => {
+    if (is_service_provider) {
+      return build_service_provider_public_booking_url(
+        workspaceSlug,
+        serviceProviderLinkSlug
+      );
+    }
+    return build_workspace_public_booking_url(workspaceSlug);
+  }, [is_service_provider, workspaceSlug, serviceProviderLinkSlug]);
 
   useEffect(() => {
     if (!booking_url) {

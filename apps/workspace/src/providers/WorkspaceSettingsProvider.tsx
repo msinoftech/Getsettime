@@ -4,6 +4,8 @@ import React, { createContext, useContext, useState, useEffect, useCallback, use
 import { useAuth } from './AuthProvider';
 import type { GeneralSettings, AvailabilitySettings, WorkspaceSettings, WorkspaceSettingsHook } from '../types/workspace';
 import { resolve_workspace_logo_src } from '../utils/workspace_logo';
+import { get_provider_link_slug_for_user } from '@/lib/provider_booking_link';
+import { ROLE_SERVICE_PROVIDER } from '@/src/constants/roles';
 
 const WorkspaceSettingsContext = createContext<WorkspaceSettingsHook | null>(null);
 
@@ -14,6 +16,7 @@ export function WorkspaceSettingsProvider({ children }: { children: React.ReactN
   const [workspaceLogo, setWorkspaceLogo] = useState<string | null>(null);
   const [workspaceProfessionLabel, setWorkspaceProfessionLabel] = useState<string | null>(null);
   const [workspaceSlug, setWorkspaceSlug] = useState<string | null>(null);
+  const [serviceProviderLinkSlug, setServiceProviderLinkSlug] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
 
@@ -22,6 +25,7 @@ export function WorkspaceSettingsProvider({ children }: { children: React.ReactN
       setLoading(false);
       setWorkspaceProfessionLabel(null);
       setWorkspaceSlug(null);
+      setServiceProviderLinkSlug(null);
       return;
     }
 
@@ -36,6 +40,7 @@ export function WorkspaceSettingsProvider({ children }: { children: React.ReactN
         setLoading(false);
         setWorkspaceProfessionLabel(null);
         setWorkspaceSlug(null);
+        setServiceProviderLinkSlug(null);
         return;
       }
 
@@ -51,7 +56,18 @@ export function WorkspaceSettingsProvider({ children }: { children: React.ReactN
       }
 
       const settingsResult = await settingsResponse.json();
-      setSettings(settingsResult.settings || {});
+      const loadedSettings = settingsResult.settings || {};
+      setSettings(loadedSettings);
+
+      const userRole =
+        typeof user.user_metadata?.role === 'string' ? user.user_metadata.role : '';
+      if (userRole === ROLE_SERVICE_PROVIDER && user.id) {
+        setServiceProviderLinkSlug(
+          get_provider_link_slug_for_user(loadedSettings.links, user.id)
+        );
+      } else {
+        setServiceProviderLinkSlug(null);
+      }
 
       if (workspaceResponse.ok) {
         const workspaceResult = await workspaceResponse.json();
@@ -79,6 +95,7 @@ export function WorkspaceSettingsProvider({ children }: { children: React.ReactN
         setWorkspaceLogo(null);
         setWorkspaceProfessionLabel(null);
         setWorkspaceSlug(null);
+        setServiceProviderLinkSlug(null);
       }
     } catch (err) {
       setError(err instanceof Error ? err : new Error('Unknown error occurred'));
@@ -106,6 +123,7 @@ export function WorkspaceSettingsProvider({ children }: { children: React.ReactN
     workspaceLogoResolved,
     workspaceProfessionLabel,
     workspaceSlug,
+    serviceProviderLinkSlug,
     loading,
     error,
     refetch: fetchSettings,

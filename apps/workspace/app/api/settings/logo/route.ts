@@ -2,6 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createSupabaseServerClient } from '@app/db';
 import { env } from '@app/config';
 import { createClient } from '@supabase/supabase-js';
+import {
+  MANAGE_ROLES,
+  ROLE_SERVICE_PROVIDER,
+  ROLE_STAFF,
+} from '@/src/constants/roles';
 
 async function getUserFromRequest(req: NextRequest) {
   const authHeader = req.headers.get('authorization');
@@ -43,6 +48,26 @@ export async function POST(req: NextRequest) {
     const workspaceId = user.user_metadata?.workspace_id as string | null;
     if (!workspaceId) {
       return NextResponse.json({ error: 'Workspace ID not found' }, { status: 400 });
+    }
+
+    const userRole = user.user_metadata?.role as string | undefined;
+    if (userRole === ROLE_STAFF) {
+      return NextResponse.json(
+        { error: 'Staff cannot modify workspace settings' },
+        { status: 403 }
+      );
+    }
+    if (userRole === ROLE_SERVICE_PROVIDER) {
+      return NextResponse.json(
+        { error: 'Service providers cannot modify workspace settings' },
+        { status: 403 }
+      );
+    }
+    if (!MANAGE_ROLES.includes(userRole ?? '')) {
+      return NextResponse.json(
+        { error: 'You do not have permission to modify workspace settings' },
+        { status: 403 }
+      );
     }
 
     const formData = await req.formData();

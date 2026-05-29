@@ -41,6 +41,7 @@ interface EmbedBookingFormProps {
   workspace: Workspace;
   eventType?: string;
   eventTypeSlug?: string;
+  serviceProviderId?: string;
   rescheduleCode?: string;
 }
 
@@ -50,7 +51,7 @@ const StepFallback = () => (
   </div>
 );
 
-export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, rescheduleCode }: EmbedBookingFormProps) {
+export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, serviceProviderId, rescheduleCode }: EmbedBookingFormProps) {
   const isRescheduleMode = Boolean(rescheduleCode);
   const [rescheduleEventTypeId, setRescheduleEventTypeId] = useState<string | null>(null);
   const [rescheduleReady, setRescheduleReady] = useState(false);
@@ -116,6 +117,7 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
     loadingProviderScopedCatalog,
     workspaceOwnerUserId,
     showProviderPicker,
+    effectiveProviderId,
     intakeForm,
     generalSettings,
     workspaceOwnerAdminNotice,
@@ -123,6 +125,7 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
   } = useEmbedBookingFormData({
     workspace,
     eventTypeSlug,
+    fixedServiceProviderId: serviceProviderId,
     selectedDepartment,
     selectedProvider,
     selectedType,
@@ -130,6 +133,13 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
     intakeForm: undefined,
     onAvailabilityChange,
   });
+
+  useEffect(() => {
+    if (!serviceProviderId || selectedDepartment || loadingDepartments) return;
+    if (departments.length === 1) {
+      setSelectedDepartment(departments[0]);
+    }
+  }, [serviceProviderId, selectedDepartment, loadingDepartments, departments]);
 
   useEffect(() => {
     if (
@@ -150,10 +160,17 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
       );
       return;
     }
+    if (serviceProviderId) {
+      const match = serviceProviders.find((p) => p.id === serviceProviderId);
+      if (match) {
+        setSelectedProvider((prev) => (prev?.id === match.id ? prev : match));
+        return;
+      }
+    }
     setSelectedProvider((prev) =>
       prev && serviceProviders.some((p) => p.id === prev.id) ? prev : null
     );
-  }, [selectedDepartment, serviceProviders]);
+  }, [selectedDepartment, serviceProviders, serviceProviderId]);
 
   useAutoAdvanceStep1({
     enabled: !isRescheduleMode,
@@ -532,11 +549,12 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
       const timezone = getDisplayTimezone(generalSettings?.timezone);
 
       const service_provider_id =
-        departments.length === 0
+        effectiveProviderId ??
+        (departments.length === 0
           ? selectedProvider?.id ?? null
           : usesExplicitProviderPicker
             ? selectedProvider!.id
-            : workspaceOwnerUserId ?? null;
+            : workspaceOwnerUserId ?? null);
 
       const res = await fetch('/api/embed/bookings', {
         method: 'POST',

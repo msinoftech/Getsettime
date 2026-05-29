@@ -10,7 +10,9 @@ import {
 } from '@/lib/sync_department_service_providers_from_team';
 import { replaceUserDepartmentsForWorkspaceUser } from '@/lib/user_workspace_assignments';
 import {
+  ROLE_MANAGER,
   ROLE_SERVICE_PROVIDER,
+  ROLE_STAFF,
   ROLE_WORKSPACE_ADMIN,
   SERVICE_PROVIDER_ASSIGNABLE_ADDITIONAL_ROLES,
 } from '@/src/constants/roles';
@@ -25,6 +27,12 @@ function userCanManageTeam(user: User): boolean {
   if (user.user_metadata?.is_workspace_owner === true) return true;
   const role = user.user_metadata?.role;
   return role === 'workspace_admin' || role === 'manager';
+}
+
+/** Only workspace owner or workspace admin may create, update, or deactivate team members. */
+function userCanEditTeamMembers(user: User): boolean {
+  if (user.user_metadata?.is_workspace_owner === true) return true;
+  return user.user_metadata?.role === ROLE_WORKSPACE_ADMIN;
 }
 
 /** Owner or workspace admin may set `additional_roles` on primary service providers. */
@@ -282,8 +290,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Check if user has permission (owner, workspace_admin, or manager)
-    if (!userCanManageTeam(user)) {
+    // Check if user has permission (workspace owner or workspace admin)
+    if (!userCanEditTeamMembers(user)) {
       return NextResponse.json({ error: 'Forbidden: Access denied' }, { status: 403 });
     }
 
@@ -407,8 +415,8 @@ export async function PUT(req: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Check if user has permission (owner, workspace_admin, or manager)
-    if (!userCanManageTeam(user)) {
+    // Check if user has permission (workspace owner or workspace admin)
+    if (!userCanEditTeamMembers(user)) {
       return NextResponse.json({ error: 'Forbidden: Access denied' }, { status: 403 });
     }
 
@@ -478,6 +486,24 @@ export async function PUT(req: NextRequest) {
       typeof existingUser.user_metadata?.role === 'string'
         ? existingUser.user_metadata.role
         : null;
+
+    if (
+      existingPrimary === ROLE_MANAGER &&
+      !targetIsOwner &&
+      role &&
+      role !== ROLE_WORKSPACE_ADMIN &&
+      role !== ROLE_STAFF &&
+      role !== ROLE_MANAGER
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            'Manager members can only be kept as Manager or changed to Staff or Workspace Admin.',
+        },
+        { status: 403 }
+      );
+    }
+
     const isPrimaryServiceProvider =
       existingPrimary === ROLE_SERVICE_PROVIDER && !targetIsOwner;
 
@@ -703,8 +729,8 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Check if user has permission (owner, workspace_admin, or manager)
-    if (!userCanManageTeam(user)) {
+    // Check if user has permission (workspace owner or workspace admin)
+    if (!userCanEditTeamMembers(user)) {
       return NextResponse.json({ error: 'Forbidden: Access denied' }, { status: 403 });
     }
 
@@ -776,8 +802,8 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Check if user has permission (owner, workspace_admin, or manager)
-    if (!userCanManageTeam(user)) {
+    // Check if user has permission (workspace owner or workspace admin)
+    if (!userCanEditTeamMembers(user)) {
       return NextResponse.json({ error: 'Forbidden: Access denied' }, { status: 403 });
     }
 

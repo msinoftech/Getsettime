@@ -200,8 +200,16 @@ export async function GET(req: NextRequest) {
     }
 
     const role = user.user_metadata?.role as string | undefined;
+    const serviceProviderIdParam =
+      new URL(req.url).searchParams.get('service_provider_id')?.trim() || '';
+
     let event_types = data || [];
-    if (role === ROLE_SERVICE_PROVIDER) {
+    if (serviceProviderIdParam) {
+      event_types = event_types.filter(
+        (row: { owner_id?: string | null }) =>
+          row.owner_id === serviceProviderIdParam
+      );
+    } else if (role === ROLE_SERVICE_PROVIDER) {
       event_types = event_types.filter(
         (row: { owner_id?: string | null }) => row.owner_id === user.id
       );

@@ -37,6 +37,8 @@ export async function GET(req: NextRequest) {
       workspaceIdResolved = workspaceId;
     }
 
+    const serviceProviderId = searchParams.get('service_provider_id')?.trim() || '';
+
     if (!workspaceIdResolved) {
       return NextResponse.json(
         { error: 'Workspace not found' },
@@ -44,13 +46,45 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const { data, error } = await supabase
+    let departmentIds: number[] | null = null;
+    if (serviceProviderId) {
+      const wsNum = Number(workspaceIdResolved);
+      const { data: udRows, error: udError } = await supabase
+        .from('user_departments')
+        .select('department_id')
+        .eq('workspace_id', wsNum)
+        .eq('user_id', serviceProviderId);
+
+      if (udError) {
+        console.error('Error fetching provider departments:', udError);
+        return NextResponse.json({ error: udError.message }, { status: 500 });
+      }
+
+      departmentIds = [
+        ...new Set(
+          (udRows ?? [])
+            .map((row) => Number(row.department_id))
+            .filter((id) => Number.isInteger(id) && id > 0)
+        ),
+      ];
+
+      if (departmentIds.length === 0) {
+        return NextResponse.json({ departments: [] });
+      }
+    }
+
+    let query = supabase
       .from('departments')
       .select('id, name, description, status')
       .eq('workspace_id', workspaceIdResolved)
       .eq('flag', true)
-      .eq('status', 'active')
-      .order('created_at', { ascending: false });
+      .eq('status', 'active');
+
+    if (departmentIds) {
+      query = query.in('id', departmentIds);
+    }
+
+    const { data, error } = await query.order('created_at', { ascending: false });
 
     if (error) {
       console.error('Error fetching departments:', error);

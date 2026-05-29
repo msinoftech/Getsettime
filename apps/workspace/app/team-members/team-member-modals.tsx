@@ -3,6 +3,7 @@
 import { useState } from "react";
 import {
   LuBuilding2,
+  LuPencil,
   LuSend,
   LuStethoscope,
   LuUserCog,
@@ -12,7 +13,9 @@ import {
   ASSIGNABLE_ROLES,
   OWNER_DISALLOWED_ROLES,
   ROLE_CUSTOMER,
+  ROLE_MANAGER,
   ROLE_SERVICE_PROVIDER,
+  ROLE_STAFF,
   ROLE_WORKSPACE_ADMIN,
   SERVICE_PROVIDER_ASSIGNABLE_ADDITIONAL_ROLES,
 } from "@/src/constants/roles";
@@ -192,6 +195,27 @@ export function DepartmentChipSelector({
 const SP_ASSIGNABLE_ROLE_OPTIONS = ASSIGNABLE_ROLES.filter((r) =>
   (SERVICE_PROVIDER_ASSIGNABLE_ADDITIONAL_ROLES as readonly string[]).includes(r.value),
 );
+
+function getEditablePrimaryRoleOptions(
+  member: { is_workspace_owner: boolean; role: string | null }
+) {
+  let options = ASSIGNABLE_ROLES.filter((r) =>
+    member.is_workspace_owner
+      ? !OWNER_DISALLOWED_ROLES.includes(r.value)
+      : true
+  );
+
+  if (member.role === ROLE_MANAGER && !member.is_workspace_owner) {
+    options = options.filter(
+      (r) =>
+        r.value === ROLE_WORKSPACE_ADMIN ||
+        r.value === ROLE_STAFF ||
+        r.value === ROLE_MANAGER
+    );
+  }
+
+  return options;
+}
 
 type TeamMember = {
   id: string;
@@ -635,6 +659,7 @@ export function EditTeamMemberModal({
   editingMember,
   departments,
   memberFormData,
+  statusLabel,
   canAssignServiceProviderAdditionalRoles,
   otherActiveServiceProviderCount,
   onCancel,
@@ -648,6 +673,7 @@ export function EditTeamMemberModal({
   editingMember: TeamMember;
   departments: Department[];
   memberFormData: MemberFormData;
+  statusLabel: string;
   canAssignServiceProviderAdditionalRoles: boolean;
   /** Excluding the edited user: members who are not deactivated and act as service provider. */
   otherActiveServiceProviderCount: number;
@@ -673,6 +699,8 @@ export function EditTeamMemberModal({
     memberFormData.role === ROLE_SERVICE_PROVIDER ||
     memberFormData.additional_roles.includes(ROLE_SERVICE_PROVIDER);
 
+  const primaryRoleOptions = getEditablePrimaryRoleOptions(editingMember);
+
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center p-4">
       <div
@@ -680,95 +708,118 @@ export function EditTeamMemberModal({
         aria-hidden="true"
         onClick={onCancel}
       />
-      <section className="relative z-10 flex max-h-[min(90vh,880px)] w-full max-w-xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
-        <div className="flex items-start justify-between border-b border-slate-100 px-6 py-5">
-          <div>
-            <h2 className="text-xl font-semibold text-slate-900">Edit Team Member</h2>
-            <p className="mt-1 text-sm text-slate-500">Update profile, role, and department access.</p>
+      <section className="relative z-10 flex max-h-[min(90vh,880px)] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+        <div className="border-b border-slate-100 px-6 py-5">
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0 space-y-3">
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-800">
+                <LuPencil className="h-3.5 w-3.5" aria-hidden />
+                Edit Member
+              </span>
+              <div>
+                <h2 className="text-xl font-semibold tracking-tight text-slate-900 md:text-2xl">
+                  Update Team Member
+                </h2>
+                <p className="mt-1 text-sm text-slate-600">
+                  Edit profile details, departments, role, and account status.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              className="shrink-0 rounded-full p-2 text-slate-500 transition hover:bg-slate-100"
+              aria-label="Close form"
+              onClick={onCancel}
+            >
+              <LuX className="h-5 w-5" aria-hidden />
+            </button>
           </div>
-          <button
-            type="button"
-            className="rounded-full p-2 text-slate-500 transition hover:bg-slate-100"
-            aria-label="Close form"
-            onClick={onCancel}
-          >
-            <LuX className="h-5 w-5" aria-hidden />
-          </button>
         </div>
 
         <form onSubmit={onSubmit} className="flex min-h-0 flex-1 flex-col">
-          <div className="flex-1 space-y-5 overflow-y-auto px-6 py-5">
-            <div>
-              <label className="mb-2 block text-sm font-medium text-slate-700">
-                Name <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="text"
-                value={memberFormData.name}
-                onChange={(e) => onChange({ ...memberFormData, name: e.target.value })}
-                placeholder="e.g., John Doe"
-                className={MODAL_FIELD_CLASS}
-                required
-              />
+          <div className="flex-1 space-y-6 overflow-y-auto px-6 py-5">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div>
+                <label className="mb-2 block text-sm font-medium text-slate-700">
+                  Full Name <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={memberFormData.name}
+                  onChange={(e) => onChange({ ...memberFormData, name: e.target.value })}
+                  placeholder="e.g., John Doe"
+                  className={MODAL_FIELD_CLASS}
+                  required
+                />
+              </div>
+              <div>
+                <label className="mb-2 block text-sm font-medium text-slate-700">
+                  Email Address <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="email"
+                  value={memberFormData.email}
+                  onChange={(e) => onChange({ ...memberFormData, email: e.target.value })}
+                  placeholder="e.g., john@example.com"
+                  className={MODAL_FIELD_CLASS}
+                  required
+                />
+              </div>
+              <div>
+                <label className="mb-2 block text-sm font-medium text-slate-700">
+                  Phone Number
+                </label>
+                <input
+                  type="tel"
+                  value={memberFormData.phone}
+                  onChange={(e) => onChange({ ...memberFormData, phone: e.target.value })}
+                  placeholder="e.g., +1 (555) 000-0000"
+                  className={MODAL_FIELD_CLASS}
+                  autoComplete="tel"
+                />
+              </div>
+              <div>
+                <label className="mb-2 block text-sm font-medium text-slate-700">
+                  {editingMember.is_workspace_owner ? "Primary role" : "Role"}{" "}
+                  <span className="text-red-500">*</span>
+                </label>
+                <select
+                  value={memberFormData.role}
+                  onChange={(e) => {
+                    const newRole = e.target.value;
+                    const nextAdditional = memberFormData.additional_roles.filter(
+                      (r) => r !== newRole
+                    );
+                    onChange({
+                      ...memberFormData,
+                      role: newRole,
+                      additional_roles: nextAdditional,
+                    });
+                  }}
+                  disabled={lockPrimaryRoleSelect}
+                  className={`${MODAL_FIELD_CLASS} disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-600`}
+                  required
+                >
+                  {primaryRoleOptions.map((r) => (
+                    <option key={r.value} value={r.value}>
+                      {r.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
 
             <div>
               <label className="mb-2 block text-sm font-medium text-slate-700">
-                Email <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="email"
-                value={memberFormData.email}
-                onChange={(e) => onChange({ ...memberFormData, email: e.target.value })}
-                placeholder="e.g., john@example.com"
-                className={MODAL_FIELD_CLASS}
-                required
-              />
-            </div>
-
-            <div>
-              <label className="mb-2 block text-sm font-medium text-slate-700">Phone number</label>
-              <input
-                type="tel"
-                value={memberFormData.phone}
-                onChange={(e) => onChange({ ...memberFormData, phone: e.target.value })}
-                placeholder="e.g., +1 (555) 000-0000"
-                className={MODAL_FIELD_CLASS}
-                autoComplete="tel"
-              />
-            </div>
-
-            <div>
-              <label className="mb-2 block text-sm font-medium text-slate-700">
-                {editingMember.is_workspace_owner ? "Primary role" : "Role"}{" "}
-                <span className="text-red-500">*</span>
+                Status
               </label>
               <select
-                value={memberFormData.role}
-                onChange={(e) => {
-                  const newRole = e.target.value;
-                  const nextAdditional = memberFormData.additional_roles.filter(
-                    (r) => r !== newRole
-                  );
-                  onChange({
-                    ...memberFormData,
-                    role: newRole,
-                    additional_roles: nextAdditional,
-                  });
-                }}
-                disabled={lockPrimaryRoleSelect}
-                className={`${MODAL_FIELD_CLASS} disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-600`}
-                required
+                value={statusLabel}
+                disabled
+                className={`${MODAL_FIELD_CLASS} cursor-not-allowed bg-slate-50 text-slate-600`}
+                aria-readonly
               >
-                {ASSIGNABLE_ROLES.filter((r) =>
-                  editingMember.is_workspace_owner
-                    ? !OWNER_DISALLOWED_ROLES.includes(r.value)
-                    : true
-                ).map((r) => (
-                  <option key={r.value} value={r.value}>
-                    {r.label}
-                  </option>
-                ))}
+                <option value={statusLabel}>{statusLabel}</option>
               </select>
             </div>
 
@@ -850,15 +901,29 @@ export function EditTeamMemberModal({
             )}
 
             {showDepartments && (
-              <div>
-                <label className="mb-2 block text-sm font-medium text-slate-700">Departments</label>
-                <DepartmentChipSelector
-                  departments={departments}
-                  selectedIds={memberFormData.departments}
-                  onToggle={onToggleDepartment}
-                  variant="provider"
-                  emptyMessage="No departments available."
-                />
+              <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-5">
+                <div className="flex gap-3">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white shadow-sm ring-1 ring-slate-200">
+                    <LuBuilding2 className="h-5 w-5 text-indigo-600" aria-hidden />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <h3 className="text-sm font-semibold text-slate-900">
+                      Department Assignment
+                    </h3>
+                    <p className="mt-1 text-xs text-slate-600">
+                      Select the departments this member can access.
+                    </p>
+                    <div className="mt-4">
+                      <DepartmentChipSelector
+                        departments={departments}
+                        selectedIds={memberFormData.departments}
+                        onToggle={onToggleDepartment}
+                        variant="provider"
+                        emptyMessage="No departments available."
+                      />
+                    </div>
+                  </div>
+                </div>
               </div>
             )}
           </div>
@@ -874,10 +939,10 @@ export function EditTeamMemberModal({
             </button>
             <button
               type="submit"
-              className="inline-flex h-11 items-center rounded-xl bg-indigo-600 px-5 text-sm font-medium text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex h-11 items-center rounded-xl bg-slate-900 px-5 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
               disabled={loading}
             >
-              {loading ? "Saving..." : "Update Team Member"}
+              {loading ? "Saving..." : "Save Changes"}
             </button>
           </div>
         </form>
@@ -929,6 +994,8 @@ export function ManageRoleModal({
   const showDepartments =
     memberFormData.role === ROLE_SERVICE_PROVIDER ||
     memberFormData.additional_roles.includes(ROLE_SERVICE_PROVIDER);
+
+  const primaryRoleOptions = getEditablePrimaryRoleOptions(member);
 
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center p-4">
@@ -985,9 +1052,7 @@ export function ManageRoleModal({
                 className={`${MODAL_FIELD_CLASS} disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-600`}
                 required
               >
-                {ASSIGNABLE_ROLES.filter((r) =>
-                  member.is_workspace_owner ? !OWNER_DISALLOWED_ROLES.includes(r.value) : true,
-                ).map((r) => (
+                {primaryRoleOptions.map((r) => (
                   <option key={r.value} value={r.value}>
                     {r.label}
                   </option>

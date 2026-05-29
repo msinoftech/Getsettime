@@ -1,15 +1,15 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
+import { is_public_embed_booking_path } from '@/lib/public_embed_route';
 
 export default function proxy(request: NextRequest) {
   const url = request.nextUrl.clone();
   const role = request.cookies.get('x_role')?.value;
   const pathname = url.pathname;
 
-  // Public routes that don't require authentication (embed booking: /[workspaceSlug] or /[workspaceSlug]/[eventTypeSlug])
+  // Public routes that don't require authentication (embed booking under /[workspaceSlug]/…)
   const publicRoutes = ['/login', '/register', '/forgot-password', '/reset-password'];
-  const segments = pathname.split('/').filter(Boolean);
-  const isEmbedRoute = (segments.length === 1 || segments.length === 2) && !['login', 'register', 'forgot-password', 'reset-password', 'auth', 'invite-accept', 'event-type', 'routingform', 'workflows', 'availability', 'team-members', 'departments', 'services', 'profile', 'integrations', 'contacts', 'billings', 'bookings', 'settings', 'roles-permissions', 'api', '_next'].includes(segments[0]);
+  const isEmbedRoute = is_public_embed_booking_path(pathname);
   const isPublicRoute = publicRoutes.some(route => pathname.startsWith(route)) || isEmbedRoute;
 
   // If accessing public routes, allow

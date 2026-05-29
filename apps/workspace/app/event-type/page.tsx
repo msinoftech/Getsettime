@@ -20,6 +20,7 @@ import {
   LuSettings2 as Settings2,
   LuCircleCheckBig as CheckCircle2,
   LuRotateCcw as RotateCcw,
+  LuChevronDown as ChevronDown,
 } from "react-icons/lu";
 import { supabase } from "@/lib/supabaseClient";
 import { useAuth } from "@/src/providers/AuthProvider";
@@ -37,8 +38,27 @@ import {
   type event_type_location_value,
 } from "@/src/features/event-types/EventTypeFormLayout";
 import { workspace_meeting_options_to_location } from "@/src/utils/meeting_options";
-import { ROLE_SERVICE_PROVIDER } from "@/src/constants/roles";
+import {
+  ROLE_MANAGER,
+  ROLE_SERVICE_PROVIDER,
+  ROLE_STAFF,
+  ROLE_WORKSPACE_ADMIN,
+} from "@/src/constants/roles";
 import { resolveMeetingOptionsForServiceProvider } from "@/src/utils/providerSettingsResolution";
+import {
+  parse_workspace_provider_links,
+  type workspace_provider_links_settings,
+} from "@/lib/provider_booking_link";
+import { userActsAsServiceProviderFromMetadata } from "@/lib/service_provider_role";
+import {
+  copy_text_to_clipboard,
+  resolve_event_type_public_booking_url,
+} from "@/src/utils/public_booking_link";
+import { useServiceProviders } from "@/src/hooks/useBookingLookups";
+import {
+  capitalize_booking_display_label,
+  getServiceProviderName,
+} from "@/src/utils/booking";
 
 interface EventType {
   id: number;
@@ -169,6 +189,10 @@ export default function EventTypes() {
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [workspaceSlug, setWorkspaceSlug] = useState<string>("");
+  const [providerLinks, setProviderLinks] = useState<workspace_provider_links_settings>({});
+  const [serviceProviderOwnerIds, setServiceProviderOwnerIds] = useState<Set<string>>(
+    () => new Set()
+  );
   const [loadingSlug, setLoadingSlug] = useState(true);
   const [copiedId, setCopiedId] = useState<number | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
@@ -179,6 +203,8 @@ export default function EventTypes() {
   const [visibility_filter, set_visibility_filter] = useState<
     "all" | "private" | "public"
   >("all");
+  const [provider_filter, set_provider_filter] = useState("");
+  const { data: serviceProviders } = useServiceProviders();
   const [settings_open, set_settings_open] = useState(false);
   const [settings_saved_message, set_settings_saved_message] = useState("");
   const [event_settings, set_event_settings] = useState<event_settings_state>(
@@ -258,6 +284,7 @@ export default function EventTypes() {
       if (!response.ok) return;
       const body = await response.json();
       const workspace_settings = (body?.settings ?? {}) as Record<string, unknown>;
+      setProviderLinks(parse_workspace_provider_links(workspace_settings.links));
       const rawMeetingOptions = workspace_settings.meeting_options as
         | Record<string, unknown>
         | undefined;
@@ -519,21 +546,39 @@ export default function EventTypes() {
   };
 
   const handleCopyLink = async (item: EventType) => {
-    if (!workspaceSlug) {
-      setAlertMessage(
-        "Unable to copy link. Workspace slug is not loaded yet. Please try again."
-      );
-      return;
-    }
     if (!item.slug) {
       setAlertMessage(
         `Unable to copy link. Event type "${item.title}" does not have a slug. Please edit and save the event type to generate a slug.`
       );
       return;
     }
-    const embedLink = `${window.location.origin}/${workspaceSlug}/${item.slug}`;
+
+    const ownerActsAsServiceProvider = Boolean(
+      item.owner_id &&
+        (serviceProviderOwnerIds.has(item.owner_id) ||
+          (item.owner_id === user?.id &&
+            user?.user_metadata?.role === ROLE_SERVICE_PROVIDER))
+    );
+
+    const resolved = resolve_event_type_public_booking_url(
+      workspaceSlug,
+      item.slug,
+      item.owner_id,
+      providerLinks,
+      ownerActsAsServiceProvider
+    );
+
+    if (!resolved.ok) {
+      setAlertMessage(resolved.error);
+      return;
+    }
+
     try {
-      await navigator.clipboard.writeText(embedLink);
+      const copied = await copy_text_to_clipboard(resolved.url);
+      if (!copied) {
+        setAlertMessage("Failed to copy link. Please try again.");
+        return;
+      }
       setCopiedId(item.id);
       setTimeout(() => setCopiedId(null), 2000);
     } catch (err) {
@@ -591,14 +636,15 @@ export default function EventTypes() {
   }, [items]);
 
   useEffect(() => {
-    if (!user || !show_owner_labels) {
+    if (!user) {
+      setServiceProviderOwnerIds(new Set());
       set_owner_names_by_id({});
       return;
     }
 
     let cancelled = false;
 
-    const load_owner_names = async () => {
+    const load_team_members = async () => {
       try {
         const {
           data: { session },
@@ -612,25 +658,90 @@ export default function EventTypes() {
 
         const data = await response.json();
         const names: Record<string, string> = {};
+        const service_provider_ids = new Set<string>();
+
         for (const member of (data.teamMembers || []) as Array<{
           id?: string;
           name?: string;
+          role?: string | null;
+          is_workspace_owner?: boolean;
+          additional_roles?: string[] | null;
         }>) {
-          if (member.id && member.name) {
+          if (member.id && member.name && show_owner_labels) {
             names[member.id] = member.name;
           }
+          if (
+            member.id &&
+            userActsAsServiceProviderFromMetadata({
+              role: member.role,
+              is_workspace_owner: member.is_workspace_owner,
+              additional_roles: member.additional_roles,
+            })
+          ) {
+            service_provider_ids.add(member.id);
+          }
         }
-        if (!cancelled) set_owner_names_by_id(names);
+
+        if (user?.user_metadata?.role === ROLE_SERVICE_PROVIDER && user.id) {
+          service_provider_ids.add(user.id);
+        }
+
+        if (!cancelled) {
+          setServiceProviderOwnerIds(service_provider_ids);
+          if (show_owner_labels) {
+            set_owner_names_by_id(names);
+          } else {
+            set_owner_names_by_id({});
+          }
+        }
       } catch (err) {
-        console.error("Error loading team member names:", err);
+        console.error("Error loading team members:", err);
       }
     };
 
-    load_owner_names();
+    load_team_members();
     return () => {
       cancelled = true;
     };
   }, [user, show_owner_labels]);
+
+  const active_service_providers = useMemo(
+    () => serviceProviders.filter((p) => !p.deactivated),
+    [serviceProviders]
+  );
+
+  const deactivated_service_provider_ids = useMemo(
+    () =>
+      new Set(
+        serviceProviders.filter((p) => p.deactivated).map((p) => p.id)
+      ),
+    [serviceProviders]
+  );
+
+  const user_role =
+    typeof user?.user_metadata?.role === "string" ? user.user_metadata.role : "";
+
+  const can_filter_event_types_by_provider =
+    user_role === ROLE_WORKSPACE_ADMIN ||
+    user_role === ROLE_MANAGER ||
+    user_role === ROLE_STAFF;
+
+  const show_service_provider_filter =
+    can_filter_event_types_by_provider && active_service_providers.length > 1;
+
+  const sorted_service_providers = useMemo(
+    () =>
+      [...active_service_providers].sort((a, b) =>
+        capitalize_booking_display_label(
+          getServiceProviderName(a.id, serviceProviders)
+        ).localeCompare(
+          capitalize_booking_display_label(
+            getServiceProviderName(b.id, serviceProviders)
+          )
+        )
+      ),
+    [active_service_providers, serviceProviders]
+  );
 
   const total_event_types = items.length;
   const private_event_types = items.filter((e) => !e.is_public).length;
@@ -649,9 +760,11 @@ export default function EventTypes() {
         visibility_filter === "all" ||
         (visibility_filter === "public" && is_public) ||
         (visibility_filter === "private" && !is_public);
-      return matches_search && matches_visibility;
+      const matches_provider =
+        provider_filter === "" || item.owner_id === provider_filter;
+      return matches_search && matches_visibility && matches_provider;
     });
-  }, [items, search, visibility_filter]);
+  }, [items, search, visibility_filter, provider_filter]);
 
   if (showForm) {
     return (
@@ -784,18 +897,45 @@ export default function EventTypes() {
       {/* Filters */}
       <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div className="relative w-full lg:max-w-md">
-            <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-            <input
-              type="text"
-              placeholder="Search event type by name or slug..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="h-12 w-full rounded-xl border border-slate-200 bg-slate-50 pl-11 pr-4 text-sm text-slate-700 outline-none transition placeholder:text-slate-400 focus:border-sky-400 focus:bg-white"
-            />
+          <div className="flex min-w-0 flex-1 flex-col gap-3 sm:flex-row sm:items-center sm:gap-3">
+            <div className="relative min-w-0 w-full flex-1 sm:min-w-[26rem] lg:min-w-[32rem]">
+              <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                placeholder="Search event type by name or slug..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="h-12 w-full rounded-xl border border-slate-200 bg-slate-50 pl-11 pr-4 text-sm text-slate-700 outline-none transition placeholder:text-slate-400 focus:border-sky-400 focus:bg-white"
+              />
+            </div>
+
+            {show_service_provider_filter && (
+              <div className="relative w-full shrink-0 sm:w-auto sm:min-w-[220px]">
+                <select
+                  id="event-type-provider-filter"
+                  value={provider_filter}
+                  onChange={(e) => set_provider_filter(e.target.value)}
+                  className="h-12 w-full appearance-none rounded-xl border border-slate-200 bg-slate-50 pl-4 pr-10 text-sm text-slate-700 outline-none transition focus:border-sky-400 focus:bg-white"
+                  aria-label="Filter by service provider"
+                >
+                  <option value="">All service providers</option>
+                  {sorted_service_providers.map((sp) => (
+                    <option key={sp.id} value={sp.id}>
+                      {capitalize_booking_display_label(
+                        getServiceProviderName(sp.id, serviceProviders)
+                      )}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown
+                  className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
+                  aria-hidden
+                />
+              </div>
+            )}
           </div>
 
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-2 lg:shrink-0">
             {(["all", "private", "public"] as const).map((item) => (
               <button
                 key={item}
@@ -845,8 +985,19 @@ export default function EventTypes() {
                           {show_owner_labels &&
                             item.owner_id &&
                             owner_names_by_id[item.owner_id] && (
-                              <span className="shrink-0 text-sm font-medium text-slate-500">
-                                (Created by: {owner_names_by_id[item.owner_id]})
+                              <span className="inline-flex shrink-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-sm font-medium text-slate-500">
+                                <span>
+                                  (Created by: {owner_names_by_id[item.owner_id]}
+                                </span>
+                                {serviceProviderOwnerIds.has(item.owner_id) &&
+                                  deactivated_service_provider_ids.has(
+                                    item.owner_id
+                                  ) && (
+                                    <span className="inline-flex items-center rounded-full bg-slate-200 px-2 py-0.5 text-xs font-medium text-slate-600">
+                                      Inactive
+                                    </span>
+                                  )}
+                                <span>)</span>
                               </span>
                             )}
                         </div>

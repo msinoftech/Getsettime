@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { useWorkspaceSettings } from '@/src/hooks/useWorkspaceSettings';
 import {
   build_public_booking_qr_url,
+  build_service_provider_public_booking_url,
   build_workspace_public_booking_url,
   copy_text_to_clipboard,
   download_public_booking_qr,
@@ -12,6 +13,8 @@ import {
   open_public_booking_whatsapp,
   share_public_booking_with_customer,
 } from '@/src/utils/public_booking_link';
+import { ROLE_SERVICE_PROVIDER } from '@/src/constants/roles';
+import { useAuth } from '@/src/providers/AuthProvider';
 import DashboardIcon from './DashboardIcon';
 
 type ModalKind = 'qr' | 'share' | null;
@@ -40,12 +43,17 @@ function MenuIcon({
 }
 
 export function PublicBookingLinkMenu() {
+  const { user } = useAuth();
   const {
     loading: loading_settings,
     workspaceSlug,
+    serviceProviderLinkSlug,
     workspaceName,
     general,
   } = useWorkspaceSettings();
+
+  const is_service_provider =
+    (user?.user_metadata?.role as string | undefined) === ROLE_SERVICE_PROVIDER;
 
   const [open, set_open] = useState(false);
   const [modal, set_modal] = useState<ModalKind>(null);
@@ -56,10 +64,15 @@ export function PublicBookingLinkMenu() {
   const workspace_title =
     workspaceName?.trim() || general.accountName?.trim() || 'GetSetTime';
 
-  const booking_url = useMemo(
-    () => build_workspace_public_booking_url(workspaceSlug),
-    [workspaceSlug]
-  );
+  const booking_url = useMemo(() => {
+    if (is_service_provider) {
+      return build_service_provider_public_booking_url(
+        workspaceSlug,
+        serviceProviderLinkSlug
+      );
+    }
+    return build_workspace_public_booking_url(workspaceSlug);
+  }, [is_service_provider, workspaceSlug, serviceProviderLinkSlug]);
 
   const qr_url = useMemo(
     () => (booking_url ? build_public_booking_qr_url(booking_url) : null),
@@ -122,32 +135,32 @@ export function PublicBookingLinkMenu() {
     );
   }, [booking_url, show_notice]);
 
-  if (loading_settings) {
-    return (
-      <span className="inline-flex h-[46px] items-center rounded-2xl bg-emerald-400/50 px-5 text-sm font-black text-emerald-950/60">
-        Public Booking Link
-      </span>
-    );
-  }
+  // if (loading_settings) {
+  //   return (
+  //     <span className="inline-flex h-[46px] items-center rounded-2xl bg-emerald-400/50 px-5 text-sm font-black text-emerald-950/60">
+  //       Public Booking Link
+  //     </span>
+  //   );
+  // }
 
-  if (!booking_url) {
-    return (
-      <Link
-        href="/settings"
-        className="inline-flex items-center gap-2 rounded-2xl bg-emerald-400 px-5 py-3 text-sm font-black text-emerald-950 shadow-xl transition hover:bg-emerald-300"
-        title="Configure My Link in Settings"
-      >
-        <MenuIcon>
-          <circle cx="18" cy="5" r="3" />
-          <circle cx="6" cy="12" r="3" />
-          <circle cx="18" cy="19" r="3" />
-          <path d="m8.59 13.51 6.83 3.98" />
-          <path d="M15.41 6.51l-6.82 3.98" />
-        </MenuIcon>
-        Public Booking Link
-      </Link>
-    );
-  }
+  // if (!booking_url) {
+  //   return (
+  //     <Link
+  //       href="/settings"
+  //       className="inline-flex items-center gap-2 rounded-2xl bg-emerald-400 px-5 py-3 text-sm font-black text-emerald-950 shadow-xl transition hover:bg-emerald-300"
+  //       title="Configure My Link in Settings"
+  //     >
+  //       <MenuIcon>
+  //         <circle cx="18" cy="5" r="3" />
+  //         <circle cx="6" cy="12" r="3" />
+  //         <circle cx="18" cy="19" r="3" />
+  //         <path d="m8.59 13.51 6.83 3.98" />
+  //         <path d="M15.41 6.51l-6.82 3.98" />
+  //       </MenuIcon>
+  //       Public Booking Link
+  //     </Link>
+  //   );
+  // }
 
   return (
     <>
@@ -189,7 +202,7 @@ export function PublicBookingLinkMenu() {
           >
             <div className="rounded-2xl bg-slate-50 p-3">
               <p className="text-xs font-bold text-slate-500">Your public booking URL</p>
-              <p className="mt-1 truncate text-sm font-semibold text-slate-800" title={booking_url}>
+              <p className="mt-1 truncate text-sm font-semibold text-slate-800" title={booking_url ?? undefined}>
                 {booking_url}
               </p>
             </div>
@@ -325,7 +338,10 @@ export function PublicBookingLinkMenu() {
                 </div>
                 <button
                   type="button"
-                  onClick={() => open_public_booking_whatsapp(booking_url, workspace_title)}
+                  onClick={() => {
+                    if (!booking_url) return;
+                    open_public_booking_whatsapp(booking_url, workspace_title);
+                  }}
                   className="flex w-full items-center gap-3 rounded-2xl bg-green-50 px-4 py-4 text-sm font-black text-green-700 hover:bg-green-100"
                 >
                   <MenuIcon className="h-5 w-5">
@@ -335,7 +351,10 @@ export function PublicBookingLinkMenu() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => open_public_booking_email(booking_url, workspace_title)}
+                  onClick={() => {
+                    if (!booking_url) return;
+                    open_public_booking_email(booking_url, workspace_title);
+                  }}
                   className="flex w-full items-center gap-3 rounded-2xl bg-indigo-50 px-4 py-4 text-sm font-black text-indigo-700 hover:bg-indigo-100"
                 >
                   <MenuIcon className="h-5 w-5">

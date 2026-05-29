@@ -174,16 +174,32 @@ export function useBookingFormData({
   }, [selectedDepartment, onAvailabilityChange]);
 
   useEffect(() => {
+    if (needsExplicitProvider && !effectiveProviderId) {
+      setEventTypes([]);
+      setLoadingEventTypes(false);
+      return;
+    }
+
     const fetchEventTypes = async () => {
+      setLoadingEventTypes(true);
       try {
         const { supabase } = await import('@/lib/supabaseClient');
         const {
           data: { session },
         } = await supabase.auth.getSession();
         if (!session?.access_token) return;
-        const res = await fetch('/api/event-types', {
-          headers: { Authorization: `Bearer ${session.access_token}` },
-        });
+
+        const params = new URLSearchParams();
+        if (effectiveProviderId) {
+          params.set('service_provider_id', effectiveProviderId);
+        }
+        const query = params.toString();
+        const res = await fetch(
+          query ? `/api/event-types?${query}` : '/api/event-types',
+          {
+            headers: { Authorization: `Bearer ${session.access_token}` },
+          }
+        );
         if (res.ok) {
           const result = await res.json();
           setEventTypes(result.data || []);
@@ -195,7 +211,7 @@ export function useBookingFormData({
       }
     };
     fetchEventTypes();
-  }, []);
+  }, [effectiveProviderId, needsExplicitProvider]);
 
   useEffect(() => {
     if (!effectiveProviderId && needsExplicitProvider) {
