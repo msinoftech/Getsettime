@@ -957,6 +957,81 @@ export const sendBookingStatusChangeEmails = async (
 };
 
 // Send email confirmation link for registration (nodemailer)
+export interface WelcomeEmailParams {
+  to: string;
+  workspaceName: string;
+  dashboardUrl: string;
+  upgradeUrl: string;
+  planName: string;
+  bookingLimit: number;
+  adminLimit: number;
+  serviceProviderLimit: number;
+}
+
+export const sendWelcomeEmail = async (params: WelcomeEmailParams): Promise<void> => {
+  const {
+    to,
+    workspaceName,
+    dashboardUrl,
+    upgradeUrl,
+    planName,
+    bookingLimit,
+    adminLimit,
+    serviceProviderLimit,
+  } = params;
+
+  const transporter = createTransporter();
+  await transporter.sendMail({
+    from: `"GetSetTime" <${process.env.SMTP_USER}>`,
+    to,
+    subject: 'Welcome to GetSetTime 🎉',
+    html: `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+    .header { background-color: #4F46E5; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
+    .content { background-color: #f9f9f9; padding: 30px; border: 1px solid #ddd; border-radius: 0 0 8px 8px; }
+    .button { display: inline-block; background-color: #4F46E5; color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px; margin: 8px 8px 8px 0; }
+    .button-secondary { background-color: #1de4a9; color: #111; }
+    ul { padding-left: 20px; }
+    .footer { text-align: center; margin-top: 20px; padding-top: 20px; border-top: 1px solid #ddd; color: #666; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>Welcome to GetSetTime 🎉</h1>
+    </div>
+    <div class="content">
+      <p>Your workspace <strong>${workspaceName}</strong> is ready.</p>
+      <p>You are on the <strong>${planName}</strong> plan:</p>
+      <ul>
+        <li>${bookingLimit} bookings per month</li>
+        <li>${adminLimit} admin</li>
+        <li>Up to ${serviceProviderLimit} service providers</li>
+        <li>Google Calendar sync</li>
+        <li>Email notifications</li>
+        <li>Public booking page</li>
+      </ul>
+      <p>
+        <a href="${dashboardUrl}" class="button">Go to dashboard</a>
+        <a href="${upgradeUrl}" class="button button-secondary">Upgrade plan</a>
+      </p>
+      <div class="footer">
+        <p>&copy; ${new Date().getFullYear()} GetSetTime. All rights reserved.</p>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
+    `,
+  });
+};
+
 export const sendConfirmationEmail = async (
   to: string,
   name: string,

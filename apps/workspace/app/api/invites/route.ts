@@ -158,6 +158,19 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    if (role === 'service_provider') {
+      try {
+        const { assertServiceProviderAllowed } = await import('@app/db/subscription');
+        const { planLimitErrorResponse } = await import('@/lib/plan-limit-response');
+        await assertServiceProviderAllowed(adminClient, Number(workspaceId), 1);
+      } catch (planErr) {
+        const { planLimitErrorResponse } = await import('@/lib/plan-limit-response');
+        const planResp = planLimitErrorResponse(planErr);
+        if (planResp) return planResp;
+        throw planErr;
+      }
+    }
+
     // Store invite in database
     const inviteData = {
       token: inviteToken,

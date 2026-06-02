@@ -29,6 +29,8 @@ import {
 import { supabase } from "@/lib/supabaseClient";
 import { useAuth } from "@/src/providers/AuthProvider";
 import { ConfirmModal } from "@/src/components/ui/ConfirmModal";
+import { UpgradePlanModal } from "@/src/components/Subscription/UpgradePlanModal";
+import { useSubscription } from "@/src/hooks/useSubscription";
 import { TeamMemberSkeleton } from "@/src/components/ui/TeamMemberSkeleton";
 import {
   ROLE_SERVICE_PROVIDER,
@@ -198,6 +200,12 @@ export default function TeamMembersPage() {
   // Only workspace owner or workspace admin may edit team members and change roles.
   const canManageMembers =
     currentUserIsOwner || currentUserRole === ROLE_WORKSPACE_ADMIN;
+
+  const { data: subscription } = useSubscription(Boolean(currentUser));
+  const [upgradeModalOpen, setUpgradeModalOpen] = useState(false);
+  const [upgradeModalMessage, setUpgradeModalMessage] = useState(
+    "Upgrade your plan to add more service providers."
+  );
 
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
@@ -523,6 +531,19 @@ export default function TeamMembersPage() {
         return;
       }
 
+      if (
+        subscription &&
+        subscription.usage.service_provider_count >=
+          subscription.usage.service_provider_limit
+      ) {
+        setUpgradeModalMessage(
+          `You have reached the limit of ${subscription.usage.service_provider_limit} service providers on your ${subscription.plan.name} plan.`
+        );
+        setUpgradeModalOpen(true);
+        setLoading(false);
+        return;
+      }
+
       const response = await fetch("/api/invites", {
         method: "POST",
         headers: {
@@ -545,8 +566,18 @@ export default function TeamMembersPage() {
         setProviderInviteUrl(data.inviteUrl);
         await fetchTeamMembers();
       } else {
-        const errorData = await response.json();
-        setError(errorData.error || "Failed to send provider invite");
+        const errorData = (await response.json()) as {
+          error?: string;
+          upgradeRequired?: boolean;
+        };
+        if (errorData.upgradeRequired) {
+          setUpgradeModalMessage(
+            errorData.error || "Upgrade your plan to add more service providers."
+          );
+          setUpgradeModalOpen(true);
+        } else {
+          setError(errorData.error || "Failed to send provider invite");
+        }
       }
     } catch (err) {
       console.error("Error sending provider invite:", err);
@@ -1346,6 +1377,12 @@ export default function TeamMembersPage() {
           loading={loading}
         />
       )}
+
+      <UpgradePlanModal
+        open={upgradeModalOpen}
+        message={upgradeModalMessage}
+        onClose={() => setUpgradeModalOpen(false)}
+      />
     </div>
   );
 }

@@ -6,6 +6,7 @@ import {
   resolveAcceptedInviteForEmail,
   syncInvitedUserWorkspaceMetadata,
 } from "@/lib/workspace-service";
+import { sendWorkspaceWelcomeEmail } from "@/lib/send-workspace-welcome-email";
 
 export async function POST(req: Request) {
   try {
@@ -120,6 +121,14 @@ export async function POST(req: Request) {
     if (updateError) {
       console.error("Bootstrap user update error:", updateError);
       return NextResponse.json({ error: "Failed to update user metadata" }, { status: 500 });
+    }
+
+    if (workspaceResult.isNewWorkspace && userEmail) {
+      sendWorkspaceWelcomeEmail({
+        to: userEmail,
+        workspaceId: workspaceResult.workspaceId,
+        supabaseAdmin,
+      }).catch((err) => console.error("Welcome email failed (non-critical):", err));
     }
 
     return NextResponse.json({ workspace_id: workspaceResult.workspaceId });

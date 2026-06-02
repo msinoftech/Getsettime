@@ -7,6 +7,7 @@ import { supabase } from "@/lib/supabaseClient";
 import { signOutWithAuthLog } from "@/src/lib/auth_activity_log_client";
 import { useAuth } from "../../providers/AuthProvider";
 import { useWorkspaceSettings } from "../../hooks/useWorkspaceSettings";
+import { useSubscription } from "@/src/hooks/useSubscription";
 import { WorkspaceBrandLogo } from "../molecules/WorkspaceBrandLogo";
 interface TopbarProps {
   toggleSidebar: () => void;
@@ -49,9 +50,11 @@ export default function Topbar({ toggleSidebar, isSidebarOpen }: TopbarProps) {
     workspaceName,
     workspaceProfessionLabel,
   } = useWorkspaceSettings();
+  const { data: subscriptionData } = useSubscription();
 
   const accountName =
     workspaceName?.trim() || general.accountName || "GetSetTime";
+  const currentBillingPlan = subscriptionData?.plan?.name?.trim() || "Billing";
   
   const handleSignOut = async () => {
     await signOutWithAuthLog("manual");
@@ -222,6 +225,9 @@ export default function Topbar({ toggleSidebar, isSidebarOpen }: TopbarProps) {
         
 
         <div className="flex items-center space-x-2">
+          <Link href="/billings" className="text-sm text-gray-500 hover:text-gray-700 px-2.5 py-1 rounded-full text-xs font-medium border bg-emerald-50 text-emerald-700 border-emerald-200">
+            <span className="text-sm font-medium">Current Plan: {currentBillingPlan}</span>
+          </Link>
           {!loadingSettings && workspaceProfessionLabel ? (
             <div className="hidden sm:flex items-center max-w-[11rem] md:max-w-[16rem] shrink-0 px-2">
               <div

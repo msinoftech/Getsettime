@@ -21,7 +21,7 @@ import AvailabilityTimesheet, {
 import AlertMessage from '@/src/components/Auth/AlertMessage';
 import { AvailabilityGeneralSkeleton } from '@/src/components/ui/AvailabilityGeneralSkeleton';
 import { useWorkspaceSettings } from '@/src/hooks/useWorkspaceSettings';
-import { ROLE_SERVICE_PROVIDER } from '@/src/constants/roles';
+import { ROLE_SERVICE_PROVIDER, ROLE_WORKSPACE_ADMIN } from '@/src/constants/roles';
 import { resolveAvailabilityForServiceProvider } from '@/src/utils/availabilityResolution';
 import { supabase } from "@/lib/supabaseClient";
 
@@ -42,7 +42,7 @@ interface ServiceProvider {
 }
 
 export default function Availability() {
-  const { settings, loading: settingsLoading } = useWorkspaceSettings();
+  const { settings, loading: settingsLoading, refetch: refetchWorkspaceSettings } = useWorkspaceSettings();
   const [activeTab, setActiveTab] = useState<TabType>('general');
   const [currentDate, setCurrentDate] = useState(new Date());
   const [viewMode, setViewMode] = useState("week");
@@ -357,7 +357,9 @@ export default function Availability() {
       const saveProviderId =
         currentUserRole === ROLE_SERVICE_PROVIDER && currentUserId
           ? currentUserId
-          : selectedProviderId;
+          : currentUserRole === ROLE_WORKSPACE_ADMIN && selectedProviderId
+            ? selectedProviderId
+            : '';
 
       if (saveProviderId && currentUserRole === ROLE_SERVICE_PROVIDER) {
         const providerRes = await fetch('/api/settings/provider-availability', {
@@ -491,11 +493,53 @@ export default function Availability() {
   }, [calendarOpen]);
 
   const isServiceProviderUser = currentUserRole === ROLE_SERVICE_PROVIDER;
+  const isWorkspaceAdminUser = currentUserRole === ROLE_WORKSPACE_ADMIN;
 
   const effectiveProviderIdForView = useMemo(() => {
     if (isServiceProviderUser && currentUserId) return currentUserId;
-    return selectedProviderId;
-  }, [isServiceProviderUser, currentUserId, selectedProviderId]);
+    if (isWorkspaceAdminUser && selectedProviderId) return selectedProviderId;
+    return '';
+  }, [isServiceProviderUser, currentUserId, isWorkspaceAdminUser, selectedProviderId]);
+
+  const generalTimesheetProviderId = useMemo(() => {
+    if (isServiceProviderUser && currentUserId) return currentUserId;
+    if (isWorkspaceAdminUser && selectedProviderId) return selectedProviderId;
+    return null;
+  }, [isServiceProviderUser, currentUserId, isWorkspaceAdminUser, selectedProviderId]);
+
+  const generalInitialTimesheet = useMemo(() => {
+    if (isServiceProviderUser || !settingsAvailability) return undefined;
+    const resolved = resolveAvailabilityForServiceProvider(
+      settingsAvailability,
+      generalTimesheetProviderId
+    );
+    return (resolved.timesheet as Record<DayName, DaySchedule> | undefined) ?? null;
+  }, [isServiceProviderUser, settingsAvailability, generalTimesheetProviderId]);
+
+  const handleGeneralTimesheetSaved = (savedTimesheet: Record<string, DaySchedule>) => {
+    setSettingsAvailability((prev) => {
+      if (!prev) return prev;
+
+      if (generalTimesheetProviderId) {
+        return {
+          ...prev,
+          providers: {
+            ...prev.providers,
+            [generalTimesheetProviderId]: {
+              ...(prev.providers[generalTimesheetProviderId] ?? {}),
+              timesheet: savedTimesheet as Record<DayName, DaySchedule>,
+            },
+          },
+        };
+      }
+
+      return {
+        ...prev,
+        timesheet: savedTimesheet as Record<DayName, DaySchedule>,
+      };
+    });
+    void refetchWorkspaceSettings();
+  };
 
   // Resolve provider-specific availability (or workspace general when none configured)
   const applyAvailabilityForProvider = (avail: NonNullable<typeof settingsAvailability>, providerId: string) => {
@@ -563,8 +607,6 @@ export default function Availability() {
           setServiceProviders(providersList);
           if (userRole === ROLE_SERVICE_PROVIDER) {
             initialProviderId = userId;
-          } else if (providersList.length > 0 && !initialProviderId) {
-            initialProviderId = providersList[0].id;
           }
         }
         if (userRole === ROLE_SERVICE_PROVIDER) {
@@ -595,7 +637,9 @@ export default function Availability() {
     const providerIdForBookings =
       currentUserRole === ROLE_SERVICE_PROVIDER && currentUserId
         ? currentUserId
-        : selectedProviderId;
+        : isWorkspaceAdminUser && selectedProviderId
+          ? selectedProviderId
+          : '';
     if (activeTab !== 'availability' || !hasSelectedDate || !providerIdForBookings) return;
 
     const loadBookings = async () => {
@@ -653,7 +697,7 @@ export default function Availability() {
     };
 
     loadBookings();
-  }, [currentDate, viewMode, activeTab, hasSelectedDate, selectedProviderId, currentUserId, currentUserRole]);
+  }, [currentDate, viewMode, activeTab, hasSelectedDate, selectedProviderId, currentUserId, currentUserRole, isWorkspaceAdminUser]);
 
   const handleViewToggle = (mode: "week" | "day") => {
     if (mode === viewMode) {
@@ -675,6 +719,106 @@ export default function Availability() {
     return eachDayOfInterval({ start, end });
   }, [calendarMonth]);
 
+  const renderTabNav = (compact?: boolean) => (
+    <nav className="flex shrink-0 border-b border-slate-200">
+      <button
+        type="button"
+        onClick={() => setActiveTab('general')}
+        className={`${compact ? 'px-8 py-2.5 h-10' : 'px-8 py-2.5'} text-sm font-medium transition-colors whitespace-nowrap ${
+          activeTab === 'general'
+            ? 'text-white bg-indigo-600'
+            : 'text-slate-600 bg-white hover:text-slate-800 hover:bg-slate-50'
+        }`}
+      >
+        General
+      </button>
+      <button
+        type="button"
+        onClick={() => setActiveTab('availability')}
+        className={`${compact ? 'px-8 py-2.5 h-10' : 'px-8 py-2.5'} text-sm font-medium transition-colors whitespace-nowrap ${
+          activeTab === 'availability'
+            ? 'text-white bg-indigo-600'
+            : 'text-slate-600 bg-white hover:text-slate-800 hover:bg-slate-50'
+        }`}
+      >
+        Availability
+      </button>
+    </nav>
+  );
+
+  const renderServiceProviderFilter = () => {
+    if (!isWorkspaceAdminUser) return null;
+
+    return (
+      <div className="w-full sm:w-auto sm:min-w-[280px]">
+        <label
+          htmlFor="availability-service-provider"
+          className="block text-xs font-medium text-slate-600 mb-1"
+        >
+          Service Provider
+        </label>
+        <select
+          id="availability-service-provider"
+          value={selectedProviderId}
+          onChange={(e) => setSelectedProviderId(e.target.value)}
+          className="w-full px-3 py-2.5 sm:py-2 rounded-lg border border-slate-300 text-sm bg-white text-slate-700 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition"
+        >
+          <option value="">General Availability (All Providers)</option>
+          {serviceProviders.map((provider) => (
+            <option key={provider.id} value={provider.id}>
+              {provider.name} (Individual)
+            </option>
+          ))}
+        </select>
+        {!selectedProviderId ? (
+          <p className="text-xs text-slate-500 mt-1">
+            General availability applies to all providers unless individually overridden
+          </p>
+        ) : (
+          <p className="text-xs text-slate-500 mt-1">
+            Individual overrides for this provider only
+          </p>
+        )}
+      </div>
+    );
+  };
+
+  const renderHeaderControls = () => {
+    if (isWorkspaceAdminUser && activeTab === 'general') {
+      return (
+        <div className="inline-grid grid-cols-[minmax(300px,380px)_auto] gap-x-6 gap-y-1.5 items-end shrink-0">
+          <label
+            htmlFor="availability-service-provider"
+            className="col-start-1 row-start-1 text-xs font-medium text-slate-600"
+          >
+            Service Provider
+          </label>
+          <select
+            id="availability-service-provider"
+            value={selectedProviderId}
+            onChange={(e) => setSelectedProviderId(e.target.value)}
+            className="col-start-1 row-start-2 w-full h-10 px-3 rounded-lg border border-slate-300 text-sm bg-white text-slate-700 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition"
+          >
+            <option value="">General Availability (Workspace)</option>
+            {serviceProviders.map((provider) => (
+              <option key={provider.id} value={provider.id}>
+                {provider.name}
+              </option>
+            ))}
+          </select>
+          <div className="col-start-2 row-start-2 self-end">{renderTabNav(true)}</div>
+          <p className="col-start-1 row-start-3 text-xs text-slate-500 leading-snug">
+            {!selectedProviderId
+              ? 'General availability applies to all providers unless individually overridden'
+              : `Managing availability for ${serviceProviders.find((p) => p.id === selectedProviderId)?.name ?? 'selected provider'}`}
+          </p>
+        </div>
+      );
+    }
+
+    return renderTabNav();
+  };
+
   return (
     <section className="space-y-6 mr-auto">
       <header className="flex flex-wrap justify-between relative gap-3">
@@ -682,33 +826,7 @@ export default function Availability() {
           <h3 className="text-xl font-semibold text-slate-800">Availability Timesheet</h3>
           <p className="text-xs text-slate-500">Manage your availability settings and schedule.</p>
         </div>
-
-        <div className="border-b border-slate-200">
-          <nav className="flex">
-            <button
-              type="button"
-              onClick={() => setActiveTab('general')}
-              className={`flex-1 px-6 py-3 text-sm font-medium transition-colors ${
-                activeTab === 'general'
-                  ? 'text-white bg-indigo-600'
-                  : 'text-slate-600 bg-white hover:text-slate-800 hover:bg-slate-50'
-              }`}
-            >
-              General
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveTab('availability')}
-              className={`flex-1 px-6 py-3 text-sm font-medium transition-colors ${
-                activeTab === 'availability'
-                  ? 'text-white bg-indigo-600'
-                  : 'text-slate-600 bg-white hover:text-slate-800 hover:bg-slate-50'
-              }`}
-            >
-              Availability
-            </button>
-          </nav>
-        </div>
+        <div className="w-full sm:w-auto flex justify-end">{renderHeaderControls()}</div>
       </header>
       
       {/* Tabs */}
@@ -729,16 +847,18 @@ export default function Availability() {
                   key={
                     isServiceProviderUser && currentUserId
                       ? `sp-${currentUserId}`
-                      : 'workspace-general'
+                      : isWorkspaceAdminUser && selectedProviderId
+                        ? `admin-provider-${selectedProviderId}`
+                        : 'workspace-general'
                   }
                   providerUserId={
                     isServiceProviderUser && currentUserId ? currentUserId : undefined
                   }
-                  initialTimesheet={
-                    isServiceProviderUser
-                      ? undefined
-                      : settingsAvailability?.timesheet ?? null
+                  saveAsProviderId={
+                    isWorkspaceAdminUser && selectedProviderId ? selectedProviderId : undefined
                   }
+                  initialTimesheet={generalInitialTimesheet}
+                  onSave={handleGeneralTimesheetSaved}
                   onSaveFeedback={setTimesheetSaveFeedback}
                 />
               )}
@@ -806,40 +926,7 @@ export default function Availability() {
                     )}
                   </div>
 
-                  {/* Service Provider Filter Dropdown */}
-                  <div className="w-full sm:w-auto sm:min-w-[280px]">
-                    <select
-                      value={selectedProviderId}
-                      onChange={(e) => setSelectedProviderId(e.target.value)}
-                      disabled={currentUserRole === ROLE_SERVICE_PROVIDER}
-                      className="w-full px-3 py-2.5 sm:py-2 rounded-lg border border-slate-300 text-sm bg-white text-slate-700 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition disabled:opacity-60 disabled:cursor-not-allowed"
-                    >
-                      {currentUserRole === ROLE_SERVICE_PROVIDER ? (
-                        <option value={selectedProviderId}>
-                          {serviceProviders.find(p => p.id === selectedProviderId)?.name || 'Your Availability'}
-                        </option>
-                      ) : (
-                        <>
-                          <option value="">General Availability (All Providers)</option>
-                          {serviceProviders.map((provider) => (
-                            <option key={provider.id} value={provider.id}>
-                              {provider.name} (Individual)
-                            </option>
-                          ))}
-                        </>
-                      )}
-                    </select>
-                    {currentUserRole !== ROLE_SERVICE_PROVIDER && !selectedProviderId && (
-                      <p className="text-xs text-slate-500 mt-1">
-                        General availability applies to all providers unless individually overridden
-                      </p>
-                    )}
-                    {currentUserRole !== ROLE_SERVICE_PROVIDER && selectedProviderId && (
-                      <p className="text-xs text-slate-500 mt-1">
-                        Individual overrides for this provider only
-                      </p>
-                    )}
-                  </div>
+                  {isWorkspaceAdminUser && renderServiceProviderFilter()}
                 </div>
               </div>
 

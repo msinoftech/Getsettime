@@ -12,168 +12,115 @@ interface Invoice {
   plan: string;
 }
 
-interface Plan {
-  name: string;
-  seats: number;
-  limits: string;
-  price?: number;
-}
+import type { plans, workspace_usage } from "@app/db/subscription";
 
 interface AvailablePlan {
   id: string;
+  slug: string;
   name: string;
-  seats: number;
-  limits: string;
   price: number;
+  booking_limit: number;
+  service_provider_limit: number;
+  admin_limit: number;
   features: string[];
   popular?: boolean;
 }
 
-export default function Billing({ dark = false, plan = { name: "Pro", seats: 5, limits: "Unlimited meetings", price: 1999 } }: { dark?: boolean; plan?: Plan }) {
-  const [currentPlan, setCurrentPlan] = useState<Plan>(plan);
+function planFeaturesFromRow(row: plans): string[] {
+  const features = [
+    `${row.booking_limit} bookings per month`,
+    `${row.admin_limit} admin`,
+    `Up to ${row.service_provider_limit} service providers`,
+  ];
+  if (row.google_calendar_sync) features.push("Google Calendar sync");
+  if (row.email_notifications) features.push("Email notifications");
+  if (row.public_booking_page) features.push("Public booking page");
+  if (row.whatsapp_automation) features.push("WhatsApp automation");
+  if (row.online_payments) features.push("Online payments");
+  if (row.additional_locations) features.push("Multiple locations");
+  return features;
+}
+
+export default function Billing({ dark = false }: { dark?: boolean }) {
+  const [currentPlan, setCurrentPlan] = useState<plans | null>(null);
+  const [usage, setUsage] = useState<workspace_usage | null>(null);
+  const [availablePlans, setAvailablePlans] = useState<AvailablePlan[]>([]);
   const [showPlanModal, setShowPlanModal] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   const [isChangingPlan, setIsChangingPlan] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
-  const availablePlans: AvailablePlan[] = [
-    {
-      id: "free",
-      name: "Free",
-      seats: 1,
-      limits: "10 meetings/month",
-      price: 0,
-      features: [
-        "1 team member",
-        "10 meetings per month",
-        "Basic scheduling",
-        "Email support",
-      ],
-    },
-    {
-      id: "starter",
-      name: "Starter",
-      seats: 3,
-      limits: "50 meetings/month",
-      price: 999,
-      features: [
-        "3 team members",
-        "50 meetings per month",
-        "Advanced scheduling",
-        "Calendar integrations",
-        "Email support",
-      ],
-    },
-    {
-      id: "pro",
-      name: "Pro",
-      seats: 5,
-      limits: "Unlimited meetings",
-      price: 1999,
-      popular: true,
-      features: [
-        "5 team members",
-        "Unlimited meetings",
-        "Advanced scheduling",
-        "All integrations",
-        "Priority support",
-        "Custom branding",
-      ],
-    },
-    {
-      id: "enterprise",
-      name: "Enterprise",
-      seats: 20,
-      limits: "Unlimited meetings",
-      price: 4999,
-      features: [
-        "20+ team members",
-        "Unlimited meetings",
-        "Advanced scheduling",
-        "All integrations",
-        "Dedicated support",
-        "Custom branding",
-        "API access",
-        "Custom integrations",
-      ],
-    },
-  ];
-
   useEffect(() => {
-    fetchCurrentPlan();
+    void fetchBillingData();
   }, []);
 
-  const fetchCurrentPlan = async () => {
+  const fetchBillingData = async () => {
     try {
       const { supabase } = await import('@/lib/supabaseClient');
       const { data: { session } } = await supabase.auth.getSession();
       const token = session?.access_token;
+      const authHeaders: HeadersInit = token
+        ? { Authorization: `Bearer ${token}` }
+        : {};
 
-      const response = await fetch('/api/billing/plan', {
-        headers: token ? {
-          'Authorization': `Bearer ${token}`,
-        } : {},
-      });
+      const [planRes, catalogRes] = await Promise.all([
+        fetch('/api/billing/plan', { headers: authHeaders }),
+        fetch('/api/billing/plans'),
+      ]);
 
-      if (response.ok) {
-        const data = await response.json();
-        if (data.plan) {
-          setCurrentPlan(data.plan);
-        }
+      if (planRes.ok) {
+        const data = await planRes.json();
+        if (data.plan) setCurrentPlan(data.plan as plans);
+        if (data.usage) setUsage(data.usage as workspace_usage);
+      }
+
+      if (catalogRes.ok) {
+        const catalog = await catalogRes.json();
+        const rows = (catalog.plans || []) as plans[];
+        setAvailablePlans(
+          rows.map((row) => ({
+            id: String(row.id),
+            slug: row.slug,
+            name: row.name,
+            price: row.price,
+            booking_limit: row.booking_limit,
+            service_provider_limit: row.service_provider_limit,
+            admin_limit: row.admin_limit,
+            features: planFeaturesFromRow(row),
+            popular: row.slug === 'pro',
+          }))
+        );
       }
     } catch (error) {
-      console.error('Error fetching plan:', error);
+      console.error('Error fetching billing data:', error);
     } finally {
       setIsLoading(false);
     }
   };
 
   const handleChangePlan = async (selectedPlan: AvailablePlan) => {
-    if (selectedPlan.name === currentPlan.name) {
+    if (!currentPlan || selectedPlan.slug === currentPlan.slug) {
+      setShowPlanModal(false);
+      return;
+    }
+
+    if (selectedPlan.slug !== 'free') {
+      setMessage({
+        type: 'error',
+        text: 'Paid plans are coming soon. Contact support to upgrade your workspace.',
+      });
       setShowPlanModal(false);
       return;
     }
 
     setIsChangingPlan(true);
     setMessage(null);
-
-    try {
-      const { supabase } = await import('@/lib/supabaseClient');
-      const { data: { session } } = await supabase.auth.getSession();
-      const token = session?.access_token;
-
-      const response = await fetch('/api/billing/plan', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({
-          plan: {
-            name: selectedPlan.name,
-            seats: selectedPlan.seats,
-            limits: selectedPlan.limits,
-            price: selectedPlan.price,
-          },
-        }),
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        setCurrentPlan(data.plan);
-        setMessage({ type: 'success', text: 'Plan changed successfully!' });
-        setShowPlanModal(false);
-        setTimeout(() => setMessage(null), 3000);
-      } else {
-        const error = await response.json();
-        setMessage({ type: 'error', text: error.error || 'Failed to change plan' });
-      }
-    } catch (error: any) {
-      console.error('Error changing plan:', error);
-      setMessage({ type: 'error', text: error.message || 'Failed to change plan' });
-    } finally {
-      setIsChangingPlan(false);
-    }
+    setMessage({
+      type: 'error',
+      text: 'Downgrading online is not available yet. Contact support if you need to change plans.',
+    });
+    setIsChangingPlan(false);
+    setShowPlanModal(false);
   };
   const [invoices] = useState<Invoice[]>([
     {
@@ -443,13 +390,28 @@ export default function Billing({ dark = false, plan = { name: "Pro", seats: 5, 
                 </div>
                 <div>
                   <h4 className="text-lg font-semibold text-slate-800">Current Plan</h4>
-                  <p className="text-sm text-slate-500">
-                    {currentPlan.name} • {currentPlan.seats} seat{currentPlan.seats > 1 ? "s" : ""} • {currentPlan.limits}
-                  </p>
-                  {currentPlan.price !== undefined && (
-                    <p className="text-sm font-semibold text-slate-800 mt-1">
-                      ₹{currentPlan.price.toLocaleString("en-IN")}/month
-                    </p>
+                  {currentPlan ? (
+                    <>
+                      <p className="text-sm text-slate-500">
+                        {currentPlan.name} • {currentPlan.booking_limit} bookings/month • up to{" "}
+                        {currentPlan.service_provider_limit} providers
+                      </p>
+                      <p className="text-sm font-semibold text-slate-800 mt-1">
+                        ₹{currentPlan.price.toLocaleString("en-IN")}/month
+                      </p>
+                      {usage && (
+                        <>
+                          <p className="text-xs text-slate-500 mt-1">
+                            Usage: {usage.bookings_this_month} / {usage.booking_limit} bookings this month
+                          </p>
+                          <p className="text-xs text-slate-500 mt-1">
+                            Usage: {usage.service_provider_count} / {usage.service_provider_limit} service providers
+                          </p>
+                        </>
+                      )}
+                    </>
+                  ) : (
+                    <p className="text-sm text-slate-500">Loading plan…</p>
                   )}
                 </div>
               </div>
@@ -487,7 +449,7 @@ export default function Billing({ dark = false, plan = { name: "Pro", seats: 5, 
             <div className="p-6">
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                 {availablePlans.map((planOption) => {
-                  const isCurrentPlan = planOption.name === currentPlan.name;
+                  const isCurrentPlan = planOption.slug === currentPlan?.slug;
                   const isPopular = planOption.popular;
 
                   return (
@@ -524,7 +486,8 @@ export default function Billing({ dark = false, plan = { name: "Pro", seats: 5, 
                           <span className="text-sm text-slate-500">/month</span>
                         </div>
                         <p className="text-sm text-slate-500 mt-2">
-                          {planOption.seats} seat{planOption.seats > 1 ? "s" : ""} • {planOption.limits}
+                          {planOption.booking_limit} bookings/month • {planOption.service_provider_limit}{" "}
+                          providers
                         </p>
                       </div>
 

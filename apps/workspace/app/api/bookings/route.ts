@@ -418,6 +418,19 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Workspace ID not found' }, { status: 400 });
     }
 
+    const serviceRoleClient = getServiceRoleClient();
+    if (serviceRoleClient) {
+      try {
+        const { assertBookingAllowed } = await import('@app/db/subscription');
+        await assertBookingAllowed(serviceRoleClient, Number(workspaceId));
+      } catch (planErr) {
+        const { planLimitErrorResponse } = await import('@/lib/plan-limit-response');
+        const planResp = planLimitErrorResponse(planErr);
+        if (planResp) return planResp;
+        throw planErr;
+      }
+    }
+
     // Validate availability before creating booking
     const startDate = new Date(start_at);
 
@@ -917,8 +930,16 @@ export async function POST(req: NextRequest) {
     await appendActivityLog(workspaceId, {
       type: 'booking',
       action: 'created',
+      entity_id: data?.id,
+      actor_user_id: user.id,
       title: 'Booking created',
       description: `${data?.invitee_name || invitee_name.trim()} (${data?.status || status || 'pending'})`,
+      after_data: {
+        invitee_name: data?.invitee_name || invitee_name.trim(),
+        status: data?.status || status || 'pending',
+        start_at: data?.start_at,
+        end_at: data?.end_at,
+      },
     });
 
     return NextResponse.json({
@@ -1601,6 +1622,8 @@ export async function PATCH(req: NextRequest) {
     await appendActivityLog(workspaceId, {
       type: 'booking',
       action: 'updated',
+      entity_id: data?.id ?? id,
+      actor_user_id: user.id,
       title:
         timeChanged && finalIsReschedule
           ? 'Booking rescheduled'
@@ -1608,6 +1631,22 @@ export async function PATCH(req: NextRequest) {
             ? 'Booking time updated'
             : 'Booking updated',
       description: `${data?.invitee_name || 'Someone'} (${data?.status || 'pending'})`,
+      before_data: {
+        invitee_name: existingRow.invitee_name,
+        status: existingRow.status,
+        start_at: existingRow.start_at,
+        end_at: existingRow.end_at,
+        service_provider_id: existingRow.service_provider_id,
+        event_type_id: existingRow.event_type_id,
+      },
+      after_data: {
+        invitee_name: data?.invitee_name,
+        status: data?.status,
+        start_at: data?.start_at,
+        end_at: data?.end_at,
+        service_provider_id: data?.service_provider_id,
+        event_type_id: data?.event_type_id,
+      },
     });
 
     return NextResponse.json({ data });
@@ -1656,6 +1695,13 @@ export async function DELETE(req: NextRequest) {
     if (!workspaceId) {
       return NextResponse.json({ error: 'Workspace ID not found' }, { status: 400 });
     }
+    const { data: beforeBooking } = await supabase
+      .from('bookings')
+      .select('id,invitee_name,status,start_at,end_at')
+      .eq('id', id)
+      .eq('workspace_id', workspaceId)
+      .single();
+
     const { error: updErr } = await supabase
       .from('bookings')
       .update({ status: 'deleted' })
@@ -1670,8 +1716,19 @@ export async function DELETE(req: NextRequest) {
     await appendActivityLog(workspaceId, {
       type: 'booking',
       action: 'deleted',
+      entity_id: id,
+      actor_user_id: user.id,
       title: 'Booking marked deleted',
       description: `Booking ID ${id} was hidden from the bookings list but kept for audit (superadmin can restore).`,
+      before_data: {
+        invitee_name: beforeBooking?.invitee_name,
+        status: beforeBooking?.status,
+        start_at: beforeBooking?.start_at,
+        end_at: beforeBooking?.end_at,
+      },
+      after_data: {
+        status: 'deleted',
+      },
     });
 
     return NextResponse.json({

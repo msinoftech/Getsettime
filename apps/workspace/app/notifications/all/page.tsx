@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { supabase } from "@/lib/supabaseClient";
 import { NotificationsActivityFeedSkeleton } from "@/src/components/ui/NotificationsSkeleton";
 
@@ -19,6 +20,10 @@ interface ActivityItem {
   title: string;
   description: string;
   createdAt: string;
+  targetPath?: string | null;
+  before?: Record<string, unknown> | null;
+  after?: Record<string, unknown> | null;
+  changedFields?: string[];
 }
 
 function toRelativeTime(dateIso: string, nowMs: number) {
@@ -148,8 +153,38 @@ export default function AllNotifications() {
                   : "G"}
               </div>
               <div className="min-w-0 flex-1">
-                <p className="text-sm font-medium text-slate-800">{item.title}</p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="text-sm font-medium text-slate-800">{item.title}</p>
+                  {item.targetPath ? (
+                    <Link
+                      href={item.targetPath}
+                      className="text-xs font-semibold text-indigo-600 hover:text-indigo-700"
+                    >
+                      View
+                    </Link>
+                  ) : null}
+                </div>
                 <p className="text-xs text-slate-500 mt-0.5">{item.description}</p>
+                {Array.isArray(item.changedFields) && item.changedFields.length > 0 ? (
+                  <p className="text-xs text-slate-500 mt-1">
+                    Changed: {item.changedFields.slice(0, 4).join(", ")}
+                  </p>
+                ) : null}
+                {item.before || item.after ? (
+                  <div className="mt-2 rounded-md bg-slate-50 p-2 text-xs text-slate-600">
+                    <span className="font-semibold text-slate-700">Before/After:</span>{" "}
+                    {Array.isArray(item.changedFields) && item.changedFields.length > 0
+                      ? item.changedFields
+                          .slice(0, 2)
+                          .map((field) => {
+                            const beforeValue = item.before?.[field];
+                            const afterValue = item.after?.[field];
+                            return `${field}: ${String(beforeValue ?? "-")} -> ${String(afterValue ?? "-")}`;
+                          })
+                          .join(" | ")
+                      : "Details updated"}
+                  </div>
+                ) : null}
                 <p className="text-xs text-slate-400 mt-1">
                   {formatDateTime(item.createdAt)} - {toRelativeTime(item.createdAt, nowMs)}
                 </p>

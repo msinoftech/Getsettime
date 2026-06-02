@@ -228,8 +228,16 @@ export async function POST(req: NextRequest) {
     await appendActivityLog(workspaceId, {
       type: 'service',
       action: 'created',
+      entity_id: data?.id,
+      actor_user_id: user.id,
       title: 'Service created',
       description: data?.name || name.trim(),
+      after_data: {
+        name: data?.name || name.trim(),
+        price: data?.price,
+        duration: data?.duration,
+        status: data?.status,
+      },
     });
 
     const adminClient = createAdminClient();
@@ -382,6 +390,12 @@ export async function PUT(req: NextRequest) {
       return NextResponse.json({ error: 'No fields to update' }, { status: 400 });
     }
 
+    const { data: beforeService } = await supabase
+      .from('services')
+      .select('id,name,description,price,department_id,duration,status,meta_data')
+      .eq('id', id)
+      .single();
+
     // RLS automatically filters by workspace_id from JWT
     const { data, error } = await supabase
       .from('services')
@@ -402,8 +416,28 @@ export async function PUT(req: NextRequest) {
     await appendActivityLog(workspaceId, {
       type: 'service',
       action: 'updated',
+      entity_id: data?.id ?? id,
+      actor_user_id: user.id,
       title: 'Service updated',
       description: data?.name || (typeof name === 'string' ? name.trim() : ''),
+      before_data: {
+        name: beforeService?.name,
+        description: beforeService?.description,
+        price: beforeService?.price,
+        department_id: beforeService?.department_id,
+        duration: beforeService?.duration,
+        status: beforeService?.status,
+        meta_data: beforeService?.meta_data,
+      },
+      after_data: {
+        name: data?.name,
+        description: data?.description,
+        price: data?.price,
+        department_id: data?.department_id,
+        duration: data?.duration,
+        status: data?.status,
+        meta_data: data?.meta_data,
+      },
     });
 
     const adminClient = createAdminClient();
@@ -449,6 +483,12 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ error: 'Service ID is required' }, { status: 400 });
     }
 
+    const { data: beforeService } = await supabase
+      .from('services')
+      .select('id,name,status')
+      .eq('id', id)
+      .single();
+
     // Soft delete: set flag=false. Provider links live in user_services.
     const { error } = await supabase
       .from('services')
@@ -465,8 +505,16 @@ export async function DELETE(req: NextRequest) {
       await appendActivityLog(workspaceId, {
         type: 'service',
         action: 'deleted',
+        entity_id: id,
+        actor_user_id: user.id,
         title: 'Service deleted',
-        description: `Service ID ${id} was removed`,
+        description: beforeService?.name
+          ? `${beforeService.name} was removed`
+          : `Service ID ${id} was removed`,
+        before_data: {
+          name: beforeService?.name,
+          status: beforeService?.status,
+        },
       });
     }
 

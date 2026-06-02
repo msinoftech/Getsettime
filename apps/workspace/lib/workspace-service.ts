@@ -1,4 +1,5 @@
 import { SupabaseClient } from '@supabase/supabase-js';
+import { assignFreePlanToWorkspace } from '@app/db/subscription';
 import { ROLE_SERVICE_PROVIDER } from '@/src/constants/roles';
 import { resolveMeetingOptionsForServiceProvider } from '@/src/utils/providerSettingsResolution';
 import { workspace_meeting_options_to_location } from '@/src/utils/meeting_options';
@@ -28,8 +29,8 @@ export function getDefaultConfigurationSettings(workspaceName: string) {
       'email-reminder': true,
       'auto-confirm-booking': true,
       'post-meeting-follow-up': true,
-      "whatsapp": true,
-      "whatsapp-user": true,
+      'whatsapp': true,
+      'whatsapp-user': true,
     },
   };
 }
@@ -291,9 +292,17 @@ export async function getOrCreateWorkspace(
 
     if (configError) {
       console.error('Configuration creation error:', configError);
-      // Clean up workspace
       await supabaseAdmin.from('workspaces').delete().eq('id', workspace.id);
       return { data: null, error: 'Failed to create configuration' };
+    }
+
+    try {
+      await assignFreePlanToWorkspace(supabaseAdmin, workspace.id);
+    } catch (subErr) {
+      console.error('Subscription assignment error:', subErr);
+      await supabaseAdmin.from('configurations').delete().eq('workspace_id', workspace.id);
+      await supabaseAdmin.from('workspaces').delete().eq('id', workspace.id);
+      return { data: null, error: 'Failed to assign subscription plan' };
     }
 
     // Create default event type

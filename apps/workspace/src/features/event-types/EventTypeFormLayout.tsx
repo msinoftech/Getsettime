@@ -27,6 +27,13 @@ export type event_type_form_state = {
   buffer_after: string;
   location_types: event_type_location_value[];
   is_public: boolean;
+  /** Empty string = assign to the logged-in user (admin/manager only). */
+  service_provider_id: string;
+};
+
+export type event_type_service_provider_option = {
+  id: string;
+  label: string;
 };
 
 const DURATION_PRESETS = [5, 10, 15, 20, 30, 45, 60, 90] as const;
@@ -178,6 +185,11 @@ type EventTypeFormLayoutProps = {
   submitting: boolean;
   onSubmit: (e: React.FormEvent) => void;
   onCancel: () => void;
+  show_service_provider_field?: boolean;
+  service_provider_options?: event_type_service_provider_option[];
+  service_providers_loading?: boolean;
+  /** Empty-value option for admins/managers who are not service providers. */
+  self_assign_option?: { label: string } | null;
 };
 
 export function EventTypeFormLayout({
@@ -188,6 +200,10 @@ export function EventTypeFormLayout({
   submitting,
   onSubmit,
   onCancel,
+  show_service_provider_field = false,
+  service_provider_options = [],
+  service_providers_loading = false,
+  self_assign_option = null,
 }: EventTypeFormLayoutProps) {
   const patch = useCallback(
     (partial: Partial<event_type_form_state>) => {
@@ -283,6 +299,41 @@ export function EventTypeFormLayout({
             </div>
 
             <form onSubmit={onSubmit} aria-describedby={formError ? "event-type-form-error" : undefined}>
+              {show_service_provider_field && (
+                <label className="mt-6 block">
+                  <span className="mb-2 block text-sm font-medium text-slate-700">
+                    Service provider
+                  </span>
+                  <select
+                    value={value.service_provider_id}
+                    onChange={(e) => patch({ service_provider_id: e.target.value })}
+                    disabled={service_providers_loading}
+                    className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-violet-400 focus:bg-white disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {service_providers_loading && !self_assign_option ? (
+                      <option value="">Loading service providers…</option>
+                    ) : null}
+                    {self_assign_option ? (
+                      <option value="">
+                        {service_providers_loading
+                          ? "Loading service providers…"
+                          : self_assign_option.label}
+                      </option>
+                    ) : null}
+                    {service_provider_options.map((option) => (
+                      <option key={option.id} value={option.id}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="mt-2 text-xs text-slate-500">
+                    {self_assign_option
+                      ? `Optional. Leave as ${self_assign_option.label} to create under your account, or choose another provider.`
+                      : "Select the service provider who will own this event type."}
+                  </p>
+                </label>
+              )}
+
               <div className="mt-6 grid gap-5 md:grid-cols-2">
                 <label className="block">
                   <span className="mb-2 block text-sm font-medium text-slate-700">Event title</span>

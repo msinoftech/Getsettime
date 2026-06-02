@@ -97,9 +97,10 @@ export default function RecentActivityFeed() {
       ) : (
         <div className="space-y-4">
           {items.map((activity) => (
-            <div
+            <Link
               key={activity.id}
-              className="flex w-full items-start gap-3 rounded-2xl bg-slate-50 p-3 text-left"
+              href={activity.targetPath || "/notifications/all"}
+              className="flex w-full items-start gap-3 rounded-2xl bg-slate-50 p-3 text-left hover:bg-slate-100"
             >
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-100 text-indigo-600">
                 <DashboardIcon name={icon_for_type(activity.type)} size={18} />
@@ -108,7 +109,7 @@ export default function RecentActivityFeed() {
                 <p className="text-sm font-black text-slate-800">{activity.title}</p>
                 <p className="text-xs font-bold text-slate-400">{get_relative_time(activity.createdAt)}</p>
               </div>
-            </div>
+            </Link>
           ))}
 
           <div className="pt-1">

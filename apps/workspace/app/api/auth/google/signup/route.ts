@@ -4,6 +4,7 @@ import {
   getOrCreateWorkspace,
   updateUserWorkspaceMetadata,
 } from '@/lib/workspace-service';
+import { sendWorkspaceWelcomeEmail } from '@/lib/send-workspace-welcome-email';
 import {
   createUserSession,
   storeCallbackToken,
@@ -264,6 +265,14 @@ export async function GET(req: Request) {
         await supabaseAdmin.from('workspaces').delete().eq('id', workspaceResult.workspaceId);
         await supabaseAdmin.auth.admin.deleteUser(userId);
         return NextResponse.redirect(new URL('/register?error=user_update_failed', req.url));
+      }
+
+      if (workspaceResult.isNewWorkspace && email) {
+        sendWorkspaceWelcomeEmail({
+          to: email,
+          workspaceId: workspaceResult.workspaceId,
+          supabaseAdmin,
+        }).catch((err) => console.error('Welcome email failed (non-critical):', err));
       }
 
       if (enableCalendarSync && refresh_token) {

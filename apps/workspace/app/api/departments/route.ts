@@ -230,8 +230,14 @@ export async function POST(req: NextRequest) {
     await appendActivityLog(workspaceId, {
       type: 'department',
       action: 'created',
+      entity_id: data?.id,
+      actor_user_id: user.id,
       title: 'Department created',
       description: data?.name || name.trim(),
+      after_data: {
+        name: data?.name || name.trim(),
+        status: data?.status,
+      },
     });
 
     return NextResponse.json({ department: data });
@@ -342,6 +348,12 @@ export async function PUT(req: NextRequest) {
       return NextResponse.json({ error: 'No fields to update' }, { status: 400 });
     }
 
+    const { data: beforeDepartment } = await supabase
+      .from('departments')
+      .select('id,name,description,status,meta_data')
+      .eq('id', id)
+      .single();
+
     // RLS automatically filters by workspace_id from JWT
     const { data, error } = await supabase
       .from('departments')
@@ -364,8 +376,22 @@ export async function PUT(req: NextRequest) {
       await appendActivityLog(workspaceId, {
         type: 'department',
         action: 'updated',
+        entity_id: data?.id ?? id,
+        actor_user_id: user.id,
         title: 'Department updated',
         description: data?.name || (typeof name === 'string' ? name.trim() : ''),
+        before_data: {
+          name: beforeDepartment?.name,
+          description: beforeDepartment?.description,
+          status: beforeDepartment?.status,
+          meta_data: beforeDepartment?.meta_data,
+        },
+        after_data: {
+          name: data?.name,
+          description: data?.description,
+          status: data?.status,
+          meta_data: data?.meta_data,
+        },
       });
     }
 
@@ -399,6 +425,12 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ error: 'Department ID is required' }, { status: 400 });
     }
 
+    const { data: beforeDepartment } = await supabase
+      .from('departments')
+      .select('id,name,status')
+      .eq('id', id)
+      .single();
+
     // Soft delete: set flag=false. Provider links live in user_departments.
     const { error } = await supabase
       .from('departments')
@@ -415,8 +447,16 @@ export async function DELETE(req: NextRequest) {
       await appendActivityLog(workspaceId, {
         type: 'department',
         action: 'deleted',
+        entity_id: id,
+        actor_user_id: user.id,
         title: 'Department deleted',
-        description: `Department ID ${id} was removed`,
+        description: beforeDepartment?.name
+          ? `${beforeDepartment.name} was removed`
+          : `Department ID ${id} was removed`,
+        before_data: {
+          name: beforeDepartment?.name,
+          status: beforeDepartment?.status,
+        },
       });
     }
 

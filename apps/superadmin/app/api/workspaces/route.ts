@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { assignFreePlanToWorkspace } from '@app/db/subscription';
 import { getSupabaseServer } from '@/lib/supabaseServer';
 
 type JsonObject = Record<string, unknown>;
@@ -211,6 +212,17 @@ export async function POST(req: Request) {
       };
 
       await upsertConfiguration(supabaseServer, data.id, generalSettings);
+
+      try {
+        await assignFreePlanToWorkspace(supabaseServer, Number(data.id));
+      } catch (subErr) {
+        console.error('Failed to assign free plan:', subErr);
+        await supabaseServer.from('workspaces').delete().eq('id', data.id);
+        return NextResponse.json(
+          { error: 'Workspace created but failed to assign subscription plan' },
+          { status: 500 }
+        );
+      }
     }
 
     // Create workspace_admin user if user fields are provided

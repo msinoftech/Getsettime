@@ -338,6 +338,20 @@ export async function POST(req: NextRequest) {
       typeof phone === 'string' ? phone.trim() : '';
 
     const assignedRole = role || 'service_provider';
+
+    if (assignedRole === 'service_provider') {
+      try {
+        const { assertServiceProviderAllowed } = await import('@app/db/subscription');
+        const { planLimitErrorResponse } = await import('@/lib/plan-limit-response');
+        await assertServiceProviderAllowed(adminClient, Number(workspaceId), 1);
+      } catch (planErr) {
+        const { planLimitErrorResponse } = await import('@/lib/plan-limit-response');
+        const planResp = planLimitErrorResponse(planErr);
+        if (planResp) return planResp;
+        throw planErr;
+      }
+    }
+
     const userMetadata: Record<string, unknown> = {
       name,
       role: assignedRole,

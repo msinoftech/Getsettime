@@ -18,6 +18,8 @@ import type { IconType } from "react-icons";
 import { useAuth } from "@/src/providers/AuthProvider";
 import { ConfirmModal } from "@/src/components/ui/ConfirmModal";
 import { RequestIntegrationModal } from "@/src/components/ui/RequestIntegrationModal";
+import { UpgradePlanModal } from "@/src/components/Subscription/UpgradePlanModal";
+import { useSubscription } from "@/src/hooks/useSubscription";
 
 type NotificationChannel = "Email" | "SMS" | "WhatsApp" | "System";
 
@@ -333,6 +335,11 @@ export function IntegrationsNotificationsView() {
   const [flows, setFlows] = useState<Workflow[]>([]);
   const [workflowsLoading, setWorkflowsLoading] = useState(true);
   const [selectedIntegrationId, setSelectedIntegrationId] = useState<string | null>(null);
+  const [upgradeModalOpen, setUpgradeModalOpen] = useState(false);
+  const [upgradeModalMessage, setUpgradeModalMessage] = useState(
+    "Available on paid plans. Upgrade to continue."
+  );
+  const { data: subscription } = useSubscription(Boolean(user));
 
   const fetchIntegrations = async () => {
     try {
@@ -472,17 +479,54 @@ export function IntegrationsNotificationsView() {
       });
 
       if (!response.ok) {
-        throw new Error("Failed to save notification settings");
+        const errBody = (await response.json().catch(() => ({}))) as {
+          error?: string;
+          upgradeRequired?: boolean;
+        };
+        if (errBody.upgradeRequired) {
+          setUpgradeModalMessage(
+            errBody.error || "Available on paid plans. Upgrade to continue."
+          );
+          setUpgradeModalOpen(true);
+          return false;
+        }
+        throw new Error(errBody.error || "Failed to save notification settings");
       }
+      return true;
     } catch (error) {
       console.error("Error saving notification settings:", error);
+      return false;
     }
   };
 
   const toggleFlow = async (id: number) => {
+    const target = flows.find((f) => f.id === id);
+    if (!target) return;
+
+    const turningOn = !target.active;
+    const isWhatsapp =
+      target.settingsKey === "whatsapp" || target.settingsKey === "whatsapp-user";
+
+    if (
+      turningOn &&
+      isWhatsapp &&
+      subscription &&
+      !subscription.plan.whatsapp_automation
+    ) {
+      setUpgradeModalMessage(
+        "WhatsApp automation is available on paid plans. Upgrade to continue."
+      );
+      setUpgradeModalOpen(true);
+      return;
+    }
+
+    const previousFlows = flows;
     const updatedFlows = flows.map((f) => (f.id === id ? { ...f, active: !f.active } : f));
     setFlows(updatedFlows);
-    await saveNotificationSettings(updatedFlows);
+    const saved = await saveNotificationSettings(updatedFlows);
+    if (!saved) {
+      setFlows(previousFlows);
+    }
   };
 
   const workflowIcons: IconType[] = [
@@ -976,6 +1020,12 @@ export function IntegrationsNotificationsView() {
             text: "Your request was sent. The GetSetTime team will review it shortly.",
           })
         }
+      />
+
+      <UpgradePlanModal
+        open={upgradeModalOpen}
+        message={upgradeModalMessage}
+        onClose={() => setUpgradeModalOpen(false)}
       />
     </main>
   );

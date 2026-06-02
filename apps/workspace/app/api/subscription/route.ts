@@ -24,7 +24,6 @@ async function getUserFromRequest(req: NextRequest) {
   return user;
 }
 
-/** Current workspace plan from `plans` + `workspace_subscriptions` (DB source of truth). */
 export async function GET(req: NextRequest) {
   try {
     const user = await getUserFromRequest(req);
@@ -50,21 +49,15 @@ export async function GET(req: NextRequest) {
       plan: snapshot.plan,
       subscription: snapshot.subscription,
       usage,
+      thresholds: {
+        booking_warning_percent: 80,
+        booking_warning: usage.booking_warning_threshold,
+        booking_limit_reached: usage.booking_limit_reached,
+      },
     });
   } catch (err: unknown) {
     const error = err as Error;
-    console.error('GET /api/billing/plan:', error);
+    console.error('GET /api/subscription:', error);
     return NextResponse.json({ error: error?.message || 'Server error' }, { status: 500 });
   }
-}
-
-/** Paid checkout not implemented — upgrades are handled manually until Stripe is integrated. */
-export async function POST() {
-  return NextResponse.json(
-    {
-      error: 'Online plan upgrades are coming soon. Contact support to change your plan.',
-      upgradeRequired: true,
-    },
-    { status: 501 }
-  );
 }

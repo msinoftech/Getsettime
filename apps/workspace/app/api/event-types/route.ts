@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { ROLE_SERVICE_PROVIDER } from '@/src/constants/roles';
-import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import { MANAGE_ROLES, ROLE_SERVICE_PROVIDER } from '@/src/constants/roles';
+import { createClient, type SupabaseClient, type User } from '@supabase/supabase-js';
 import { appendActivityLog } from '@/lib/activity-log';
+import { userActsAsServiceProviderFromMetadata } from '@/lib/service_provider_role';
+import { user_belongs_to_workspace } from '@/lib/team_members_workspace';
 
 /**
  * Creates an authenticated Supabase client using the anon key (respects RLS)
@@ -36,6 +38,100 @@ function createAuthenticatedClient(req: NextRequest) {
   });
 
   return { supabase, token };
+}
+
+function createAdminClient() {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!supabaseUrl || !supabaseServiceRoleKey) {
+    return null;
+  }
+
+  return createClient(supabaseUrl, supabaseServiceRoleKey, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+    },
+  });
+}
+
+function userCanAssignEventTypeOwner(user: User): boolean {
+  const role = user.user_metadata?.role;
+  return typeof role === 'string' && MANAGE_ROLES.includes(role);
+}
+
+async function validateServiceProviderOwnerInWorkspace(
+  adminClient: SupabaseClient,
+  workspaceId: number,
+  ownerId: string
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const { data: targetResult, error } = await adminClient.auth.admin.getUserById(ownerId);
+  if (error || !targetResult.user) {
+    return { ok: false, message: 'Invalid service provider.' };
+  }
+
+  const target = targetResult.user;
+  if (!user_belongs_to_workspace(target, workspaceId)) {
+    return { ok: false, message: 'Service provider is not in this workspace.' };
+  }
+
+  const meta = target.user_metadata as Record<string, unknown> | undefined;
+  if (meta?.deactivated === true) {
+    return { ok: false, message: 'Selected service provider is inactive.' };
+  }
+
+  const additionalRolesRaw = meta?.additional_roles;
+  const additional_roles = Array.isArray(additionalRolesRaw)
+    ? additionalRolesRaw.filter((role): role is string => typeof role === 'string')
+    : [];
+
+  if (
+    !userActsAsServiceProviderFromMetadata({
+      role: typeof meta?.role === 'string' ? meta.role : null,
+      is_workspace_owner: meta?.is_workspace_owner === true,
+      additional_roles,
+    })
+  ) {
+    return { ok: false, message: 'Invalid service provider.' };
+  }
+
+  return { ok: true };
+}
+
+async function resolveEventTypeOwnerId(
+  user: User,
+  workspaceId: number,
+  bodyOwnerId: unknown
+): Promise<{ ok: true; ownerId: string } | { ok: false; message: string }> {
+  if (!userCanAssignEventTypeOwner(user)) {
+    return { ok: true, ownerId: user.id };
+  }
+
+  const requested =
+    typeof bodyOwnerId === 'string' && bodyOwnerId.trim() !== ''
+      ? bodyOwnerId.trim()
+      : null;
+
+  if (!requested) {
+    return { ok: true, ownerId: user.id };
+  }
+
+  const adminClient = createAdminClient();
+  if (!adminClient) {
+    return { ok: false, message: 'Server configuration error' };
+  }
+
+  const validation = await validateServiceProviderOwnerInWorkspace(
+    adminClient,
+    workspaceId,
+    requested
+  );
+  if (!validation.ok) {
+    return validation;
+  }
+
+  return { ok: true, ownerId: requested };
 }
 
 function parse_duration_minutes(value: unknown): { ok: true; value: number } | { ok: false; message: string } {
@@ -275,7 +371,8 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json();
-    const { title, duration_minutes, buffer_before, buffer_after, location_type, is_public } = body;
+    const { title, duration_minutes, buffer_before, buffer_after, location_type, is_public, owner_id } =
+      body;
 
     if (!title || !title.trim()) {
       return NextResponse.json({ error: 'Title is required' }, { status: 400 });
@@ -317,12 +414,17 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: slugError }, { status: 500 });
     }
 
+    const ownerResult = await resolveEventTypeOwnerId(user, wid, owner_id);
+    if (!ownerResult.ok) {
+      return NextResponse.json({ error: ownerResult.message }, { status: 400 });
+    }
+
     // RLS validates workspace_id matches JWT; we provide it for INSERT WITH CHECK policy
     const { data, error } = await supabase
       .from('event_types')
       .insert({
         workspace_id: wid,
-        owner_id: user.id,
+        owner_id: ownerResult.ownerId,
         title: title.trim(),
         slug: unique_slug,
         duration_minutes: durationResult.value,
@@ -344,8 +446,15 @@ export async function POST(req: NextRequest) {
     await appendActivityLog(wid, {
       type: 'event_type',
       action: 'created',
+      entity_id: data?.id,
+      actor_user_id: user.id,
       title: 'Event type created',
       description: data?.title || title.trim(),
+      after_data: {
+        title: data?.title || title.trim(),
+        duration_minutes: data?.duration_minutes,
+        is_public: data?.is_public,
+      },
     });
 
     return NextResponse.json({ data });
@@ -370,7 +479,8 @@ export async function PATCH(req: NextRequest) {
     }
 
     const body = await req.json();
-    const { id, title, duration_minutes, buffer_before, buffer_after, location_type, is_public } = body;
+    const { id, title, duration_minutes, buffer_before, buffer_after, location_type, is_public, owner_id } =
+      body;
 
     if (!id) {
       return NextResponse.json({ error: 'Event type ID is required' }, { status: 400 });
@@ -418,18 +528,35 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ error: slugError }, { status: 500 });
     }
 
+    const ownerResult = await resolveEventTypeOwnerId(user, wid, owner_id);
+    if (!ownerResult.ok) {
+      return NextResponse.json({ error: ownerResult.message }, { status: 400 });
+    }
+
+    const updatePayload: Record<string, unknown> = {
+      title: title.trim(),
+      slug: unique_slug,
+      duration_minutes: durationPatch.value,
+      buffer_before: bufferBeforePatch.value,
+      buffer_after: bufferAfterPatch.value,
+      location_type: locationPatch.value,
+      is_public: publicPatch,
+    };
+
+    if (userCanAssignEventTypeOwner(user)) {
+      updatePayload.owner_id = ownerResult.ownerId;
+    }
+
+    const { data: beforeEventType } = await supabase
+      .from('event_types')
+      .select('id,title,duration_minutes,buffer_before,buffer_after,location_type,is_public,owner_id')
+      .eq('id', id)
+      .single();
+
     // RLS automatically filters by workspace_id and owner_id from JWT
     const { data, error } = await supabase
       .from('event_types')
-      .update({
-        title: title.trim(),
-        slug: unique_slug,
-        duration_minutes: durationPatch.value,
-        buffer_before: bufferBeforePatch.value,
-        buffer_after: bufferAfterPatch.value,
-        location_type: locationPatch.value,
-        is_public: publicPatch,
-      })
+      .update(updatePayload)
       .eq('id', id)
       .select()
       .single();
@@ -446,8 +573,28 @@ export async function PATCH(req: NextRequest) {
     await appendActivityLog(wid, {
       type: 'event_type',
       action: 'updated',
+      entity_id: data?.id,
+      actor_user_id: user.id,
       title: 'Event type updated',
       description: data?.title || title.trim(),
+      before_data: {
+        title: beforeEventType?.title,
+        duration_minutes: beforeEventType?.duration_minutes,
+        buffer_before: beforeEventType?.buffer_before,
+        buffer_after: beforeEventType?.buffer_after,
+        location_type: beforeEventType?.location_type,
+        is_public: beforeEventType?.is_public,
+        owner_id: beforeEventType?.owner_id,
+      },
+      after_data: {
+        title: data?.title,
+        duration_minutes: data?.duration_minutes,
+        buffer_before: data?.buffer_before,
+        buffer_after: data?.buffer_after,
+        location_type: data?.location_type,
+        is_public: data?.is_public,
+        owner_id: data?.owner_id,
+      },
     });
 
     return NextResponse.json({ data });
@@ -478,6 +625,12 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ error: 'Event type ID is required' }, { status: 400 });
     }
 
+    const { data: beforeEventType } = await supabase
+      .from('event_types')
+      .select('id,title')
+      .eq('id', id)
+      .single();
+
     // RLS automatically filters by workspace_id and owner_id from JWT
     const { error } = await supabase
       .from('event_types')
@@ -494,8 +647,15 @@ export async function DELETE(req: NextRequest) {
       await appendActivityLog(workspaceId, {
         type: 'event_type',
         action: 'deleted',
+        entity_id: id,
+        actor_user_id: user.id,
         title: 'Event type deleted',
-        description: `Event type ID ${id} was removed`,
+        description: beforeEventType?.title
+          ? `${beforeEventType.title} was removed`
+          : `Event type ID ${id} was removed`,
+        before_data: {
+          title: beforeEventType?.title,
+        },
       });
     }
 

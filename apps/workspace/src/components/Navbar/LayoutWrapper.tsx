@@ -10,6 +10,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import Sidebar from "../Sidebar/Sidebar";
 import Topbar from "./Topbar";
+import { SubscriptionBanners } from "../Subscription/SubscriptionBanners";
 import { is_public_embed_booking_path } from "@/lib/public_embed_route";
 
 // Public routes that don't require authentication or sidebar
@@ -95,6 +96,7 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
         <main className="relative flex min-h-0 flex-1 flex-col w-full overflow-x-hidden bg-gray-100">
           <div className="flex min-h-0 flex-1 flex-col overflow-y-auto p-4 lg:p-8">
             <div className="w-full max-w-full">
+              <SubscriptionBanners />
               {children}
             </div>
           </div>

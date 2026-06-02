@@ -28,8 +28,10 @@ interface AvailabilityTimesheetProps {
   onSaveFeedback?: (payload: availability_timesheet_save_feedback) => void;
   /** When provided, skips the initial settings fetch and uses this data instead */
   initialTimesheet?: Record<string, DaySchedule> | null;
-  /** When set, load/save under availability.providers[userId] instead of workspace-wide timesheet */
+  /** When set, load/save under availability.providers[userId] via provider-availability API (service provider self) */
   providerUserId?: string;
+  /** When set, load/save under availability.providers[userId] via workspace settings API (workspace admin) */
+  saveAsProviderId?: string;
 }
 
 const DAYS: DayName[] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -176,6 +178,7 @@ export default function AvailabilityTimesheet({
   onSaveFeedback,
   initialTimesheet,
   providerUserId,
+  saveAsProviderId,
 }: AvailabilityTimesheetProps) {
   const [schedules, setSchedules] = useState<Record<DayName, DaySchedule>>(buildDefaultSchedules);
 
@@ -214,7 +217,7 @@ export default function AvailabilityTimesheet({
       return;
     }
     loadAvailability();
-  }, [hasInitialData, partialTimesheetFingerprint, providerUserId]);
+  }, [hasInitialData, partialTimesheetFingerprint, providerUserId, saveAsProviderId]);
   /* eslint-enable react-hooks/exhaustive-deps */
 
 
@@ -252,6 +255,60 @@ export default function AvailabilityTimesheet({
       data: { session },
     } = await supabase.auth.getSession();
     const token = session?.access_token;
+
+    if (saveAsProviderId) {
+      const getResponse = await fetch('/api/settings', {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+
+      let existingSettings: Record<string, unknown> = {};
+      if (getResponse.ok) {
+        const payload = await getResponse.json();
+        existingSettings =
+          (payload?.settings ?? payload?.data?.settings ?? {}) as Record<string, unknown>;
+      }
+
+      const existingAvailability = (existingSettings.availability ?? {}) as Record<
+        string,
+        unknown
+      >;
+      const existingProviders = (existingAvailability.providers ?? {}) as Record<
+        string,
+        { timesheet?: Record<string, DaySchedule>; individual?: Record<string, boolean> }
+      >;
+
+      const updatedSettings = {
+        ...existingSettings,
+        availability: {
+          ...existingAvailability,
+          providers: {
+            ...existingProviders,
+            [saveAsProviderId]: {
+              ...(existingProviders[saveAsProviderId] ?? {}),
+              timesheet,
+              lastUpdated: new Date().toISOString(),
+            },
+          },
+        },
+      };
+
+      const response = await fetch('/api/settings', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ settings: updatedSettings }),
+      });
+
+      if (!response.ok) {
+        const result = await response.json().catch(() => ({}));
+        throw new Error(
+          (result as { error?: string }).error || 'Failed to save provider availability'
+        );
+      }
+      return;
+    }
 
     if (providerUserId) {
       const response = await fetch('/api/settings/provider-availability', {
@@ -349,13 +406,14 @@ export default function AvailabilityTimesheet({
       if (response.ok) {
         const data = await response.json();
         const availability = data?.settings?.availability;
-        const providerEntry = providerUserId
-          ? availability?.providers?.[providerUserId]
+        const providerIdForLoad = saveAsProviderId ?? providerUserId;
+        const providerEntry = providerIdForLoad
+          ? availability?.providers?.[providerIdForLoad]
           : undefined;
         const providerTimesheet = providerEntry?.timesheet;
         let patch: Record<string, DaySchedule> | undefined;
         if (
-          providerUserId &&
+          providerIdForLoad &&
           providerTimesheet &&
           Object.keys(providerTimesheet).length > 0
         ) {

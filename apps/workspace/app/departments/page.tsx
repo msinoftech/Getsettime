@@ -759,6 +759,10 @@ export default function DepartmentsPage() {
     doctor: DoctorRow;
     assigned: boolean;
   }) => {
+    const visibleAssignedDepartmentIds = doctor.assignedDepartmentIds.filter(
+      (depId) => departments.some((d) => d.id === depId)
+    );
+
     return (
       <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
         <div className="flex items-start justify-between gap-3">
@@ -791,8 +795,8 @@ export default function DepartmentsPage() {
               </div>
 
               <div className="mt-3 flex flex-wrap gap-2">
-                {doctor.assignedDepartmentIds.length > 0 ? (
-                  doctor.assignedDepartmentIds.map((depId) => {
+                {visibleAssignedDepartmentIds.length > 0 ? (
+                  visibleAssignedDepartmentIds.map((depId) => {
                     const departmentStatus = getDepartmentStatus(depId);
                     const isInactiveDepartment = departmentStatus === "inactive";
 

@@ -53,3 +53,6 @@ export * from './types';
 // Shared auth / workspace role metadata (user_metadata.role)
 export * from './auth-roles';
 
+// Subscription / plan entitlements
+export * from './subscription';
+

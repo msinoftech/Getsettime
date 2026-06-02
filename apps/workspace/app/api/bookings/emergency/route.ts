@@ -50,6 +50,22 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Workspace ID not found' }, { status: 400 });
     }
 
+    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (serviceKey) {
+      try {
+        const admin = createClient(supabaseUrl, serviceKey, {
+          auth: { autoRefreshToken: false, persistSession: false },
+        });
+        const { assertBookingAllowed } = await import('@app/db/subscription');
+        await assertBookingAllowed(admin, Number(workspaceId));
+      } catch (planErr) {
+        const { planLimitErrorResponse } = await import('@/lib/plan-limit-response');
+        const planResp = planLimitErrorResponse(planErr);
+        if (planResp) return planResp;
+        throw planErr;
+      }
+    }
+
     const metadata: Record<string, unknown> = {
       source: 'emergency_booking',
       emergency_datetime: new Date().toISOString(),

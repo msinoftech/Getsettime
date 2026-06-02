@@ -206,6 +206,17 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    try {
+      const supabaseAdmin = createSupabaseServerClient();
+      const { assertBookingAllowed } = await import('@app/db/subscription');
+      await assertBookingAllowed(supabaseAdmin, Number(workspace_id));
+    } catch (planErr) {
+      const { planLimitErrorResponse } = await import('@/lib/plan-limit-response');
+      const planResp = planLimitErrorResponse(planErr);
+      if (planResp) return planResp;
+      throw planErr;
+    }
+
     // Validate that the booking time is not in the past
     const startDate = new Date(start_at);
     const now = new Date();

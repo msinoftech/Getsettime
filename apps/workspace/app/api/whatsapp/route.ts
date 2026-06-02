@@ -329,19 +329,19 @@ export async function POST(req: Request) {
         },
       ];
 
-      if (booking_reference) {
-        adminTemplateComponents.push({
-          type: "button",
-          sub_type: "url",
-          index: "0",
-          parameters: [
-            {
-              type: "text",
-              text: String(booking_reference),
-            },
-          ],
-        });
-      }
+      // if (booking_reference) {
+      //   adminTemplateComponents.push({
+      //     type: "button",
+      //     sub_type: "url",
+      //     index: "0",
+      //     parameters: [
+      //       {
+      //         type: "text",
+      //         text: String(booking_reference),
+      //       },
+      //     ],
+      //   });
+      // }
 
       try {
         const adminPromises = adminNumbers.map((adminPhone) =>

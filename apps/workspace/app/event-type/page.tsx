@@ -36,6 +36,7 @@ import {
   total_duration_minutes,
   type event_type_form_state,
   type event_type_location_value,
+  type event_type_service_provider_option,
 } from "@/src/features/event-types/EventTypeFormLayout";
 import { workspace_meeting_options_to_location } from "@/src/utils/meeting_options";
 import {
@@ -51,6 +52,7 @@ import {
 } from "@/lib/provider_booking_link";
 import {
   userActsAsServiceProviderFromMetadata,
+  userActsAsServiceProviderFromSupabaseUser,
   userIsWorkspaceAdminWithAdditionalServiceProviderFromSupabaseUser,
 } from "@/lib/service_provider_role";
 import {
@@ -186,6 +188,10 @@ function format_duration(totalMinutes: number | null): string {
 
 export default function EventTypes() {
   const { user } = useAuth();
+  const user_role =
+    typeof user?.user_metadata?.role === "string" ? user.user_metadata.role : "";
+  const can_assign_event_type_owner =
+    user_role === ROLE_WORKSPACE_ADMIN || user_role === ROLE_MANAGER;
   const [items, setItems] = useState<EventType[]>([]);
   const [totalBookings, setTotalBookings] = useState<number>(0);
   const [loading, setLoading] = useState(true);
@@ -209,7 +215,8 @@ export default function EventTypes() {
     "all" | "private" | "public"
   >("all");
   const [provider_filter, set_provider_filter] = useState("");
-  const { data: serviceProviders } = useServiceProviders();
+  const { data: serviceProviders, loading: service_providers_loading } =
+    useServiceProviders();
   const [settings_open, set_settings_open] = useState(false);
   const [settings_saved_message, set_settings_saved_message] = useState("");
   const [event_settings, set_event_settings] = useState<event_settings_state>(
@@ -221,6 +228,43 @@ export default function EventTypes() {
     Record<string, string>
   >({});
   const submitInFlightRef = useRef(false);
+
+  const logged_in_user_acts_as_service_provider = useMemo(() => {
+    if (!user?.id) return false;
+    if (userActsAsServiceProviderFromSupabaseUser(user)) return true;
+    return serviceProviders.some((provider) => provider.id === user.id);
+  }, [user, serviceProviders]);
+
+  const logged_in_user_display_name = useMemo(() => {
+    if (!user?.id) return "";
+    const from_roster = capitalize_booking_display_label(
+      getServiceProviderName(user.id, serviceProviders)
+    );
+    if (from_roster !== "N/A") return from_roster;
+    const meta = user.user_metadata as Record<string, unknown> | undefined;
+    const name = typeof meta?.name === "string" ? meta.name.trim() : "";
+    const full_name =
+      typeof meta?.full_name === "string" ? meta.full_name.trim() : "";
+    if (full_name) return capitalize_booking_display_label(full_name);
+    if (name) return capitalize_booking_display_label(name);
+    const email_prefix = user.email?.split("@")[0]?.trim();
+    return email_prefix
+      ? capitalize_booking_display_label(email_prefix)
+      : "Current user";
+  }, [user, serviceProviders]);
+
+  const event_type_self_assign_option = useMemo(() => {
+    if (logged_in_user_acts_as_service_provider) return null;
+    if (!logged_in_user_display_name) return null;
+    return { label: logged_in_user_display_name };
+  }, [logged_in_user_acts_as_service_provider, logged_in_user_display_name]);
+
+  const auto_select_self_as_service_provider =
+    userIsWorkspaceAdminWithAdditionalServiceProviderFromSupabaseUser(user) ||
+    logged_in_user_acts_as_service_provider;
+
+  const default_service_provider_id_for_new_form =
+    auto_select_self_as_service_provider && user?.id ? user.id : "";
 
   const empty_form = (): event_type_form_state => {
     const default_location_for_form =
@@ -235,6 +279,7 @@ export default function EventTypes() {
       buffer_after: "",
       location_types: default_location_for_form,
       is_public: event_settings.default_visibility === "public",
+      service_provider_id: default_service_provider_id_for_new_form,
     };
   };
 
@@ -265,6 +310,17 @@ export default function EventTypes() {
     fetchWorkspaceSlug();
     load_event_settings();
   }, [user]);
+
+  useEffect(() => {
+    if (!showForm || editingId != null || !default_service_provider_id_for_new_form) {
+      return;
+    }
+    setForm((prev) =>
+      prev.service_provider_id === ""
+        ? { ...prev, service_provider_id: default_service_provider_id_for_new_form }
+        : prev
+    );
+  }, [showForm, editingId, default_service_provider_id_for_new_form]);
 
   const load_event_settings = async () => {
     try {
@@ -383,6 +439,9 @@ export default function EventTypes() {
         buffer_after: form.buffer_after || null,
         location_type: serialize_location_types(form.location_types),
         is_public: form.is_public,
+        ...(can_assign_event_type_owner && {
+          owner_id: form.service_provider_id.trim() || null,
+        }),
       };
 
       if (editingId) {
@@ -461,6 +520,10 @@ export default function EventTypes() {
       buffer_after: item.buffer_after?.toString() || "",
       location_types: parse_location_types_from_storage(item.location_type),
       is_public: item.is_public || false,
+      service_provider_id:
+        item.owner_id && serviceProviderOwnerIds.has(item.owner_id)
+          ? item.owner_id
+          : "",
     });
     setShowForm(true);
   };
@@ -747,9 +810,6 @@ export default function EventTypes() {
       : name;
   };
 
-  const user_role =
-    typeof user?.user_metadata?.role === "string" ? user.user_metadata.role : "";
-
   const can_filter_event_types_by_provider =
     user_role === ROLE_WORKSPACE_ADMIN ||
     user_role === ROLE_MANAGER ||
@@ -770,6 +830,43 @@ export default function EventTypes() {
       }),
     [serviceProviders, deactivated_service_provider_ids]
   );
+
+  const active_service_providers = useMemo(
+    () => serviceProviders.filter((provider) => !provider.deactivated),
+    [serviceProviders]
+  );
+
+  const event_type_service_provider_options = useMemo((): event_type_service_provider_option[] => {
+    const active_options = active_service_providers.map((provider) => ({
+      id: provider.id,
+      label: capitalize_booking_display_label(
+        getServiceProviderName(provider.id, serviceProviders)
+      ),
+    }));
+
+    const selected_id = form.service_provider_id.trim();
+    if (
+      !selected_id ||
+      active_options.some((option) => option.id === selected_id)
+    ) {
+      return active_options;
+    }
+
+    const selected_provider = serviceProviders.find(
+      (provider) => provider.id === selected_id
+    );
+    if (!selected_provider) return active_options;
+
+    return [
+      ...active_options,
+      {
+        id: selected_provider.id,
+        label: `${capitalize_booking_display_label(
+          getServiceProviderName(selected_provider.id, serviceProviders)
+        )} (Inactive)`,
+      },
+    ];
+  }, [active_service_providers, form.service_provider_id, serviceProviders]);
 
   const total_event_types = items.length;
   const private_event_types = items.filter((e) => !e.is_public).length;
@@ -808,6 +905,10 @@ export default function EventTypes() {
           submitting={submitting}
           onSubmit={handleSubmit}
           onCancel={handleCancel}
+          show_service_provider_field={can_assign_event_type_owner}
+          service_provider_options={event_type_service_provider_options}
+          service_providers_loading={service_providers_loading}
+          self_assign_option={event_type_self_assign_option}
         />
       </section>
     );

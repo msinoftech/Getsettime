@@ -18,11 +18,40 @@ interface ActivityItem {
   title: string;
   description: string;
   createdAt: string;
+  entityId?: string | null;
+  targetPath?: string | null;
+  before?: Record<string, unknown> | null;
+  after?: Record<string, unknown> | null;
+  changedFields?: string[];
 }
 
-function isUpdated(createdAt?: string | null, updatedAt?: string | null) {
-  if (!createdAt || !updatedAt) return false;
-  return Math.abs(new Date(updatedAt).getTime() - new Date(createdAt).getTime()) > 5000;
+function to_activity_item(event: Record<string, unknown>): ActivityItem | null {
+  const id = event.id ? String(event.id) : null;
+  const type = event.entity_type ? String(event.entity_type) : null;
+  const title = event.title ? String(event.title) : null;
+  const createdAt = event.created_at ? String(event.created_at) : null;
+  if (!id || !type || !title || !createdAt) return null;
+  return {
+    id,
+    type: type as ActivityType,
+    action: (event.action as "created" | "updated" | "deleted") || undefined,
+    title,
+    description: String(event.description || ""),
+    createdAt,
+    entityId: event.entity_id ? String(event.entity_id) : null,
+    targetPath: event.target_path ? String(event.target_path) : null,
+    before:
+      typeof event.before_data === "object" && event.before_data !== null
+        ? (event.before_data as Record<string, unknown>)
+        : null,
+    after:
+      typeof event.after_data === "object" && event.after_data !== null
+        ? (event.after_data as Record<string, unknown>)
+        : null,
+    changedFields: Array.isArray(event.changed_fields)
+      ? event.changed_fields.map((field) => String(field))
+      : [],
+  };
 }
 
 async function getUserFromRequest(req: NextRequest) {
@@ -56,37 +85,13 @@ export async function GET(req: NextRequest) {
 
     const supabase = createSupabaseServerClient();
 
-    const [bookingsRes, contactsRes, eventTypesRes, departmentsRes, servicesRes, configRes] = await Promise.all([
+    const [eventsRes, configRes] = await Promise.all([
       supabase
-        .from("bookings")
-        .select("id,invitee_name,status,created_at,updated_at")
+        .from("activity_events")
+        .select("id,entity_type,entity_id,action,title,description,before_data,after_data,changed_fields,target_path,created_at")
         .eq("workspace_id", workspaceId)
         .order("created_at", { ascending: false })
-        .limit(30),
-      supabase
-        .from("contacts")
-        .select("id,name,email,created_at,updated_at")
-        .eq("workspace_id", workspaceId)
-        .order("created_at", { ascending: false })
-        .limit(30),
-      supabase
-        .from("event_types")
-        .select("id,title,created_at,updated_at")
-        .eq("workspace_id", workspaceId)
-        .order("created_at", { ascending: false })
-        .limit(30),
-      supabase
-        .from("departments")
-        .select("id,name,created_at,updated_at")
-        .eq("workspace_id", workspaceId)
-        .order("created_at", { ascending: false })
-        .limit(30),
-      supabase
-        .from("services")
-        .select("id,name,created_at,updated_at")
-        .eq("workspace_id", workspaceId)
-        .order("created_at", { ascending: false })
-        .limit(30),
+        .limit(120),
       supabase
         .from("configurations")
         .select("id,settings,created_at,updated_at")
@@ -96,70 +101,12 @@ export async function GET(req: NextRequest) {
 
     const activity: ActivityItem[] = [];
 
-    for (const b of bookingsRes.data || []) {
-      const time = b.updated_at || b.created_at;
-      if (!time) continue;
-      if (String(b.status ?? "").toLowerCase() === "deleted") continue;
-      const updated = isUpdated(b.created_at, b.updated_at);
-      activity.push({
-        id: `booking-${b.id}-${time}`,
-        type: "booking",
-        title: updated ? "Booking updated" : "Booking created",
-        description: `${b.invitee_name || "Someone"} (${b.status || "pending"})`,
-        createdAt: time,
-      });
-    }
-
-    for (const c of contactsRes.data || []) {
-      const time = c.updated_at || c.created_at;
-      if (!time) continue;
-      const updated = isUpdated(c.created_at, c.updated_at);
-      activity.push({
-        id: `contact-${c.id}-${time}`,
-        type: "contact",
-        title: updated ? "Contact updated" : "Contact created",
-        description: `${c.name || "Unnamed"}${c.email ? ` (${c.email})` : ""}`,
-        createdAt: time,
-      });
-    }
-
-    for (const e of eventTypesRes.data || []) {
-      const time = e.updated_at || e.created_at;
-      if (!time) continue;
-      const updated = isUpdated(e.created_at, e.updated_at);
-      activity.push({
-        id: `event-type-${e.id}-${time}`,
-        type: "event_type",
-        title: updated ? "Event type updated" : "Event type created",
-        description: e.title || "Untitled event type",
-        createdAt: time,
-      });
-    }
-
-    for (const d of departmentsRes.data || []) {
-      const time = d.updated_at || d.created_at;
-      if (!time) continue;
-      const updated = isUpdated(d.created_at, d.updated_at);
-      activity.push({
-        id: `department-${d.id}-${time}`,
-        type: "department",
-        title: updated ? "Department updated" : "Department created",
-        description: d.name || "Unnamed department",
-        createdAt: time,
-      });
-    }
-
-    for (const s of servicesRes.data || []) {
-      const time = s.updated_at || s.created_at;
-      if (!time) continue;
-      const updated = isUpdated(s.created_at, s.updated_at);
-      activity.push({
-        id: `service-${s.id}-${time}`,
-        type: "service",
-        title: updated ? "Service updated" : "Service created",
-        description: s.name || "Unnamed service",
-        createdAt: time,
-      });
+    for (const event of eventsRes.data || []) {
+      if (!event || typeof event !== "object") continue;
+      const mapped = to_activity_item(event as Record<string, unknown>);
+      if (mapped) {
+        activity.push(mapped);
+      }
     }
 
     const config = configRes.data;
@@ -177,30 +124,20 @@ export async function GET(req: NextRequest) {
         title: String(item.title),
         description: String(item.description || ""),
         createdAt: String(item.createdAt),
+        entityId: item.entity_id ? String(item.entity_id) : null,
+        targetPath: item.target_path ? String(item.target_path) : null,
+        before:
+          typeof item.before_data === "object" && item.before_data !== null
+            ? (item.before_data as Record<string, unknown>)
+            : null,
+        after:
+          typeof item.after_data === "object" && item.after_data !== null
+            ? (item.after_data as Record<string, unknown>)
+            : null,
+        changedFields: Array.isArray(item.changed_fields)
+          ? item.changed_fields.map((field) => String(field))
+          : [],
       });
-    }
-
-    if (config) {
-      const time = config.updated_at || config.created_at;
-      if (time) {
-        // activity.push({
-        //   id: `config-settings-${config.id}-${time}`,
-        //   type: "settings",
-        //   title: "Workspace settings updated",
-        //   description: "General workspace configuration was changed",
-        //   createdAt: time,
-        // });
-
-        // if ((config.settings as Record<string, unknown>)?.availability) {
-        //   activity.push({
-        //     id: `config-availability-${config.id}-${time}`,
-        //     type: "availability",
-        //     title: "Availability timesheet updated",
-        //     description: "Availability schedule or time slots were changed",
-        //     createdAt: time,
-        //   });
-        // }
-      }
     }
 
     const sorted = activity
