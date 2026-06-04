@@ -126,3 +126,28 @@ body{
     display: none !important;
   }
 }
+
+/* Booking phone input (react-international-phone) */
+.booking-phone-input .react-international-phone-country-selector-button {
+  height: 40px;
+}
+
+.booking-phone-input .react-international-phone-input {
+  font-family: inherit;
+}
+
+.booking-phone-input .react-international-phone-country-selector-dropdown {
+  width: 320px;
+  max-height: 280px;
+}
+
+.booking-phone-input .react-international-phone-country-selector-dropdown__list-item {
+  border-radius: 12px;
+  padding: 10px 12px;
+  font-size: 14px;
+  transition: background 0.2s ease;
+}
+
+.booking-phone-input .react-international-phone-country-selector-dropdown__list-item:hover {
+  background: #eef2ff;
+}

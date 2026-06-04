@@ -19,6 +19,7 @@ import {
 } from '@/src/utils/bookingDuration';
 import { isTimeSlotBooked, normalizeDate } from '@/src/utils/bookingTime';
 import { getDisplayTimezone, parseTimeStringTo24h } from '@/src/utils/timezone';
+import { normalizeInviteePhoneForStorage } from '@/src/utils/phone';
 import {
   getSortedFilteredEventTypes,
   parseEventTypeDurationParam,
@@ -542,11 +543,24 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
       const servicesEnabled = isServicesEnabled(intakeForm);
       const additionalDescriptionEnabled = intakeForm?.additional_description === true;
 
-      const inviteeName = nameEnabled ? name.trim() : (email.trim() || phone.trim() || 'Invitee');
+      let inviteePhoneE164: string | null = null;
+      if (phoneEnabled) {
+        const normalized = normalizeInviteePhoneForStorage(phone);
+        if (normalized.invalid) {
+          setError('Enter a valid phone number');
+          setLoading(false);
+          return;
+        }
+        inviteePhoneE164 = normalized.value;
+      }
+
+      const inviteeName = nameEnabled
+        ? name.trim()
+        : (email.trim() || inviteePhoneE164 || phone.trim() || 'Invitee');
       const intakeFormPayload: IntakeValues = {};
       if (nameEnabled) intakeFormPayload.name = name.trim();
       if (emailEnabled) intakeFormPayload.email = email.trim();
-      if (phoneEnabled) intakeFormPayload.phone = phone.trim();
+      if (phoneEnabled && inviteePhoneE164) intakeFormPayload.phone = inviteePhoneE164;
       if (servicesEnabled) intakeFormPayload.services = selectedServiceIds;
       else if (selectedServiceIds.length > 0) intakeFormPayload.services = selectedServiceIds;
       if (additionalDescriptionEnabled && notes.trim()) intakeFormPayload.additional_description = notes.trim();
@@ -601,7 +615,7 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
           department_id: selectedDepartment?.id || null,
           invitee_name: inviteeName,
           invitee_email: emailEnabled ? (email.trim() || null) : null,
-          invitee_phone: phoneEnabled ? (phone.trim() || null) : null,
+          invitee_phone: phoneEnabled ? inviteePhoneE164 : null,
           start_at: startDate.toISOString(),
           end_at: endDate.toISOString(),
           intake_form: Object.keys(intakeFormPayload).length > 0 ? intakeFormPayload : null,

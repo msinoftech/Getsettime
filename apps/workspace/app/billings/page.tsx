@@ -2,6 +2,8 @@
 
 import React, { useState, useEffect } from "react";
 import { jsPDF } from "jspdf";
+import type { plans, plans_with_content, workspace_usage } from "@app/db/subscription";
+import { formatBookingLimitLabel, isUnlimitedBookingLimit, resolvePlanFeatures } from "@app/db/subscription";
 
 interface Invoice {
   id: string;
@@ -11,8 +13,6 @@ interface Invoice {
   status: "paid" | "pending" | "overdue";
   plan: string;
 }
-
-import type { plans, workspace_usage } from "@app/db/subscription";
 
 interface AvailablePlan {
   id: string;
@@ -24,21 +24,6 @@ interface AvailablePlan {
   admin_limit: number;
   features: string[];
   popular?: boolean;
-}
-
-function planFeaturesFromRow(row: plans): string[] {
-  const features = [
-    `${row.booking_limit} bookings per month`,
-    `${row.admin_limit} admin`,
-    `Up to ${row.service_provider_limit} service providers`,
-  ];
-  if (row.google_calendar_sync) features.push("Google Calendar sync");
-  if (row.email_notifications) features.push("Email notifications");
-  if (row.public_booking_page) features.push("Public booking page");
-  if (row.whatsapp_automation) features.push("WhatsApp automation");
-  if (row.online_payments) features.push("Online payments");
-  if (row.additional_locations) features.push("Multiple locations");
-  return features;
 }
 
 export default function Billing({ dark = false }: { dark?: boolean }) {
@@ -76,7 +61,7 @@ export default function Billing({ dark = false }: { dark?: boolean }) {
 
       if (catalogRes.ok) {
         const catalog = await catalogRes.json();
-        const rows = (catalog.plans || []) as plans[];
+        const rows = (catalog.plans || []) as plans_with_content[];
         setAvailablePlans(
           rows.map((row) => ({
             id: String(row.id),
@@ -86,8 +71,8 @@ export default function Billing({ dark = false }: { dark?: boolean }) {
             booking_limit: row.booking_limit,
             service_provider_limit: row.service_provider_limit,
             admin_limit: row.admin_limit,
-            features: planFeaturesFromRow(row),
-            popular: row.slug === 'pro',
+            features: resolvePlanFeatures(row),
+            popular: row.content?.is_highlighted ?? false,
           }))
         );
       }
@@ -393,7 +378,7 @@ export default function Billing({ dark = false }: { dark?: boolean }) {
                   {currentPlan ? (
                     <>
                       <p className="text-sm text-slate-500">
-                        {currentPlan.name} • {currentPlan.booking_limit} bookings/month • up to{" "}
+                        {currentPlan.name} • {formatBookingLimitLabel(currentPlan.booking_limit)} bookings/month • up to{" "}
                         {currentPlan.service_provider_limit} providers
                       </p>
                       <p className="text-sm font-semibold text-slate-800 mt-1">
@@ -402,7 +387,10 @@ export default function Billing({ dark = false }: { dark?: boolean }) {
                       {usage && (
                         <>
                           <p className="text-xs text-slate-500 mt-1">
-                            Usage: {usage.bookings_this_month} / {usage.booking_limit} bookings this month
+                            Usage: {usage.bookings_this_month}
+                            {isUnlimitedBookingLimit(usage.booking_limit)
+                              ? " bookings this month (unlimited plan)"
+                              : ` / ${usage.booking_limit} bookings this month`}
                           </p>
                           <p className="text-xs text-slate-500 mt-1">
                             Usage: {usage.service_provider_count} / {usage.service_provider_limit} service providers
@@ -486,7 +474,7 @@ export default function Billing({ dark = false }: { dark?: boolean }) {
                           <span className="text-sm text-slate-500">/month</span>
                         </div>
                         <p className="text-sm text-slate-500 mt-2">
-                          {planOption.booking_limit} bookings/month • {planOption.service_provider_limit}{" "}
+                          {formatBookingLimitLabel(planOption.booking_limit)} bookings/month • {planOption.service_provider_limit}{" "}
                           providers
                         </p>
                       </div>

@@ -1,33 +1,15 @@
-import { parsePhoneNumberWithError, isValidPhoneNumber } from 'libphonenumber-js';
+import {
+  isValidPhone as isValidPhoneUtil,
+  toE164 as toE164Util,
+} from '@/src/utils/phone';
+import type { CountryCode } from 'libphonenumber-js';
 
-/**
- * Validate a phone number using libphonenumber-js.
- * Accepts numbers with or without country code; defaults to IN (India) when ambiguous.
- */
-export function isValidPhone(phone: string): boolean {
-  const trimmed = phone.trim();
-  if (!trimmed) return false;
-  try {
-    return isValidPhoneNumber(trimmed, 'IN');
-  } catch {
-    return false;
-  }
+export function isValidPhone(phone: string, defaultCountry?: CountryCode): boolean {
+  return isValidPhoneUtil(phone, defaultCountry);
 }
 
-/**
- * Normalize a phone string to E.164 format (e.g. +919530693882).
- * Returns null when the number cannot be parsed or is invalid.
- */
-export function toE164(phone: string): string | null {
-  const trimmed = phone.trim();
-  if (!trimmed) return null;
-  try {
-    const parsed = parsePhoneNumberWithError(trimmed, 'IN');
-    if (!parsed || !parsed.isValid()) return null;
-    return parsed.format('E.164');
-  } catch {
-    return null;
-  }
+export function toE164(phone: string, defaultCountry?: CountryCode): string | null {
+  return toE164Util(phone, defaultCountry);
 }
 
 /**
@@ -43,11 +25,6 @@ export async function sendSMS(to: string, body: string): Promise<boolean> {
     console.warn('[twilio-sms] Missing TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, or TWILIO_PHONE_NUMBER – skipping SMS');
     return false;
   }
-
-  // if (process.env.NODE_ENV === 'development') {
-  //   console.log(`[twilio-sms][DEV] Would send SMS to ${to}: ${body}`);
-  //   return true;
-  // }
 
   try {
     const twilio = require('twilio');

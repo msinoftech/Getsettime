@@ -15,6 +15,7 @@ import {
   label_for_meeting_option_key,
   type meeting_option_key,
 } from '@/src/utils/meeting_options';
+import { BookingPhoneInput } from './BookingPhoneInput';
 
 interface Step4IntakeFormProps {
   intakeForm: IntakeFormSettings | undefined;
@@ -53,6 +54,8 @@ interface Step4IntakeFormProps {
   enabledMeetingOptionKeys?: meeting_option_key[];
   selectedMeetingOption?: string;
   onMeetingOptionChange?: (key: meeting_option_key) => void;
+  /** ISO2 profile country for phone default (e.g. user_metadata.country) */
+  profileCountry?: string | null;
 }
 
 export function Step4IntakeForm({
@@ -91,6 +94,7 @@ export function Step4IntakeForm({
   enabledMeetingOptionKeys = [],
   selectedMeetingOption = '',
   onMeetingOptionChange,
+  profileCountry,
 }: Step4IntakeFormProps) {
   const [attemptedConfirm, setAttemptedConfirm] = useState(false);
   const [acceptTerms, setAcceptTerms] = useState(false);
@@ -161,22 +165,13 @@ export function Step4IntakeForm({
 
         {intakeForm?.phone === true && (
           <div className="group">
-            <div className="relative">
-              <div className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-indigo-600 transition-colors">
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
-                </svg>
-              </div>
-              <input
-                value={phone}
-                onChange={(e) => onPhoneChange(e.target.value)}
-                onBlur={onTouchedPhone}
-                type="tel"
-                placeholder={BOOKING_PLACEHOLDERS.phone}
-                className={`${baseInputClass} pl-12 pr-4`}
-                required
-              />
-            </div>
+            <BookingPhoneInput
+              value={phone}
+              onChange={onPhoneChange}
+              onBlur={onTouchedPhone}
+              required
+              profileCountry={profileCountry}
+            />
             {showFieldError('phone') && (
               <p className="mt-2 text-xs font-medium text-red-600">{intakeValidation.phone}</p>
             )}

@@ -1,5 +1,8 @@
 /** Shared validation utilities for forms */
 
+import { isValidPhone as isValidPhoneLib } from '@/src/utils/phone';
+import type { CountryCode } from 'libphonenumber-js';
+
 export const isNonEmptyString = (v: string): boolean => v.trim().length > 0;
 
 export const isValidEmail = (email: string): boolean => {
@@ -10,10 +13,12 @@ export const isValidEmail = (email: string): boolean => {
 
 export const normalizePhone = (phone: string): string => phone.replace(/[^\d]/g, '');
 
-export const isValidPhone = (phone: string): boolean => {
-  const digits = normalizePhone(phone);
-  return digits.length >= 7;
-};
+export function isValidPhone(
+  phone: string,
+  defaultCountry?: CountryCode
+): boolean {
+  return isValidPhoneLib(phone, defaultCountry);
+}
 
 export const isValidUrl = (url: string): boolean => {
   const v = url.trim();

@@ -23,6 +23,7 @@ import {
   resolve_meeting_join_url_from_booking,
 } from '@/src/utils/google_meet';
 import { list_bookable_meeting_option_keys } from '@/src/utils/meeting_options';
+import { normalizeInviteePhoneForStorage } from '@/src/utils/phone';
 import {
   resolveMeetingOptionsForServiceProvider,
   resolveNotificationsForServiceProvider,
@@ -411,6 +412,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Start time is required' }, { status: 400 });
     }
 
+    const inviteePhoneNorm = normalizeInviteePhoneForStorage(invitee_phone);
+    if (inviteePhoneNorm.invalid) {
+      return NextResponse.json({ error: 'Invalid phone number' }, { status: 400 });
+    }
+    const invitee_phone_e164 = inviteePhoneNorm.value;
+
     const workspaceId = user.user_metadata?.workspace_id;
     const hostUserId = user.id;
 
@@ -592,7 +599,7 @@ export async function POST(req: NextRequest) {
       workspaceId,
       invitee_name?.trim() ?? '',
       invitee_email?.trim() || null,
-      invitee_phone?.trim() || null
+      invitee_phone_e164
     );
 
     const publicCode = crypto.randomUUID();
@@ -642,7 +649,7 @@ export async function POST(req: NextRequest) {
         host_user_id: hostUserId,
         invitee_name: invitee_name.trim(),
         invitee_email: invitee_email?.trim() || null,
-        invitee_phone: invitee_phone?.trim() || null,
+        invitee_phone: invitee_phone_e164,
         contact_id: contactId ?? null,
         start_at: start_at,
         end_at: resolvedEndAt || null,
@@ -868,13 +875,12 @@ export async function POST(req: NextRequest) {
     }
 
     try {
-      const invitee_phone_trimmed = invitee_phone?.trim();
       const wants_whatsapp_admin =
         whatsapp_admin && admin_whatsapp_phones.length > 0;
       const wants_whatsapp_user =
         whatsapp_user && Boolean(metadata?.whatsapp_opt_in);
       if (
-        invitee_phone_trimmed &&
+        invitee_phone_e164 &&
         (wants_whatsapp_admin || wants_whatsapp_user)
       ) {
         const origin = new URL(req.url).origin;
@@ -906,7 +912,7 @@ export async function POST(req: NextRequest) {
         await post_booking_whatsapp_notification(origin, {
           name: invitee_name?.trim() || 'Invitee',
           email: invitee_email?.trim() || null,
-          phone: invitee_phone_trimmed || '',
+          phone: invitee_phone_e164,
           message,
           service: eventTypeName,
           ...(departmentName?.trim() ? { department: departmentName.trim() } : {}),
@@ -1051,7 +1057,13 @@ export async function PATCH(req: NextRequest) {
     if (department_id !== undefined) updateData.department_id = department_id || null;
     if (invitee_name !== undefined) updateData.invitee_name = invitee_name?.trim() || null;
     if (invitee_email !== undefined) updateData.invitee_email = invitee_email?.trim() || null;
-    if (invitee_phone !== undefined) updateData.invitee_phone = invitee_phone?.trim() || null;
+    if (invitee_phone !== undefined) {
+      const patchPhoneNorm = normalizeInviteePhoneForStorage(invitee_phone);
+      if (patchPhoneNorm.invalid) {
+        return NextResponse.json({ error: 'Invalid phone number' }, { status: 400 });
+      }
+      updateData.invitee_phone = patchPhoneNorm.value;
+    }
     if (start_at !== undefined) updateData.start_at = start_at;
     if (end_at !== undefined) updateData.end_at = end_at || null;
     if (status !== undefined) updateData.status = status;

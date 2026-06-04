@@ -1,4 +1,5 @@
 import nodemailer from 'nodemailer';
+import { formatBookingLimitFeature } from '@app/db/subscription';
 
 // Email transporter configuration
 const createTransporter = () => {
@@ -1010,7 +1011,7 @@ export const sendWelcomeEmail = async (params: WelcomeEmailParams): Promise<void
       <p>Your workspace <strong>${workspaceName}</strong> is ready.</p>
       <p>You are on the <strong>${planName}</strong> plan:</p>
       <ul>
-        <li>${bookingLimit} bookings per month</li>
+        <li>${formatBookingLimitFeature(bookingLimit)}</li>
         <li>${adminLimit} admin</li>
         <li>Up to ${serviceProviderLimit} service providers</li>
         <li>Google Calendar sync</li>

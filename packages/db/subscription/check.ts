@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { isUnlimitedBookingLimit } from './booking_limit';
 import { PlanLimitError } from './errors';
 import { getWorkspacePlanSnapshot } from './plans';
 import { countMonthlyBookings } from './usage';
@@ -34,6 +35,8 @@ export async function assertBookingAllowed(
   workspaceId: number
 ): Promise<void> {
   const snapshot = await getWorkspacePlanSnapshot(supabase, workspaceId);
+  if (isUnlimitedBookingLimit(snapshot.plan.booking_limit)) return;
+
   const count = await countMonthlyBookings(supabase, workspaceId);
 
   if (count >= snapshot.plan.booking_limit) {

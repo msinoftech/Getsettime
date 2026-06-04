@@ -215,7 +215,7 @@ export function PublicBookingLinkMenu() {
                 className="flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-sm font-bold hover:bg-slate-100"
               >
                 {copied ? (
-                  <MenuIcon className="text-emerald-600">
+                  <MenuIcon className="h-[17px] w-[17px] shrink-0 text-emerald-600">
                     <path d="M20 6 9 17l-5-5" />
                   </MenuIcon>
                 ) : (

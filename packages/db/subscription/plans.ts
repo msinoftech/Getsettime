@@ -3,7 +3,7 @@ import type { plans, workspace_plan_snapshot, workspace_subscriptions } from './
 
 const FREE_PLAN_SLUG = 'free';
 
-function rowToPlan(row: Record<string, unknown>): plans {
+export function rowToPlan(row: Record<string, unknown>): plans {
   return {
     id: Number(row.id),
     name: String(row.name),
@@ -13,6 +13,7 @@ function rowToPlan(row: Record<string, unknown>): plans {
     workspace_limit: Number(row.workspace_limit),
     admin_limit: Number(row.admin_limit),
     service_provider_limit: Number(row.service_provider_limit),
+    extra_service_provider_seat_price: Number(row.extra_service_provider_seat_price ?? 0),
     google_calendar_sync: Boolean(row.google_calendar_sync),
     email_notifications: Boolean(row.email_notifications),
     public_booking_page: Boolean(row.public_booking_page),
@@ -22,7 +23,9 @@ function rowToPlan(row: Record<string, unknown>): plans {
     is_active: Boolean(row.is_active),
     billing_interval: row.billing_interval != null ? String(row.billing_interval) : null,
     metadata: (row.metadata as Record<string, unknown> | null) ?? null,
+    display_order: Number(row.display_order ?? 0),
     created_at: String(row.created_at),
+    updated_at: String(row.updated_at ?? row.created_at),
   };
 }
 
@@ -162,6 +165,7 @@ export async function listActivePlans(supabase: SupabaseClient): Promise<plans[]
     .from('plans')
     .select('*')
     .eq('is_active', true)
+    .order('display_order', { ascending: true })
     .order('price', { ascending: true });
 
   if (error) throw new Error(error.message);

@@ -32,6 +32,8 @@ interface AvailabilityTimesheetProps {
   providerUserId?: string;
   /** When set, load/save under availability.providers[userId] via workspace settings API (workspace admin) */
   saveAsProviderId?: string;
+  /** Optional extra control(s) rendered in the header between summary and actions */
+  headerExtra?: React.ReactNode;
 }
 
 const DAYS: DayName[] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -179,6 +181,7 @@ export default function AvailabilityTimesheet({
   initialTimesheet,
   providerUserId,
   saveAsProviderId,
+  headerExtra,
 }: AvailabilityTimesheetProps) {
   const [schedules, setSchedules] = useState<Record<DayName, DaySchedule>>(buildDefaultSchedules);
 
@@ -933,6 +936,12 @@ export default function AvailabilityTimesheet({
             {/* Description Text */}
             <p className="text-sm text-slate-600">Toggle days on/off, adjust hours, and add breaks.</p>
           </div>
+
+          {headerExtra ? (
+            <div className="w-full md:w-[360px] md:min-w-[360px] md:max-w-[360px] shrink-0">
+              {headerExtra}
+            </div>
+          ) : null}
 
           {/* Right Side - Action Buttons */}
           <div className="flex flex-wrap gap-3 items-center gap-3">

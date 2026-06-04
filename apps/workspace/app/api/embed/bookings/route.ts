@@ -32,6 +32,7 @@ import {
   resolveEffectiveDurationForBookingRequest,
   validateBookingEndAt,
 } from '@/lib/booking-effective-duration';
+import { normalizeInviteePhoneForStorage } from '@/src/utils/phone';
 
 type DayName = "Sun" | "Mon" | "Tue" | "Wed" | "Thu" | "Fri" | "Sat";
 
@@ -204,6 +205,22 @@ export async function POST(req: NextRequest) {
         { error: 'Workspace ID is required' },
         { status: 400 }
       );
+    }
+
+    const inviteePhoneNorm = normalizeInviteePhoneForStorage(invitee_phone);
+    if (inviteePhoneNorm.invalid) {
+      return NextResponse.json({ error: 'Invalid phone number' }, { status: 400 });
+    }
+    const invitee_phone_e164 = inviteePhoneNorm.value;
+
+    if (intake_form && typeof intake_form === 'object' && typeof intake_form.phone === 'string') {
+      const intakePhoneNorm = normalizeInviteePhoneForStorage(intake_form.phone);
+      if (intakePhoneNorm.invalid) {
+        return NextResponse.json({ error: 'Invalid phone number in intake form' }, { status: 400 });
+      }
+      if (intakePhoneNorm.value) {
+        (intake_form as Record<string, unknown>).phone = intakePhoneNorm.value;
+      }
     }
 
     try {
@@ -461,7 +478,7 @@ export async function POST(req: NextRequest) {
     // Prepare metadata with intake_form and notes for backward compatibility
     const metadataPayload: Record<string, unknown> = {
       source: 'embed',
-      verified_phone: invitee_phone ? normalizePhone(invitee_phone) : null,
+      verified_phone: invitee_phone_e164,
       verified_email: invitee_email ? normalizeEmail(invitee_email) : null,
     };
 
@@ -480,7 +497,7 @@ export async function POST(req: NextRequest) {
       workspace_id,
       invitee_name?.trim() ?? '',
       invitee_email?.trim() || null,
-      invitee_phone?.trim() || null
+      invitee_phone_e164
     );
 
     const publicCode = crypto.randomUUID();
@@ -528,7 +545,7 @@ export async function POST(req: NextRequest) {
         host_user_id: null,
         invitee_name: invitee_name.trim(),
         invitee_email: invitee_email?.trim() || null,
-        invitee_phone: invitee_phone?.trim() || null,
+        invitee_phone: invitee_phone_e164,
         contact_id: contactId ?? null,
         start_at,
         end_at: resolvedEndAt || null,
@@ -758,12 +775,11 @@ export async function POST(req: NextRequest) {
     }
 
     try {
-      const invitee_phone_trimmed = invitee_phone?.trim();
       const wants_whatsapp_admin =
         whatsapp_admin && admin_whatsapp_phones.length > 0;
       const wants_whatsapp_user = whatsapp_user && whatsappOptIn;
       if (
-        invitee_phone_trimmed &&
+        invitee_phone_e164 &&
         (wants_whatsapp_admin || wants_whatsapp_user)
       ) {
         const origin = new URL(req.url).origin;
@@ -797,7 +813,7 @@ export async function POST(req: NextRequest) {
         await post_booking_whatsapp_notification(origin, {
           name: invitee_name?.trim() || 'Invitee',
           email: invitee_email?.trim() || null,
-          phone: invitee_phone_trimmed || '',
+          phone: invitee_phone_e164,
           message,
           service: eventTypeName,
           ...(departmentName?.trim() ? { department: departmentName.trim() } : {}),

@@ -1,8 +1,15 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import type { ReactNode } from "react";
 
-export default function DashboardHeader({ user_name }: { user_name: string }) {
+export default function DashboardHeader({
+  user_name,
+  actions,
+}: {
+  user_name: string;
+  actions?: ReactNode;
+}) {
   const [time, setTime] = useState(() => new Date());
 
   useEffect(() => {
@@ -11,7 +18,7 @@ export default function DashboardHeader({ user_name }: { user_name: string }) {
   }, []);
 
   return (
-    <header className="flex flex-wrap items-start justify-between gap-4 pb-2">
+    <header className="flex flex-wrap items-end justify-between gap-4 pb-2 md:flex-nowrap">
       <div className="min-w-0">
         <p className="text-sm font-bold text-indigo-600">
           Live · {time.toLocaleTimeString()}
@@ -23,6 +30,7 @@ export default function DashboardHeader({ user_name }: { user_name: string }) {
           </span>
         </h2>
       </div>
+      {actions ? <div className="flex items-center gap-2 self-end">{actions}</div> : null}
     </header>
   );
 }

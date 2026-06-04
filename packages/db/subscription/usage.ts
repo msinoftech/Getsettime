@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { isUnlimitedBookingLimit } from './booking_limit';
 import { getWorkspacePlanSnapshot } from './plans';
 import { countWorkspaceServiceProviders } from './service_provider_count';
 import type { workspace_usage } from './types';
@@ -47,6 +48,7 @@ export async function getWorkspaceUsage(
 ): Promise<workspace_usage> {
   const snapshot = await getWorkspacePlanSnapshot(supabaseAdmin, workspaceId);
   const booking_limit = snapshot.plan.booking_limit;
+  const unlimited_bookings = isUnlimitedBookingLimit(booking_limit);
 
   const [bookings_this_month, service_provider_count, location_count] = await Promise.all([
     countMonthlyBookings(supabaseAdmin, workspaceId),
@@ -54,8 +56,11 @@ export async function getWorkspaceUsage(
     countWorkspaceLocations(supabaseAdmin, workspaceId),
   ]);
 
-  const booking_percent_used =
-    booking_limit > 0 ? Math.round((bookings_this_month / booking_limit) * 100) : 0;
+  const booking_percent_used = unlimited_bookings
+    ? 0
+    : booking_limit > 0
+      ? Math.round((bookings_this_month / booking_limit) * 100)
+      : 0;
 
   return {
     bookings_this_month,
@@ -64,7 +69,8 @@ export async function getWorkspaceUsage(
     service_provider_count,
     service_provider_limit: snapshot.plan.service_provider_limit,
     location_count,
-    booking_warning_threshold: booking_percent_used >= BOOKING_WARNING_PERCENT,
-    booking_limit_reached: bookings_this_month >= booking_limit,
+    booking_warning_threshold:
+      !unlimited_bookings && booking_percent_used >= BOOKING_WARNING_PERCENT,
+    booking_limit_reached: !unlimited_bookings && bookings_this_month >= booking_limit,
   };
 }

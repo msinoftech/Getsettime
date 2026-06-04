@@ -15,6 +15,7 @@ const PATH_TO_MENU: Record<string, string> = {
   "/professions": "professions",
   "/departments": "departments",
   "/services": "services",
+  "/plans": "plans",
   "/bookings": "bookings",
   "/settings": "settings",
 };
@@ -150,6 +151,11 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
           <Link href="/workspaces" className={`flex items-center gap-3 rounded-xl px-4 py-3 text-left text-[14px] font-medium transition-all ${ activeMenu === "workspaces" ? "bg-indigo-50 text-indigo-700 shadow-sm" : "text-gray-700 hover:bg-gray-50" }`} onClick={handleNavClick}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-briefcase-business-icon lucide-briefcase-business"><path d="M12 12h.01"/><path d="M16 6V4a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/><path d="M22 13a18.15 18.15 0 0 1-20 0"/><rect width="20" height="14" x="2" y="6" rx="2"/></svg>
             Workspaces
+          </Link>
+
+          <Link href="/plans" className={`flex items-center gap-3 rounded-xl px-4 py-3 text-left text-[14px] font-medium transition-all ${ activeMenu === "plans" ? "bg-indigo-50 text-indigo-700 shadow-sm" : "text-gray-700 hover:bg-gray-50" }`} onClick={handleNavClick}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="20" height="14" x="2" y="5" rx="2"/><line x1="2" x2="22" y1="10" y2="10"/></svg>
+            Plans
           </Link>        
 
           <Link href="/integration-requests" className={`flex items-center gap-3 rounded-xl px-4 py-3 text-left text-[14px] font-medium transition-all ${ activeMenu === "integration-requests" ? "bg-indigo-50 text-indigo-700 shadow-sm" : "text-gray-700 hover:bg-gray-50" }`} onClick={handleNavClick}>

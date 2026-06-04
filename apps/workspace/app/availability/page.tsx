@@ -770,7 +770,7 @@ export default function Availability() {
             </option>
           ))}
         </select>
-        {!selectedProviderId ? (
+        {/* {!selectedProviderId ? (
           <p className="text-xs text-slate-500 mt-1">
             General availability applies to all providers unless individually overridden
           </p>
@@ -778,7 +778,7 @@ export default function Availability() {
           <p className="text-xs text-slate-500 mt-1">
             Individual overrides for this provider only
           </p>
-        )}
+        )} */}
       </div>
     );
   };
@@ -787,7 +787,7 @@ export default function Availability() {
     if (isWorkspaceAdminUser && activeTab === 'general') {
       return (
         <div className="inline-grid grid-cols-[minmax(300px,380px)_auto] gap-x-6 gap-y-1.5 items-end shrink-0">
-          <label
+          {/* <label
             htmlFor="availability-service-provider"
             className="col-start-1 row-start-1 text-xs font-medium text-slate-600"
           >
@@ -805,13 +805,13 @@ export default function Availability() {
                 {provider.name}
               </option>
             ))}
-          </select>
+          </select> */}
           <div className="col-start-2 row-start-2 self-end">{renderTabNav(true)}</div>
-          <p className="col-start-1 row-start-3 text-xs text-slate-500 leading-snug">
+          {/* <p className="col-start-1 row-start-3 text-xs text-slate-500 leading-snug">
             {!selectedProviderId
               ? 'General availability applies to all providers unless individually overridden'
               : `Managing availability for ${serviceProviders.find((p) => p.id === selectedProviderId)?.name ?? 'selected provider'}`}
-          </p>
+          </p> */}
         </div>
       );
     }
@@ -857,6 +857,7 @@ export default function Availability() {
                   saveAsProviderId={
                     isWorkspaceAdminUser && selectedProviderId ? selectedProviderId : undefined
                   }
+                  headerExtra={isWorkspaceAdminUser ? renderServiceProviderFilter() : null}
                   initialTimesheet={generalInitialTimesheet}
                   onSave={handleGeneralTimesheetSaved}
                   onSaveFeedback={setTimesheetSaveFeedback}

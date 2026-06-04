@@ -29,7 +29,7 @@ export const BOOKING_STEP_TITLES = {
 export const BOOKING_PLACEHOLDERS = {
   name: 'Enter your full name',
   email: 'your.email@example.com',
-  phone: '+1 (555) 000-0000',
+  phone: 'Enter mobile number',
   notes: 'Anything we should know?',
   selectOption: 'Select an option',
 } as const;
