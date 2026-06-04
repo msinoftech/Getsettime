@@ -44,9 +44,14 @@ export function saveCountry(code: string): void {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
 }
 
+function apiCountryUrl(): string {
+  if (typeof window === 'undefined') return '/api/ip-country';
+  return `${window.location.origin}/api/ip-country`;
+}
+
 export async function fetchCountryFromApi(): Promise<string | null> {
   try {
-    const res = await fetch('/api/ip-country');
+    const res = await fetch(apiCountryUrl(), { cache: 'no-store' });
     if (!res.ok) return null;
     const data = (await res.json()) as { country?: string | null };
     const c = data.country?.toUpperCase();
@@ -56,20 +61,25 @@ export async function fetchCountryFromApi(): Promise<string | null> {
   }
 }
 
+/**
+ * Resolve default phone country.
+ * Order: profile → /api/ip-country (Vercel edge / ipinfo / ipapi) → localStorage → locale → IN.
+ * API runs before cache so deploys always hit the route when the phone field mounts.
+ */
 export async function detectCountry(options?: {
   profileCountry?: string | null;
 }): Promise<string> {
   const profile = options?.profileCountry?.toUpperCase();
   if (isValidIso2(profile)) return profile;
 
-  const cached = getCachedCountry();
-  if (cached) return cached;
-
   const fromApi = await fetchCountryFromApi();
   if (fromApi) {
     saveCountry(fromApi);
     return fromApi;
   }
+
+  const cached = getCachedCountry();
+  if (cached) return cached;
 
   const locale = getCountryFromBrowserLocale();
   if (locale) return locale;

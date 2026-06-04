@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 
+export const dynamic = 'force-dynamic';
+
 const CACHE = new Map<string, { country: string; exp: number }>();
 const TTL_MS = 24 * 60 * 60 * 1000;
 const TIMEOUT_MS = 5000;

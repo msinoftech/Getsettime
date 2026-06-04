@@ -1,16 +1,33 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { detectCountry, DEFAULT_COUNTRY } from '@/src/services/countryDetection';
+import {
+  detectCountry,
+  DEFAULT_COUNTRY,
+  getCachedCountry,
+} from '@/src/services/countryDetection';
+
+function isProfileCountryIso2(profileCountry?: string | null): boolean {
+  const p = profileCountry?.trim().toUpperCase();
+  return Boolean(p && p.length === 2);
+}
 
 export function useDefaultPhoneCountry(profileCountry?: string | null) {
-  const [country, setCountry] = useState(DEFAULT_COUNTRY);
-  const [loadingCountry, setLoadingCountry] = useState(true);
+  const profileIso2 = isProfileCountryIso2(profileCountry)
+    ? profileCountry!.trim().toUpperCase()
+    : null;
+  const cachedOnMount = typeof window !== 'undefined' ? getCachedCountry() : null;
+
+  const [country, setCountry] = useState(profileIso2 ?? cachedOnMount ?? DEFAULT_COUNTRY);
+  const [loadingCountry, setLoadingCountry] = useState(
+    !profileIso2 && !cachedOnMount
+  );
 
   useEffect(() => {
     let cancelled = false;
-    setLoadingCountry(true);
-    void detectCountry({ profileCountry }).then((code) => {
+    if (!profileIso2) setLoadingCountry(true);
+
+    void detectCountry({ profileCountry: profileIso2 ?? profileCountry }).then((code) => {
       if (!cancelled) {
         setCountry(code);
         setLoadingCountry(false);
@@ -19,7 +36,7 @@ export function useDefaultPhoneCountry(profileCountry?: string | null) {
     return () => {
       cancelled = true;
     };
-  }, [profileCountry]);
+  }, [profileCountry, profileIso2]);
 
   return { country, loadingCountry, setCountry };
 }
