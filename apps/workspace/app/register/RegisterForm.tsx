@@ -27,6 +27,7 @@ import {
   ROLE_SERVICE_PROVIDER,
   ROLE_CUSTOMER,
 } from "@/src/constants/roles";
+import { build_service_provider_public_booking_url } from "@/src/utils/public_booking_link";
 
 type OnboardingRole = "workspace_admin" | "service_provider";
 
@@ -147,6 +148,10 @@ export default function RegisterForm() {
   const [workspaceType, setWorkspaceType] = useState<string | null>(null);
   const [workspaceCatalogProfessionId, setWorkspaceCatalogProfessionId] = useState("");
   const [onboardingProviderUserId, setOnboardingProviderUserId] = useState<string | null>(null);
+  const [workspaceSlug, setWorkspaceSlug] = useState("");
+  const [providerLinkSlug, setProviderLinkSlug] = useState("");
+  const [providerLinkLoading, setProviderLinkLoading] = useState(false);
+  const [providerLinkError, setProviderLinkError] = useState<string | null>(null);
   const [spDepartmentsLockedFromInvite, setSpDepartmentsLockedFromInvite] = useState(false);
   // Step 1 — Profession
   const [professions, setProfessions] = useState<Profession[]>([]);
@@ -189,6 +194,62 @@ export default function RegisterForm() {
   /** Locked for full invite onboarding so auth refresh cannot create a personal workspace. */
   const onboardingKindRef = useRef<"invite" | "owner" | null>(null);
   const lockedWorkspaceIdRef = useRef<number | null>(null);
+  const providerLinkEnsureRef = useRef<{
+    userId: string;
+    promise: Promise<void>;
+  } | null>(null);
+
+  const ensureServiceProviderBookingLink = useCallback(
+    async (headers: Record<string, string>, userId: string) => {
+      if (providerLinkEnsureRef.current?.userId === userId) {
+        await providerLinkEnsureRef.current.promise;
+        return;
+      }
+
+      const promise = (async () => {
+        setProviderLinkLoading(true);
+        setProviderLinkError(null);
+        try {
+          const res = await fetch("/api/onboarding/service-provider-link", {
+            method: "POST",
+            headers,
+          });
+          const body = (await res.json().catch(() => ({}))) as {
+            slug?: string;
+            workspace_slug?: string;
+            preview_url?: string | null;
+            error?: string;
+          };
+          if (!res.ok) {
+            const message =
+              typeof body.error === "string"
+                ? body.error
+                : "Failed to create booking link";
+            setProviderLinkError(message);
+            setProviderLinkSlug("");
+            return;
+          }
+          if (typeof body.slug === "string") {
+            setProviderLinkSlug(body.slug);
+          }
+          if (typeof body.workspace_slug === "string") {
+            setWorkspaceSlug(body.workspace_slug);
+          }
+        } catch (e: unknown) {
+          setProviderLinkError(
+            e instanceof Error ? e.message : "Failed to create booking link"
+          );
+          setProviderLinkSlug("");
+        } finally {
+          setProviderLinkLoading(false);
+        }
+      })();
+
+      providerLinkEnsureRef.current = { userId, promise };
+      await promise;
+    },
+    []
+  );
 
   const EMAIL_PARAM_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -423,6 +484,7 @@ export default function RegisterForm() {
     }
     const wsBody = (await wsRes.json()) as {
       workspace?: {
+        slug?: string | null;
         type?: string | null;
         profession_id?: number | null;
         profession_name?: string | null;
@@ -430,6 +492,11 @@ export default function RegisterForm() {
       };
     };
     const ws = wsBody.workspace ?? null;
+    const wsSlug =
+      typeof ws?.slug === "string" && ws.slug.trim() ? ws.slug.trim() : "";
+    if (wsSlug) {
+      setWorkspaceSlug(wsSlug);
+    }
 
     // Fresh metadata before wizard check (JWT can lag behind auth.users after updateUser).
     const { data: userResult, error: getUserErr } = await supabase.auth.getUser();
@@ -462,12 +529,21 @@ export default function RegisterForm() {
     // which would reset the UI to step 1 and make Next appear broken. Step comes from goToOnboardingStep / full hydration.
     if (resumeStepHydratedUserIdRef.current === userIdForResume) {
       const { data: { session: latestSession } } = await supabase.auth.getSession();
+      const tokenAfterRefreshFast =
+        latestSession?.access_token ?? session.access_token;
+      const authHeadersFast: Record<string, string> = {
+        Authorization: `Bearer ${tokenAfterRefreshFast}`,
+        "Content-Type": "application/json",
+      };
       const emailUser = userResult.user ?? latestSession?.user ?? session.user;
       setWorkspaceType(ws?.type ?? null);
       setOnboardingUser({
         email: emailUser.email ?? undefined,
         google_calendar_sync: read_google_calendar_sync(meta),
       });
+      if (isServiceProvider && userIdForResume) {
+        await ensureServiceProviderBookingLink(authHeadersFast, userIdForResume);
+      }
       setOnboardingMode(true);
       setCalendarConnecting(false);
       return;
@@ -621,6 +697,10 @@ export default function RegisterForm() {
           await prefillDepartmentNames([savedName]);
         }
       }
+    }
+
+    if (isServiceProvider && userIdForResume) {
+      await ensureServiceProviderBookingLink(authHeadersFresh, userIdForResume);
     }
 
     setOnboardingMode(true);
@@ -1139,12 +1219,18 @@ export default function RegisterForm() {
       (workspaceType && workspaceType.trim()) ||
       selectedProfessionName ||
       "";
+    const providerBookingPreviewUrl = build_service_provider_public_booking_url(
+      workspaceSlug,
+      providerLinkSlug
+    );
     const onboardingNextDisabled =
       onboardingSaving ||
       (onboardingStep === 1 &&
         (isSpOnboardingUi
-          ? selectedDepartments.length === 0 &&
-            !(customDepartmentMode && customDepartment.trim())
+          ? providerLinkLoading ||
+            !providerLinkSlug ||
+            (selectedDepartments.length === 0 &&
+              !(customDepartmentMode && customDepartment.trim()))
           : (selectedProfessionId === OTHER_VALUE ? !customProfession.trim() : !selectedProfessionId) ||
             (selectedProfessionId === OTHER_VALUE
               ? selectedDepartments.length === 0 && !customDepartment.trim()
@@ -1435,6 +1521,36 @@ export default function RegisterForm() {
                   )}
                 </div>
               </div>
+
+              {isSpOnboardingUi && (
+                <div>
+                  <h2 className="text-lg font-semibold text-gray-800 mb-1">
+                    Your booking link
+                  </h2>
+                  <p className="text-sm text-gray-500 mb-4">
+                    This is your public link for client bookings. You can change it later in
+                    Settings.
+                  </p>
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                    {providerLinkLoading ? (
+                      <p className="text-sm text-slate-500">Creating your booking link…</p>
+                    ) : providerLinkError ? (
+                      <p className="text-sm font-medium text-red-600">{providerLinkError}</p>
+                    ) : providerBookingPreviewUrl ? (
+                      <p
+                        className="break-all text-sm font-medium text-slate-700 select-none pointer-events-none"
+                        aria-readonly="true"
+                      >
+                        {providerBookingPreviewUrl}
+                      </p>
+                    ) : (
+                      <p className="text-sm text-slate-500">
+                        Your booking link will appear here once it is ready.
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

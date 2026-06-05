@@ -22,6 +22,11 @@ interface User {
   workspace_id: string | null;
 }
 
+function capitalize_workspace_name(name: string): string {
+  if (!name) return name;
+  return name.replace(/[A-Za-z]+/g, (word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase());
+}
+
 const UsersPage: React.FC = () => {
   const [users, setUsers] = useState<User[]>([]);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
@@ -411,7 +416,7 @@ const UsersPage: React.FC = () => {
                 <option value="">All Workspaces</option>
                 {workspaces.map((workspace) => (
                   <option key={workspace.id} value={workspace.id}>
-                    {workspace.name}
+                    {capitalize_workspace_name(workspace.name)}
                   </option>
                 ))}
               </select>

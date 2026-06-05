@@ -53,6 +53,129 @@ export function get_provider_link_slug_for_user(
   return parsed[providerId]?.slug ?? null;
 }
 
+const MAX_PROVIDER_LINK_SUFFIX = 999;
+
+export function provider_link_slug_base_from_name(
+  name: string | null | undefined,
+  emailFallback?: string | null
+): string {
+  const fromName = normalize_provider_link_slug(
+    typeof name === 'string' ? name : ''
+  );
+  if (fromName) return fromName;
+
+  const emailLocal =
+    typeof emailFallback === 'string'
+      ? emailFallback.split('@')[0] ?? ''
+      : '';
+  const fromEmail = normalize_provider_link_slug(emailLocal);
+  if (fromEmail) return fromEmail;
+
+  return 'provider';
+}
+
+export function collect_taken_provider_link_slugs(
+  providerLinks: workspace_provider_links_settings,
+  eventTypeSlugs: string[],
+  excludeProviderId?: string
+): Set<string> {
+  const taken = new Set<string>();
+  for (const slug of eventTypeSlugs) {
+    const normalized = normalize_provider_link_slug(slug);
+    if (normalized) taken.add(normalized);
+  }
+  for (const [providerId, entry] of Object.entries(providerLinks)) {
+    if (excludeProviderId && providerId === excludeProviderId) continue;
+    if (entry.slug) taken.add(entry.slug);
+  }
+  return taken;
+}
+
+export function pick_unique_provider_link_slug(
+  baseSlug: string,
+  taken: Set<string>
+): string | null {
+  const base = normalize_provider_link_slug(baseSlug);
+  if (!base) return null;
+
+  if (!taken.has(base)) return base;
+
+  for (let n = 1; n <= MAX_PROVIDER_LINK_SUFFIX; n += 1) {
+    const candidate = `${base}-${n}`;
+    if (!taken.has(candidate)) return candidate;
+  }
+
+  return null;
+}
+
+export async function collect_workspace_taken_provider_link_slugs(
+  supabase: SupabaseClient,
+  workspaceId: number | string,
+  excludeProviderId?: string
+): Promise<{ taken: Set<string>; error: string | null }> {
+  const { data: eventTypeRows, error: eventError } = await supabase
+    .from('event_types')
+    .select('slug')
+    .eq('workspace_id', workspaceId);
+
+  if (eventError) {
+    return { taken: new Set(), error: eventError.message };
+  }
+
+  const eventSlugs: string[] = [];
+  for (const row of eventTypeRows ?? []) {
+    const s = (row as { slug?: unknown }).slug;
+    if (typeof s === 'string' && s.trim()) eventSlugs.push(s);
+  }
+
+  const { data: configRow, error: configError } = await supabase
+    .from('configurations')
+    .select('settings')
+    .eq('workspace_id', workspaceId)
+    .maybeSingle();
+
+  if (configError && configError.code !== 'PGRST116') {
+    return { taken: new Set(), error: configError.message };
+  }
+
+  const links = parse_workspace_provider_links(
+    (configRow?.settings as { links?: unknown } | undefined)?.links
+  );
+
+  return {
+    taken: collect_taken_provider_link_slugs(links, eventSlugs, excludeProviderId),
+    error: null,
+  };
+}
+
+export async function resolve_unique_provider_link_slug(
+  supabase: SupabaseClient,
+  workspaceId: number | string,
+  baseName: string | null | undefined,
+  options?: { emailFallback?: string | null; excludeProviderId?: string }
+): Promise<{ slug: string | null; error: string | null }> {
+  const base = provider_link_slug_base_from_name(
+    baseName,
+    options?.emailFallback
+  );
+
+  const { taken, error } = await collect_workspace_taken_provider_link_slugs(
+    supabase,
+    workspaceId,
+    options?.excludeProviderId
+  );
+  if (error) {
+    return { slug: null, error };
+  }
+
+  const slug = pick_unique_provider_link_slug(base, taken);
+  if (!slug) {
+    return { slug: null, error: 'Could not generate a unique provider link' };
+  }
+
+  return { slug, error: null };
+}
+
 export function merge_workspace_provider_links(
   existing: unknown,
   incoming: unknown,
@@ -90,6 +213,19 @@ export async function assert_provider_link_slug_available(
     return 'Provider link slug is required';
   }
 
+  const { taken, error } = await collect_workspace_taken_provider_link_slugs(
+    supabase,
+    workspaceId,
+    excludeProviderId
+  );
+  if (error) {
+    return error;
+  }
+
+  if (!taken.has(normalized)) {
+    return null;
+  }
+
   const { data: eventTypeRow } = await supabase
     .from('event_types')
     .select('id')
@@ -101,21 +237,5 @@ export async function assert_provider_link_slug_available(
     return 'This link is already used by an event type in your workspace';
   }
 
-  const { data: configRow } = await supabase
-    .from('configurations')
-    .select('settings')
-    .eq('workspace_id', workspaceId)
-    .maybeSingle();
-
-  const links = parse_workspace_provider_links(
-    (configRow?.settings as { links?: unknown } | undefined)?.links
-  );
-
-  for (const [providerId, entry] of Object.entries(links)) {
-    if (providerId !== excludeProviderId && entry.slug === normalized) {
-      return 'This link is already used by another service provider';
-    }
-  }
-
-  return null;
+  return 'This link is already used by another service provider';
 }
