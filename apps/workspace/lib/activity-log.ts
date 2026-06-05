@@ -78,6 +78,9 @@ function default_target_path(type: ActivityEntityType, entity_id?: string | numb
   if (type === "booking" && entity_id != null && String(entity_id).trim()) {
     return `/bookings/${String(entity_id).trim()}`;
   }
+  if (type === "event_type" && entity_id != null && String(entity_id).trim()) {
+    return `/event-type/${String(entity_id).trim()}/edit`;
+  }
   if (type === "event_type") return "/event-type";
   if (type === "department") return "/departments";
   if (type === "service") return "/services";

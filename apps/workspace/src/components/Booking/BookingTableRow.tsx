@@ -2,6 +2,7 @@
 
 import React from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import {
   LuEye as Eye,
   LuSquarePen as SquarePen,
@@ -61,6 +62,20 @@ export function BookingTableRow({
   onDelete,
   isLast = false,
 }: BookingTableRowProps) {
+  const router = useRouter();
+
+  const handleRowClick = () => {
+    onView();
+    router.push(`/bookings/${displayBooking.id}`);
+  };
+
+  const handleRowKeyDown = (e: React.KeyboardEvent<HTMLTableRowElement>) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      handleRowClick();
+    }
+  };
+
   const eventDurationInner = getEventTypeDurationInner(
     displayBooking.event_type_duration_minutes
   );
@@ -72,9 +87,14 @@ export function BookingTableRow({
 
   return (
     <tr
-      className={`transition hover:bg-slate-50/70 ${
+      role="button"
+      tabIndex={0}
+      onClick={handleRowClick}
+      onKeyDown={handleRowKeyDown}
+      className={`cursor-pointer transition hover:bg-slate-50/70 ${
         isLast ? '' : 'border-b border-slate-100'
       }`}
+      aria-label={`View booking for ${displayBooking.name}`}
     >
       <td className="px-6 py-5 align-middle" data-label="Name">
         <div className="flex items-center gap-3">
@@ -141,6 +161,7 @@ export function BookingTableRow({
       <td
         className="px-6 py-5 whitespace-nowrap text-right text-sm font-medium align-middle"
         data-label="Action"
+        onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-end gap-2">
           <Link

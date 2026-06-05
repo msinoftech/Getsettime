@@ -133,8 +133,30 @@ export function Step1DepartmentProvider({
                       <div className="w-10 h-10 rounded-full bg-gradient-to-br from-teal-500 to-teal-600 flex items-center justify-center text-white font-bold">
                         {provider.name.charAt(0)}
                       </div>
-                      <div className="flex-1">
+                      <div className="flex-1 min-w-0">
                         <div className="font-bold text-gray-900 capitalize">{provider.name}</div>
+                        {(provider.education || provider.experience || provider.specialty) && (
+                          <div className="mt-1 space-y-0.5 text-xs text-gray-600">
+                            {provider.education ? (
+                              <p>
+                                <span className="font-semibold text-gray-700">Study/Education:</span>{' '}
+                                {provider.education}
+                              </p>
+                            ) : null}
+                            {provider.experience ? (
+                              <p>
+                                <span className="font-semibold text-gray-700">Experience:</span>{' '}
+                                {provider.experience}
+                              </p>
+                            ) : null}
+                            {provider.specialty ? (
+                              <p>
+                                <span className="font-semibold text-gray-700">Specialty:</span>{' '}
+                                {provider.specialty}
+                              </p>
+                            ) : null}
+                          </div>
+                        )}
                       </div>
                       {isSelected && (
                         <svg className="w-5 h-5 text-teal-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">

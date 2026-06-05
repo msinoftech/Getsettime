@@ -45,6 +45,9 @@ export default function ProfileCreative({ }) {
     name: "",
     email: "",
     link: "",
+    education: "",
+    experience: "",
+    specialty: "",
     bio: "",
     phone: "",
   });
@@ -96,6 +99,9 @@ export default function ProfileCreative({ }) {
         "User",
       email: user.email || "",
       link: profileSlug ? `${appUrl.replace(/\/$/, "")}/${profileSlug}` : "",
+      education: (metadata.education as string) || "",
+      experience: (metadata.experience as string) || "",
+      specialty: (metadata.specialty as string) || "",
       bio: (metadata.bio as string) || "",
       phone: (metadata.phone as string) || "",
     });
@@ -444,6 +450,9 @@ export default function ProfileCreative({ }) {
           ...currentMetadata,
           name: form.name,
           phone: form.phone,
+          education: form.education,
+          experience: form.experience,
+          specialty: form.specialty,
           bio: form.bio,
           profile_link: form.link,
           show_public_profile: showPublic,
@@ -501,6 +510,9 @@ export default function ProfileCreative({ }) {
         "User",
       email: user.email || "",
       link: profileSlug ? `${appUrl.replace(/\/$/, "")}/${profileSlug}` : "",
+      education: (metadata.education as string) || "",
+      experience: (metadata.experience as string) || "",
+      specialty: (metadata.specialty as string) || "",
       bio: (metadata.bio as string) || "",
       phone: (metadata.phone as string) || "",
     });
@@ -676,6 +688,18 @@ export default function ProfileCreative({ }) {
                             <p className="text-xs opacity-80 mb-1">Phone</p>
                             <p className="font-medium">{form.phone || "Your Phone"}</p>
                         </div>
+                        <div>
+                            <p className="text-xs opacity-80 mb-1">Study/Education</p>
+                            <p className="font-medium">{form.education || "Your education"}</p>
+                        </div>
+                        <div>
+                            <p className="text-xs opacity-80 mb-1">Experience</p>
+                            <p className="font-medium">{form.experience || "Your experience"}</p>
+                        </div>
+                        <div>
+                            <p className="text-xs opacity-80 mb-1">Specialty</p>
+                            <p className="font-medium">{form.specialty || "Your specialty"}</p>
+                        </div>
                         <div>   
                             <p className="text-xs opacity-80 mb-1">Bio</p>
                             <p className="font-medium">{form.bio || "Your Bio"}</p>
@@ -763,6 +787,42 @@ export default function ProfileCreative({ }) {
                                     placeholder="+1 (555) 000-0000"
                                 />
                             </div>
+                        </div>
+
+                        {/* Study/Education Field */}
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">Study/Education</label>
+                            <input
+                              type="text"
+                              value={form.education}
+                              onChange={(e) => setForm({ ...form, education: e.target.value })}
+                              className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
+                              placeholder="e.g. MBBS, Stanford University"
+                            />
+                        </div>
+
+                        {/* Experience Field */}
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">Experience</label>
+                            <input
+                              type="text"
+                              value={form.experience}
+                              onChange={(e) => setForm({ ...form, experience: e.target.value })}
+                              className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
+                              placeholder="e.g. 10+ years in cardiology"
+                            />
+                        </div>
+
+                        {/* Specialty Field */}
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">Specialty</label>
+                            <input
+                              type="text"
+                              value={form.specialty}
+                              onChange={(e) => setForm({ ...form, specialty: e.target.value })}
+                              className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
+                              placeholder="e.g. Cardiology, Dermatology"
+                            />
                         </div>
 
                         {/* Bio Field */}

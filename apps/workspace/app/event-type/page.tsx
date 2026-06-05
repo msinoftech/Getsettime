@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState, useEffect, useRef, type FormEvent } from "react";
+import { useRouter } from "next/navigation";
 import {
   LuCalendarDays as CalendarDays,
   LuClock3 as Clock3,
@@ -32,7 +33,6 @@ import {
   format_event_type_location_labels,
   parse_location_types_from_storage,
   serialize_location_types,
-  split_duration_minutes,
   total_duration_minutes,
   type event_type_form_state,
   type event_type_location_value,
@@ -187,6 +187,7 @@ function format_duration(totalMinutes: number | null): string {
 }
 
 export default function EventTypes() {
+  const router = useRouter();
   const { user } = useAuth();
   const user_role =
     typeof user?.user_metadata?.role === "string" ? user.user_metadata.role : "";
@@ -196,7 +197,6 @@ export default function EventTypes() {
   const [totalBookings, setTotalBookings] = useState<number>(0);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
-  const [editingId, setEditingId] = useState<number | null>(null);
   const [workspaceSlug, setWorkspaceSlug] = useState<string>("");
   const [providerLinks, setProviderLinks] = useState<workspace_provider_links_settings>({});
   const [serviceProviderOwnerIds, setServiceProviderOwnerIds] = useState<Set<string>>(
@@ -312,7 +312,7 @@ export default function EventTypes() {
   }, [user]);
 
   useEffect(() => {
-    if (!showForm || editingId != null || !default_service_provider_id_for_new_form) {
+    if (!showForm || !default_service_provider_id_for_new_form) {
       return;
     }
     setForm((prev) =>
@@ -320,7 +320,7 @@ export default function EventTypes() {
         ? { ...prev, service_provider_id: default_service_provider_id_for_new_form }
         : prev
     );
-  }, [showForm, editingId, default_service_provider_id_for_new_form]);
+  }, [showForm, default_service_provider_id_for_new_form]);
 
   const load_event_settings = async () => {
     try {
@@ -444,54 +444,27 @@ export default function EventTypes() {
         }),
       };
 
-      if (editingId) {
-        const response = await fetch("/api/event-types", {
-          method: "PATCH",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${session.access_token}`,
-          },
-          body: JSON.stringify({ id: editingId, ...payload }),
-        });
+      const response = await fetch("/api/event-types", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify(payload),
+      });
 
-        if (!response.ok) {
-          const error = await response.json();
-          setFormError(
-            typeof error?.error === "string"
-              ? error.error
-              : "Could not update event type."
-          );
-          return;
-        }
-
-        const result = await response.json();
-        setItems((prev) =>
-          prev.map((item) => (item.id === editingId ? result.data : item))
+      if (!response.ok) {
+        const error = await response.json();
+        setFormError(
+          typeof error?.error === "string"
+            ? error.error
+            : "Could not create event type."
         );
-        setEditingId(null);
-      } else {
-        const response = await fetch("/api/event-types", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${session.access_token}`,
-          },
-          body: JSON.stringify(payload),
-        });
-
-        if (!response.ok) {
-          const error = await response.json();
-          setFormError(
-            typeof error?.error === "string"
-              ? error.error
-              : "Could not create event type."
-          );
-          return;
-        }
-
-        const result = await response.json();
-        setItems((prev) => [result.data, ...prev]);
+        return;
       }
+
+      const result = await response.json();
+      setItems((prev) => [result.data, ...prev]);
 
       setForm(empty_form());
       setShowForm(false);
@@ -507,25 +480,7 @@ export default function EventTypes() {
   };
 
   const handleEdit = (item: EventType) => {
-    setFormError(null);
-    setEditingId(item.id);
-    const { duration_hours, duration_minutes_part } = split_duration_minutes(
-      item.duration_minutes ?? undefined
-    );
-    setForm({
-      title: item.title,
-      duration_hours,
-      duration_minutes_part,
-      buffer_before: item.buffer_before?.toString() || "",
-      buffer_after: item.buffer_after?.toString() || "",
-      location_types: parse_location_types_from_storage(item.location_type),
-      is_public: item.is_public || false,
-      service_provider_id:
-        item.owner_id && serviceProviderOwnerIds.has(item.owner_id)
-          ? item.owner_id
-          : "",
-    });
-    setShowForm(true);
+    router.push(`/event-type/${item.id}/edit`);
   };
 
   const handleDeleteClick = (id: number) => setDeleteConfirmId(id);
@@ -567,13 +522,11 @@ export default function EventTypes() {
     setForm(empty_form());
     setFormError(null);
     setShowForm(false);
-    setEditingId(null);
   };
 
   const handleNewEvent = () => {
     setForm(empty_form());
     setFormError(null);
-    setEditingId(null);
     setShowForm(true);
   };
 
@@ -900,7 +853,7 @@ export default function EventTypes() {
             setForm(next);
             if (formError) setFormError(null);
           }}
-          editingId={editingId}
+          editingId={null}
           formError={formError}
           submitting={submitting}
           onSubmit={handleSubmit}
@@ -1387,7 +1340,7 @@ export default function EventTypes() {
                       }
                       className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-sky-400"
                     >
-                      <option value="video">Video Call</option>
+                      <option value="video">Google Meet</option>
                       <option value="phone">Phone Call</option>
                       <option value="in_person">In Person</option>
                       <option value="custom">Custom</option>

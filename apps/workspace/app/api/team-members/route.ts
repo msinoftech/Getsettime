@@ -210,10 +210,28 @@ export async function GET(req: NextRequest) {
           : [];
         const deptIds = [...new Set(deptByUser.get(u.id) ?? [])].sort((a, b) => a - b);
         const onboardingCompleted = meta?.onboarding_completed;
+        const educationRaw = meta?.education;
+        const experienceRaw = meta?.experience;
+        const specialtyRaw = meta?.specialty;
+        const education =
+          typeof educationRaw === 'string' && educationRaw.trim() !== ''
+            ? educationRaw.trim()
+            : null;
+        const experience =
+          typeof experienceRaw === 'string' && experienceRaw.trim() !== ''
+            ? experienceRaw.trim()
+            : null;
+        const specialty =
+          typeof specialtyRaw === 'string' && specialtyRaw.trim() !== ''
+            ? specialtyRaw.trim()
+            : null;
         return {
           id: u.id,
           email: u.email,
           name: u.user_metadata?.name || u.email?.split('@')[0] || 'Unknown',
+          education,
+          experience,
+          specialty,
           role: u.user_metadata?.role || null,
           additional_roles,
           departments: deptIds,

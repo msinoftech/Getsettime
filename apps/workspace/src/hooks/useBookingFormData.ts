@@ -24,6 +24,9 @@ interface TeamMemberRow {
   id: string;
   email?: string | null;
   name: string;
+  education?: string | null;
+  experience?: string | null;
+  specialty?: string | null;
   role?: string | null;
   additional_roles?: string[];
   departments?: number[];
@@ -91,6 +94,9 @@ export function useBookingFormData({
         id: m.id,
         name: m.name,
         email: m.email ?? '',
+        education: m.education ?? null,
+        experience: m.experience ?? null,
+        specialty: m.specialty ?? null,
         departments: Array.isArray(m.departments) ? m.departments : [],
         is_workspace_owner: m.is_workspace_owner,
         additional_roles: m.additional_roles,

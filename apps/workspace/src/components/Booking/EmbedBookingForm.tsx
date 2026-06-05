@@ -38,6 +38,10 @@ import { Step2ServiceSelection } from './MultiStepBooking/Step2ServiceSelection'
 import { Step4IntakeForm } from './MultiStepBooking/Step4IntakeForm';
 import { Step5Success } from './MultiStepBooking/Step5Success';
 import { AdminNoticeBanner, AdminNoticeIcon } from './MultiStepBooking/AdminNotice';
+import {
+  can_navigate_to_booking_step,
+  type booking_step_nav_context,
+} from '@/src/utils/booking_step_navigation';
 
 const Step3DateTime = lazy(() =>
   import('./MultiStepBooking/Step3DateTime').then((m) => ({ default: m.Step3DateTime }))
@@ -247,6 +251,54 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
     intakeMeetingValidation
   );
   const isStep4Valid = Object.keys(intakeValidation).length === 0;
+
+  const step_nav_context = useMemo(
+    (): booking_step_nav_context => ({
+      step,
+      totalSteps: 5,
+      departmentsCount: departments.length,
+      showProviderPicker,
+      hasSelectedDepartment: !!selectedDepartment,
+      hasSelectedProvider: !!selectedProvider,
+      hasSelectedType: !!selectedType,
+      loadingEventTypes,
+      hasSelectedDate: !!selectedDate,
+      hasSelectedTime: !!selectedTime,
+      isRescheduleMode,
+      rescheduleContinueDisabled: loading,
+      isSuccessScreen: step === 5,
+    }),
+    [
+      step,
+      departments.length,
+      showProviderPicker,
+      selectedDepartment,
+      selectedProvider,
+      selectedType,
+      loadingEventTypes,
+      selectedDate,
+      selectedTime,
+      isRescheduleMode,
+      loading,
+    ]
+  );
+
+  const can_click_booking_step = useCallback(
+    (target: number) => can_navigate_to_booking_step(step_nav_context, target),
+    [step_nav_context]
+  );
+
+  const handle_step_click = useCallback(
+    (target: number) => {
+      if (!can_navigate_to_booking_step(step_nav_context, target)) return;
+      if (step === 3 && target < 3) {
+        setSelectedDate(null);
+        setSelectedTime('');
+      }
+      setStep(target);
+    },
+    [step_nav_context, step]
+  );
 
   const workspacePrimaryColor = generalSettings?.primaryColor ?? DEFAULT_PRIMARY_COLOR;
   const workspaceAccentColor = generalSettings?.accentColor ?? null;
@@ -693,7 +745,11 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
             meetingChoiceLabel={meetingChoiceLabel.trim() || undefined}
           />
           <div className="p-4 sm:p-6 lg:p-8 xl:p-10 bg-white relative">
-            <ProgressIndicator step={step} />
+            <ProgressIndicator
+              step={step}
+              onStepClick={handle_step_click}
+              canClickStep={can_click_booking_step}
+            />
             {error && (
               <div className="mb-6 p-4 bg-red-50 border border-red-200 text-red-700 rounded-xl text-sm">
                 {error}

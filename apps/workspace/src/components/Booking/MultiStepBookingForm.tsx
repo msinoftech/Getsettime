@@ -30,6 +30,10 @@ import {
 import { isTimeSlotBooked } from '../../utils/bookingTime';
 import { getDisplayTimezone, parseTimeStringTo24h } from '../../utils/timezone';
 import { normalizeInviteePhoneForStorage } from '@/src/utils/phone';
+import {
+  can_navigate_to_booking_step,
+  type booking_step_nav_context,
+} from '@/src/utils/booking_step_navigation';
 
 import { BookingPreviewSidebar } from './MultiStepBooking/BookingPreviewSidebar';
 import { ProgressIndicator } from './MultiStepBooking/ProgressIndicator';
@@ -225,6 +229,49 @@ const MultiStepBookingForm = ({
     intakeMeetingValidation
   );
   const isStep4Valid = Object.keys(intakeValidation).length === 0;
+
+  const step_nav_context = useMemo(
+    (): booking_step_nav_context => ({
+      step,
+      totalSteps: 4,
+      departmentsCount: departments.length,
+      showProviderPicker,
+      hasSelectedDepartment: !!selectedDepartment,
+      hasSelectedProvider: !!selectedProvider,
+      hasSelectedType: !!selectedType,
+      loadingEventTypes,
+      hasSelectedDate: !!selectedDate,
+      hasSelectedTime: !!selectedTime,
+    }),
+    [
+      step,
+      departments.length,
+      showProviderPicker,
+      selectedDepartment,
+      selectedProvider,
+      selectedType,
+      loadingEventTypes,
+      selectedDate,
+      selectedTime,
+    ]
+  );
+
+  const can_click_booking_step = useCallback(
+    (target: number) => can_navigate_to_booking_step(step_nav_context, target),
+    [step_nav_context]
+  );
+
+  const handle_step_click = useCallback(
+    (target: number) => {
+      if (!can_navigate_to_booking_step(step_nav_context, target)) return;
+      if (step === 3 && target < 3) {
+        setSelectedDate(null);
+        setSelectedTime('');
+      }
+      setStep(target);
+    },
+    [step_nav_context, step]
+  );
 
   useEffect(() => {
     if (!loadingDepartments && departments.length === 0 && step === 1) setStep(2);
@@ -586,7 +633,12 @@ const MultiStepBookingForm = ({
                 </button>
               </div>
             )}
-            <ProgressIndicator step={step} totalSteps={4} />
+            <ProgressIndicator
+              step={step}
+              totalSteps={4}
+              onStepClick={handle_step_click}
+              canClickStep={can_click_booking_step}
+            />
             {error && (
               <div className="mb-6 p-4 bg-red-50 border border-red-200 text-red-700 rounded-xl text-sm">
                 {error}

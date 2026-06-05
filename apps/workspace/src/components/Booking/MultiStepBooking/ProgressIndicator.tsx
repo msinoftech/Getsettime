@@ -6,45 +6,79 @@ interface ProgressIndicatorProps {
   step: number;
   /** Admin create flow ends at step 4; embed retains success step 5. Default 5. */
   totalSteps?: number;
+  onStepClick?: (targetStep: number) => void;
+  canClickStep?: (targetStep: number) => boolean;
 }
 
-export function ProgressIndicator({ step, totalSteps = 5 }: ProgressIndicatorProps) {
+export function ProgressIndicator({
+  step,
+  totalSteps = 5,
+  onStepClick,
+  canClickStep,
+}: ProgressIndicatorProps) {
   const steps = Array.from({ length: totalSteps }, (_, i) => i + 1);
+
+  const render_step_content = (s: number) =>
+    s < step ? (
+      <svg
+        className="w-4 h-4 sm:w-5 sm:h-5 lg:w-6 lg:h-6"
+        fill="none"
+        stroke="currentColor"
+        viewBox="0 0 24 24"
+      >
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+      </svg>
+    ) : (
+      s
+    );
+
+  const step_circle_class = (s: number, clickable: boolean) =>
+    `w-8 h-8 sm:w-6 sm:w-6 md:w-8 md:h-8 lg:w-10 lg:h-10 rounded-full flex items-center justify-center font-bold text-xs sm:text-sm transition-all duration-300 relative z-10 ${
+      s === step
+        ? 'bg-gradient-to-br from-indigo-600 to-indigo-700 text-white shadow-xl scale-110 ring-2 sm:ring-4 ring-indigo-200'
+        : s < step
+          ? 'bg-gradient-to-br from-indigo-500 to-indigo-600 text-white shadow-lg'
+          : 'bg-gray-100 text-gray-400 border-2 border-gray-200'
+    } ${clickable ? 'cursor-pointer hover:scale-105 hover:shadow-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 focus-visible:ring-offset-2' : ''}`;
+
   return (
     <div className="steps flex items-center justify-center gap-2 sm:gap-3 relative flex-wrap mb-6">
-      {steps.map((s, index) => (
-        <React.Fragment key={s}>
-          <div className="relative">
-            <div
-              className={`w-8 h-8 sm:w-6 sm:w-6 md:w-8 md:h-8 lg:w-10 lg:h-10 rounded-full flex items-center justify-center font-bold text-xs sm:text-sm transition-all duration-300 relative z-10 ${
-                s === step
-                  ? 'bg-gradient-to-br from-indigo-600 to-indigo-700 text-white shadow-xl scale-110 ring-2 sm:ring-4 ring-indigo-200'
-                  : s < step
-                    ? 'bg-gradient-to-br from-indigo-500 to-indigo-600 text-white shadow-lg'
-                    : 'bg-gray-100 text-gray-400 border-2 border-gray-200'
-              }`}
-            >
-              {s < step ? (
-                <svg className="w-4 h-4 sm:w-5 sm:h-5 lg:w-6 lg:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-                </svg>
+      {steps.map((s, index) => {
+        const clickable = Boolean(
+          onStepClick && canClickStep?.(s) && s !== step
+        );
+
+        return (
+          <React.Fragment key={s}>
+            <div className="relative">
+              {clickable ? (
+                <button
+                  type="button"
+                  onClick={() => onStepClick?.(s)}
+                  className={step_circle_class(s, true)}
+                  aria-label={`Go to step ${s}`}
+                >
+                  {render_step_content(s)}
+                </button>
               ) : (
-                s
+                <div className={step_circle_class(s, false)} aria-current={s === step ? 'step' : undefined}>
+                  {render_step_content(s)}
+                </div>
+              )}
+              {s === step && (
+                <div className="absolute inset-0 rounded-full bg-indigo-400 animate-ping opacity-75 pointer-events-none" />
               )}
             </div>
-            {s === step && (
-              <div className="absolute inset-0 rounded-full bg-indigo-400 animate-ping opacity-75" />
+            {index < totalSteps - 1 && (
+              <div
+                className={`h-1 w-4 sm:w-5 md:w-6 lg:w-8 rounded-full transition-all duration-500 hidden sm:block ${
+                  s < step ? 'bg-gradient-to-r from-indigo-500 to-indigo-600' : 'bg-gray-200'
+                }`}
+              />
             )}
-          </div>
-          {index < totalSteps - 1 && (
-            <div
-              className={`h-1 w-4 sm:w-5 md:w-6 lg:w-8 rounded-full transition-all duration-500 hidden sm:block ${
-                s < step ? 'bg-gradient-to-r from-indigo-500 to-indigo-600' : 'bg-gray-200'
-              }`}
-            />
-          )}
-        </React.Fragment>
-      ))}
+          </React.Fragment>
+        );
+      })}
     </div>
   );
 }

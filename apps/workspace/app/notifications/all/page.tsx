@@ -1,9 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { NotificationsActivityFeedSkeleton } from "@/src/components/ui/NotificationsSkeleton";
+import { build_activity_diff_display } from "@/src/utils/activity_diff_display";
 
 type ActivityType =
   | "booking"
@@ -20,10 +22,21 @@ interface ActivityItem {
   title: string;
   description: string;
   createdAt: string;
+  entityId?: string | null;
   targetPath?: string | null;
   before?: Record<string, unknown> | null;
   after?: Record<string, unknown> | null;
   changedFields?: string[];
+}
+
+function resolve_activity_href(item: ActivityItem): string | null {
+  if (item.type === "event_type" && item.entityId?.trim()) {
+    return `/event-type/${item.entityId.trim()}/edit`;
+  }
+  if (item.targetPath?.trim()) {
+    return item.targetPath.trim();
+  }
+  return null;
 }
 
 function toRelativeTime(dateIso: string, nowMs: number) {
@@ -50,6 +63,7 @@ function formatDateTime(dateIso: string) {
 }
 
 export default function AllNotifications() {
+  const router = useRouter();
   const [items, setItems] = useState<ActivityItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -119,8 +133,35 @@ export default function AllNotifications() {
         </div>
       ) : (
         <div className="bg-white border border-slate-200 rounded-xl divide-y divide-slate-100">
-          {items.map((item) => (
-            <div key={item.id} className="p-4 flex items-start gap-3">
+          {items.map((item) => {
+            const activity_href = resolve_activity_href(item);
+            const diff_display = build_activity_diff_display(item);
+            return (
+            <div
+              key={item.id}
+              role={activity_href ? "button" : undefined}
+              tabIndex={activity_href ? 0 : undefined}
+              onClick={
+                activity_href
+                  ? () => router.push(activity_href)
+                  : undefined
+              }
+              onKeyDown={
+                activity_href
+                  ? (e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        router.push(activity_href);
+                      }
+                    }
+                  : undefined
+              }
+              className={`p-4 flex items-start gap-3 ${
+                activity_href
+                  ? "cursor-pointer transition hover:bg-slate-50/80"
+                  : ""
+              }`}
+            >
               <div
                 className={`mt-0.5 h-8 w-8 rounded-full grid place-items-center text-sm ${
                   item.type === "booking"
@@ -155,9 +196,10 @@ export default function AllNotifications() {
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
                   <p className="text-sm font-medium text-slate-800">{item.title}</p>
-                  {item.targetPath ? (
+                  {activity_href ? (
                     <Link
-                      href={item.targetPath}
+                      href={activity_href}
+                      onClick={(e) => e.stopPropagation()}
                       className="text-xs font-semibold text-indigo-600 hover:text-indigo-700"
                     >
                       View
@@ -165,24 +207,15 @@ export default function AllNotifications() {
                   ) : null}
                 </div>
                 <p className="text-xs text-slate-500 mt-0.5">{item.description}</p>
-                {Array.isArray(item.changedFields) && item.changedFields.length > 0 ? (
+                {diff_display.changed_summary ? (
                   <p className="text-xs text-slate-500 mt-1">
-                    Changed: {item.changedFields.slice(0, 4).join(", ")}
+                    Changed: {diff_display.changed_summary}
                   </p>
                 ) : null}
-                {item.before || item.after ? (
+                {diff_display.detail_lines.length > 0 ? (
                   <div className="mt-2 rounded-md bg-slate-50 p-2 text-xs text-slate-600">
-                    <span className="font-semibold text-slate-700">Before/After:</span>{" "}
-                    {Array.isArray(item.changedFields) && item.changedFields.length > 0
-                      ? item.changedFields
-                          .slice(0, 2)
-                          .map((field) => {
-                            const beforeValue = item.before?.[field];
-                            const afterValue = item.after?.[field];
-                            return `${field}: ${String(beforeValue ?? "-")} -> ${String(afterValue ?? "-")}`;
-                          })
-                          .join(" | ")
-                      : "Details updated"}
+                    <span className="font-semibold text-slate-700">Updates:</span>{" "}
+                    {diff_display.detail_lines.join(" | ")}
                   </div>
                 ) : null}
                 <p className="text-xs text-slate-400 mt-1">
@@ -190,7 +223,8 @@ export default function AllNotifications() {
                 </p>
               </div>
             </div>
-          ))}
+          );
+          })}
         </div>
       )}
     </section>

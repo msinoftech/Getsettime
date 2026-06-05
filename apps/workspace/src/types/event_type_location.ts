@@ -2,7 +2,7 @@
 export const EVENT_TYPE_LOCATION_OPTIONS = [
   { value: 'in_person', label: 'In person' },
   { value: 'phone', label: 'Phone' },
-  { value: 'video', label: 'Video call' },
+  { value: 'video', label: 'Google Meet' },
   { value: 'custom', label: 'Custom' },
 ] as const;
 
