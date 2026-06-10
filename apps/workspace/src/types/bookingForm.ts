@@ -72,7 +72,12 @@ export interface Service {
 }
 
 export interface Timeslot {
+  /** Display label in customer/viewer timezone */
   time: string;
+  /** Canonical UTC ISO instant for booking submission */
+  startUtc: string;
+  /** Optional host-local label when viewer TZ differs */
+  hostTime?: string;
   disabled: boolean;
   reason?: string;
 }

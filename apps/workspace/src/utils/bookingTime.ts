@@ -3,11 +3,20 @@ import type {
   BreakTime,
   Booking,
   DayName,
+  DaySchedule,
   EventType,
   Timeslot,
 } from '@/src/types/bookingForm';
 import { DAY_NAMES } from '@/src/constants/booking';
-import { formatDateTimeForDisplay } from './timezone';
+import {
+  formatUtcInTimezone,
+  getCalendarDateInTimezone,
+  getLocalTimePartsInTimezone,
+  localDateTimeToUtcIso,
+} from '@/lib/date-timezone';
+import { getBrowserTimezone } from '@app/location';
+import { step3PerfLog } from '@/src/utils/bookingStep3Perf';
+import { formatDateTimeForDisplay, needsTimezoneConversion } from './timezone';
 
 /** Parse time string (HH:mm) to minutes since midnight */
 export function parseTimeToMinutes(time: string): number {
@@ -177,9 +186,305 @@ export function isTimeSlotBooked(
   });
 }
 
+/** Calendar YYYY-MM-DD from date picker cell (year/month/day components). */
+export function getViewerDateString(selectedDate: Date): string {
+  const y = selectedDate.getFullYear();
+  const m = String(selectedDate.getMonth() + 1).padStart(2, '0');
+  const d = String(selectedDate.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function addDaysToDateStr(dateStr: string, days: number): string {
+  const [y, m, d] = dateStr.split('-').map((x) => parseInt(x, 10));
+  const dt = new Date(y, m - 1, d);
+  dt.setDate(dt.getDate() + days);
+  return formatLocalDateString(dt);
+}
+
+function getDayNameFromDateStr(dateStr: string, timezone: string): DayName {
+  const noonUtc = localDateTimeToUtcIso(dateStr, 12, 0, timezone);
+  const parts = getLocalTimePartsInTimezone(noonUtc, timezone);
+  return DAY_NAMES[parts.dayOfWeek];
+}
+
+function providerDatesForViewerDay(
+  viewerDateStr: string,
+  viewerTimezone: string,
+  providerTimezone: string
+): string[] {
+  const dates = new Set<string>();
+  const dayStartUtc = localDateTimeToUtcIso(viewerDateStr, 0, 0, viewerTimezone);
+  const nextDay = addDaysToDateStr(viewerDateStr, 1);
+  const dayEndUtc = localDateTimeToUtcIso(nextDay, 0, 0, viewerTimezone);
+  let t = new Date(dayStartUtc).getTime();
+  const end = new Date(dayEndUtc).getTime();
+  while (t < end) {
+    dates.add(getCalendarDateInTimezone(new Date(t).toISOString(), providerTimezone));
+    t += 3_600_000;
+  }
+  dates.add(getCalendarDateInTimezone(dayStartUtc, providerTimezone));
+  dates.add(getCalendarDateInTimezone(new Date(end - 1).toISOString(), providerTimezone));
+  return Array.from(dates);
+}
+
+function isUtcSlotBooked(
+  startUtc: string,
+  durationMinutes: number,
+  existingBookings: Booking[]
+): boolean {
+  const slotStart = new Date(startUtc);
+  const slotEnd = new Date(slotStart.getTime() + durationMinutes * 60_000);
+  return existingBookings.some((booking) => {
+    const bookingStart = new Date(booking.start_at);
+    const bookingEnd = resolveBookingEnd(booking);
+    return doTimeRangesOverlap(slotStart, slotEnd, bookingStart, bookingEnd);
+  });
+}
+
+function isIndividualOverrideDisabledUtc(
+  startUtc: string,
+  durationMinutes: number,
+  providerTimezone: string,
+  individual?: Record<string, boolean>
+): boolean {
+  if (!individual) return false;
+  const startParts = getLocalTimePartsInTimezone(startUtc, providerTimezone);
+  const endUtc = new Date(new Date(startUtc).getTime() + durationMinutes * 60_000).toISOString();
+  const endParts = getLocalTimePartsInTimezone(endUtc, providerTimezone);
+  const startHour = startParts.hours;
+  const endHour = endParts.hours + (endParts.dateStr !== startParts.dateStr ? 24 : 0);
+  for (let hour = startHour; hour <= endHour; hour++) {
+    const h = hour % 24;
+    const dateStr = hour >= 24 ? addDaysToDateStr(startParts.dateStr, 1) : startParts.dateStr;
+    const key = `${dateStr}-${h}`;
+    if (individual[key] === false) return true;
+  }
+  return false;
+}
+
+function isUtcSlotInPast(startUtc: string, minLeadTimeMinutes: number): boolean {
+  const slotStart = new Date(startUtc);
+  const now = new Date();
+  if (minLeadTimeMinutes > 0) {
+    const cutoff = new Date(now.getTime() + minLeadTimeMinutes * 60_000);
+    return slotStart < cutoff;
+  }
+  return slotStart < now;
+}
+
+function buildSlotsForProviderDate(
+  providerDateStr: string,
+  daySchedule: DaySchedule,
+  duration: number,
+  availabilitySettings: AvailabilitySettings | null,
+  existingBookings: Booking[],
+  minLeadTimeMinutes: number,
+  providerTimezone: string,
+  viewerTimezone: string,
+  viewerDateStr: string
+): Timeslot[] {
+  const startMinutes = parseTimeToMinutes(daySchedule.startTime);
+  const endMinutes = parseTimeToMinutes(daySchedule.endTime);
+  const breaks = daySchedule.breaks || [];
+  const slots: Timeslot[] = [];
+  const showHostTime = needsTimezoneConversion(providerTimezone, viewerTimezone);
+  let t = startMinutes;
+
+  while (t + duration <= endMinutes) {
+    const slotEndMinutes = t + duration;
+    const slotHour = Math.floor(t / 60);
+    const slotMinute = t % 60;
+    const startUtc = localDateTimeToUtcIso(
+      providerDateStr,
+      slotHour,
+      slotMinute,
+      providerTimezone
+    );
+    const viewerDay = getCalendarDateInTimezone(startUtc, viewerTimezone);
+    if (viewerDay !== viewerDateStr) {
+      if (viewerDay > viewerDateStr) {
+        break;
+      }
+      t += Math.max(duration, 15);
+      continue;
+    }
+
+    const label = formatUtcInTimezone(startUtc, viewerTimezone, { timeZoneName: undefined });
+    const hostTime = showHostTime
+      ? formatUtcInTimezone(startUtc, providerTimezone, { timeZoneName: undefined })
+      : undefined;
+
+    const makeSlot = (disabled: boolean, reason?: string): Timeslot => ({
+      time: label,
+      startUtc,
+      ...(hostTime ? { hostTime } : {}),
+      disabled,
+      ...(reason ? { reason } : {}),
+    });
+
+    if (isTimeSlotOnBreak(t, slotEndMinutes, breaks)) {
+      const jumpTo = maxOverlappingBreakEnd(t, slotEndMinutes, breaks);
+      slots.push(makeSlot(true, 'break'));
+      t = Math.min(Math.max(jumpTo, t + 1), endMinutes);
+      continue;
+    }
+
+    if (isUtcSlotBooked(startUtc, duration, existingBookings)) {
+      slots.push(makeSlot(true, 'booked'));
+      t += 1;
+      continue;
+    }
+
+    if (
+      isIndividualOverrideDisabledUtc(
+        startUtc,
+        duration,
+        providerTimezone,
+        availabilitySettings?.individual
+      )
+    ) {
+      slots.push(makeSlot(true, 'unavailable'));
+      t = Math.min(Math.max((Math.floor(t / 60) + 1) * 60, t + 1), endMinutes);
+      continue;
+    }
+
+    if (isUtcSlotInPast(startUtc, minLeadTimeMinutes)) {
+      slots.push(makeSlot(true, 'past'));
+      t += 1;
+      continue;
+    }
+
+    slots.push(makeSlot(false));
+    t += duration;
+  }
+
+  return slots;
+}
+
+/** True when at least one bookable slot exists (stops at first match). */
+function hasBookableSlotForProviderDate(
+  providerDateStr: string,
+  daySchedule: DaySchedule,
+  duration: number,
+  availabilitySettings: AvailabilitySettings | null,
+  existingBookings: Booking[],
+  minLeadTimeMinutes: number,
+  providerTimezone: string,
+  viewerTimezone: string,
+  viewerDateStr: string
+): boolean {
+  const startMinutes = parseTimeToMinutes(daySchedule.startTime);
+  const endMinutes = parseTimeToMinutes(daySchedule.endTime);
+  const breaks = daySchedule.breaks || [];
+  let t = startMinutes;
+
+  while (t + duration <= endMinutes) {
+    const slotEndMinutes = t + duration;
+    const slotHour = Math.floor(t / 60);
+    const slotMinute = t % 60;
+    const startUtc = localDateTimeToUtcIso(
+      providerDateStr,
+      slotHour,
+      slotMinute,
+      providerTimezone
+    );
+    const viewerDay = getCalendarDateInTimezone(startUtc, viewerTimezone);
+    if (viewerDay !== viewerDateStr) {
+      if (viewerDay > viewerDateStr) {
+        break;
+      }
+      t += Math.max(duration, 15);
+      continue;
+    }
+
+    if (isTimeSlotOnBreak(t, slotEndMinutes, breaks)) {
+      const jumpTo = maxOverlappingBreakEnd(t, slotEndMinutes, breaks);
+      t = Math.min(Math.max(jumpTo, t + 1), endMinutes);
+      continue;
+    }
+
+    if (isUtcSlotBooked(startUtc, duration, existingBookings)) {
+      t += duration;
+      continue;
+    }
+
+    if (
+      isIndividualOverrideDisabledUtc(
+        startUtc,
+        duration,
+        providerTimezone,
+        availabilitySettings?.individual
+      )
+    ) {
+      t = Math.min(Math.max((Math.floor(t / 60) + 1) * 60, t + 1), endMinutes);
+      continue;
+    }
+
+    if (isUtcSlotInPast(startUtc, minLeadTimeMinutes)) {
+      t += duration;
+      continue;
+    }
+
+    return true;
+  }
+
+  return false;
+}
+
 /**
- * Dynamic slot list: scan minute-by-minute; advance by duration after each bookable slot;
- * jump past breaks and booking conflicts. Aligns MultiStep + Embed via useTimeslots.
+ * Fast check: any bookable slot on this viewer calendar day (no label formatting).
+ */
+export function hasBookableSlotForDay(
+  selectedType: EventType,
+  selectedDate: Date,
+  availabilitySettings: AvailabilitySettings | null,
+  existingBookings: Booking[],
+  minLeadTimeMinutes = 0,
+  slotDurationMinutes?: number,
+  providerTimezone?: string,
+  viewerTimezone?: string
+): boolean {
+  const duration =
+    typeof slotDurationMinutes === 'number' &&
+    Number.isFinite(slotDurationMinutes) &&
+    slotDurationMinutes >= 1
+      ? Math.trunc(slotDurationMinutes)
+      : selectedType.duration_minutes || 30;
+
+  const fallbackTz = getBrowserTimezone();
+  const providerTz = providerTimezone?.trim() || viewerTimezone?.trim() || fallbackTz;
+  const viewerTz = viewerTimezone?.trim() || providerTimezone?.trim() || fallbackTz;
+  if (!availabilitySettings?.timesheet) return false;
+
+  const viewerDateStr = getViewerDateString(selectedDate);
+  const providerDates = providerDatesForViewerDay(viewerDateStr, viewerTz, providerTz);
+
+  for (const providerDateStr of providerDates) {
+    const dayName = getDayNameFromDateStr(providerDateStr, providerTz);
+    const daySchedule = availabilitySettings.timesheet[dayName];
+    if (!daySchedule?.enabled) continue;
+    if (
+      hasBookableSlotForProviderDate(
+        providerDateStr,
+        daySchedule,
+        duration,
+        availabilitySettings,
+        existingBookings,
+        minLeadTimeMinutes,
+        providerTz,
+        viewerTz,
+        viewerDateStr
+      )
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Timezone-aware slot list. Host availability is in providerTimezone; labels in viewerTimezone.
  */
 export function buildTimeslotsForDay(
   selectedType: EventType,
@@ -187,91 +492,66 @@ export function buildTimeslotsForDay(
   availabilitySettings: AvailabilitySettings | null,
   existingBookings: Booking[],
   minLeadTimeMinutes = 0,
-  slotDurationMinutes?: number
+  slotDurationMinutes?: number,
+  providerTimezone?: string,
+  viewerTimezone?: string
 ): Timeslot[] {
+  const buildT0 = performance.now();
   const duration =
     typeof slotDurationMinutes === 'number' &&
     Number.isFinite(slotDurationMinutes) &&
     slotDurationMinutes >= 1
       ? Math.trunc(slotDurationMinutes)
       : selectedType.duration_minutes || 30;
-  const dayName = getDayName(selectedDate);
-  const daySchedule = availabilitySettings?.timesheet?.[dayName];
-  if (!daySchedule?.enabled) return [];
 
-  const startMinutes = parseTimeToMinutes(daySchedule.startTime);
-  const endMinutes = parseTimeToMinutes(daySchedule.endTime);
-  const normalizedDate = normalizeDate(selectedDate);
-  const breaks = daySchedule.breaks || [];
+  const fallbackTz = getBrowserTimezone();
+  const providerTz = providerTimezone?.trim() || viewerTimezone?.trim() || fallbackTz;
+  const viewerTz = viewerTimezone?.trim() || providerTimezone?.trim() || fallbackTz;
+  if (!availabilitySettings?.timesheet) return [];
 
-  const slots: Timeslot[] = [];
-  let t = startMinutes;
+  const viewerDateStr = getViewerDateString(selectedDate);
+  const providerDates = providerDatesForViewerDay(viewerDateStr, viewerTz, providerTz);
 
-  while (t + duration <= endMinutes) {
-    const slotEndMinutes = t + duration;
-    const slotHour = Math.floor(t / 60);
-    const slotMinute = t % 60;
-    const slotStart = new Date(normalizedDate);
-    slotStart.setHours(slotHour, slotMinute, 0, 0);
-    const slotEnd = new Date(slotStart);
-    slotEnd.setMinutes(slotEnd.getMinutes() + duration);
-
-    if (isTimeSlotOnBreak(t, slotEndMinutes, breaks)) {
-      const jumpTo = maxOverlappingBreakEnd(t, slotEndMinutes, breaks);
-      slots.push({ time: formatMinutesToDisplay(t), disabled: true, reason: 'break' });
-      t = Math.min(Math.max(jumpTo, t + 1), endMinutes);
-      continue;
-    }
-
-    if (isTimeSlotBooked(slotStart, slotEnd, selectedDate, existingBookings)) {
-      slots.push({ time: formatMinutesToDisplay(t), disabled: true, reason: 'booked' });
-      t = jumpPastBookingConflicts(
-        t,
+  const allSlots: Timeslot[] = [];
+  for (const providerDateStr of providerDates) {
+    const dayName = getDayNameFromDateStr(providerDateStr, providerTz);
+    const daySchedule = availabilitySettings.timesheet[dayName];
+    if (!daySchedule?.enabled) continue;
+    allSlots.push(
+      ...buildSlotsForProviderDate(
+        providerDateStr,
+        daySchedule,
         duration,
-        normalizedDate,
-        selectedDate,
+        availabilitySettings,
         existingBookings,
-        endMinutes
-      );
-      continue;
-    }
-
-    const slotEndHour = Math.floor(slotEndMinutes / 60);
-    let isOverrideDisabled = false;
-    for (let hour = slotHour; hour <= slotEndHour; hour++) {
-      const individualKey = getIndividualSlotKey(normalizedDate, hour);
-      if (availabilitySettings?.individual?.[individualKey] === false) {
-        isOverrideDisabled = true;
-        break;
-      }
-    }
-    if (isOverrideDisabled) {
-      slots.push({ time: formatMinutesToDisplay(t), disabled: true, reason: 'unavailable' });
-      t = Math.min(Math.max((Math.floor(t / 60) + 1) * 60, t + 1), endMinutes);
-      continue;
-    }
-
-    if (isTimeSlotInPast(slotStart, selectedDate)) {
-      slots.push({ time: formatMinutesToDisplay(t), disabled: true, reason: 'past' });
-      t += 1;
-      continue;
-    }
-
-    if (minLeadTimeMinutes > 0 && isToday(selectedDate)) {
-      const cutoff = new Date();
-      cutoff.setMinutes(cutoff.getMinutes() + minLeadTimeMinutes);
-      if (slotStart < cutoff) {
-        slots.push({ time: formatMinutesToDisplay(t), disabled: true, reason: 'past' });
-        t += 1;
-        continue;
-      }
-    }
-
-    slots.push({ time: formatMinutesToDisplay(t), disabled: false });
-    t += duration;
+        minLeadTimeMinutes,
+        providerTz,
+        viewerTz,
+        viewerDateStr
+      )
+    );
   }
 
-  return slots;
+  allSlots.sort(
+    (a, b) => new Date(a.startUtc).getTime() - new Date(b.startUtc).getTime()
+  );
+
+  const seen = new Set<string>();
+  const result = allSlots.filter((s) => {
+    if (seen.has(s.startUtc)) return false;
+    seen.add(s.startUtc);
+    return true;
+  });
+  const buildMs = performance.now() - buildT0;
+  if (buildMs > 30) {
+    step3PerfLog('buildTimeslotsForDay slow', {
+      ms: `${buildMs.toFixed(1)}ms`,
+      date: viewerDateStr,
+      totalSlots: result.length,
+      existingBookings: existingBookings.length,
+    });
+  }
+  return result;
 }
 
 export function formatDateWithTimezone(date: Date): string {

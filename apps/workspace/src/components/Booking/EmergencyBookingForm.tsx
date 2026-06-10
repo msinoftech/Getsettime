@@ -8,6 +8,12 @@ import {
 } from "@/src/utils/service_provider_display";
 import { userActsAsServiceProviderFromMetadata } from "@/lib/service_provider_role";
 import { normalizeDepartmentIdsFromUserMetadata } from "@/lib/sync_department_service_providers_from_team";
+import { useWorkspaceSettings } from "@/src/hooks/useWorkspaceSettings";
+import { useLocationContext } from "@app/location";
+import {
+  resolveCustomerTimezone,
+  resolveProviderTimezone,
+} from "@/src/utils/timezone";
 
 type IconName =
   | "alert"
@@ -69,6 +75,13 @@ type FieldErrors = Partial<Record<"name" | "email" | "phone" | "department_id" |
 
 export default function EmergencyBookingForm() {
   const router = useRouter();
+  const { general } = useWorkspaceSettings();
+  const {
+    customerTimezone: manualCustomerTz,
+    context: locationCtx,
+  } = useLocationContext({ hostTimezone: general?.timezone });
+  const viewerTimezone = resolveCustomerTimezone(manualCustomerTz, locationCtx?.timezone);
+  const providerTimezone = resolveProviderTimezone(general?.timezone, viewerTimezone);
   const footerRef = useRef<HTMLDivElement>(null);
   const autoSelectDeptDoneRef = useRef(false);
   const autoSelectProviderDoneRef = useRef(false);
@@ -424,6 +437,8 @@ export default function EmergencyBookingForm() {
           service_provider_id: formData.service_provider_id || null,
           department_id: formData.department_id || null,
           additional_description: description,
+          customer_timezone: viewerTimezone,
+          provider_timezone: providerTimezone,
         }),
       });
 

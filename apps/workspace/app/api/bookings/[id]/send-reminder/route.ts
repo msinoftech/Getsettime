@@ -15,6 +15,8 @@ import {
 } from '@/lib/workspace-notification-flags';
 import { appendActivityLog } from '@/lib/activity-log';
 import { resolve_meeting_join_url_from_booking } from '@/src/utils/google_meet';
+import { emailTimezoneFields } from '@/lib/booking-timezone-api';
+import { formatFullDateTimeInTimezone } from '@/lib/date-timezone';
 
 type Channel = 'email' | 'whatsapp';
 
@@ -69,7 +71,7 @@ export async function POST(
     const { data: booking, error: bookingError } = await supabase
       .from('bookings')
       .select(
-        'id,workspace_id,public_code,invitee_name,invitee_email,invitee_phone,service_provider_id,department_id,event_type_id,metadata,location,start_at,end_at,status,contact_id,contacts(name,phone,email),event_types(title,buffer_before,buffer_after)'
+        'id,workspace_id,public_code,invitee_name,invitee_email,invitee_phone,service_provider_id,department_id,event_type_id,metadata,location,start_at,end_at,status,contact_id,customer_timezone,provider_timezone,contacts(name,phone,email),event_types(title,buffer_before,buffer_after)'
       )
       .eq('id', booking_id)
       .eq('workspace_id', workspaceId)
@@ -188,6 +190,12 @@ export async function POST(
         booking.metadata
       );
 
+      const customerTz =
+        (booking as { customer_timezone?: string | null }).customer_timezone ?? null;
+      const providerTz =
+        (booking as { provider_timezone?: string | null }).provider_timezone ?? null;
+      const tzEmail = emailTimezoneFields(customerTz, providerTz, startT);
+
       await sendReminderEmail({
         inviteeName: booking.invitee_name?.trim() || 'Invitee',
         inviteeEmail: email,
@@ -197,6 +205,7 @@ export async function POST(
         startTime: startT,
         endTime: endT,
         duration: durationMinutes,
+        ...tzEmail,
         ...(noteStr.trim() ? { notes: noteStr } : {}),
         ...(meetUrl?.trim()
           ? { meetingUrl: meetUrl.trim(), meetingLabel: 'Google Meet' }
@@ -250,7 +259,13 @@ export async function POST(
         ? booking.public_code.trim()
         : String(booking.id);
 
-    const when = startT ? new Date(startT).toLocaleString(undefined) : '';
+    const customerTzWa =
+      (booking as { customer_timezone?: string | null }).customer_timezone?.trim() || null;
+    const when = startT
+      ? customerTzWa
+        ? formatFullDateTimeInTimezone(startT, customerTzWa)
+        : new Date(startT).toLocaleString(undefined)
+      : '';
 
     message = eventTitle.includes('appointment')
       ? `Reminder: your appointment is scheduled for ${when}. See you soon!`

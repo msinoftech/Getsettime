@@ -4,11 +4,16 @@ import React, { useState } from 'react';
 import type { EventType } from '@/src/types/bookingForm';
 import { BOOKING_STEP_TITLES, SUCCESS_CONFETTI_COLORS } from '@/src/constants/booking';
 import { getServiceIcon } from './serviceIcons';
+import { formatFullDateTimeInTimezone } from '@/lib/date-timezone';
+import { needsTimezoneConversion } from '@/src/utils/timezone';
 
 interface Step5SuccessProps {
   selectedType: EventType | null;
   selectedDate: Date | null;
   selectedTime: string;
+  selectedStartUtc?: string | null;
+  customerTimezone?: string | null;
+  providerTimezone?: string | null;
   previewUrl?: string | null;
   isReschedule?: boolean;
 }
@@ -17,7 +22,16 @@ function fmtDay(d: Date) {
   return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
 }
 
-export function Step5Success({ selectedType, selectedDate, selectedTime, previewUrl, isReschedule }: Step5SuccessProps) {
+export function Step5Success({
+  selectedType,
+  selectedDate,
+  selectedTime,
+  selectedStartUtc,
+  customerTimezone,
+  providerTimezone,
+  previewUrl,
+  isReschedule,
+}: Step5SuccessProps) {
   const [copied, setCopied] = useState(false);
 
   const fullPreviewUrl = previewUrl
@@ -32,6 +46,19 @@ export function Step5Success({ selectedType, selectedDate, selectedTime, preview
       setTimeout(() => setCopied(false), 2000);
     } catch { /* clipboard unavailable */ }
   };
+
+  const customerTimeLabel =
+    selectedStartUtc && customerTimezone
+      ? formatFullDateTimeInTimezone(selectedStartUtc, customerTimezone)
+      : selectedDate
+        ? `${fmtDay(selectedDate)} • ${selectedTime}`
+        : selectedTime;
+
+  const showHostTime =
+    selectedStartUtc &&
+    customerTimezone &&
+    providerTimezone &&
+    needsTimezoneConversion(providerTimezone, customerTimezone);
 
   return (
     <div className="flex flex-col items-center justify-center pt-8 sm:pt-12 lg:pt-16 animate-fadeIn">
@@ -68,9 +95,15 @@ export function Step5Success({ selectedType, selectedDate, selectedTime, preview
               </div>
               <div className="text-left min-w-0 flex-1">
                 <div className="font-bold text-gray-900 text-base sm:text-lg truncate">{selectedType?.title}</div>
-                <div className="text-xs sm:text-sm text-gray-600">
-                  {selectedDate ? fmtDay(selectedDate) : ''} • {selectedTime}
-                </div>
+                <div className="text-xs sm:text-sm text-gray-600">{customerTimeLabel}</div>
+                {showHostTime ? (
+                  <div className="text-xs text-gray-500 mt-1">
+                    Host: {formatFullDateTimeInTimezone(selectedStartUtc!, providerTimezone!)}
+                  </div>
+                ) : null}
+                {customerTimezone ? (
+                  <div className="text-xs text-gray-400 mt-1">Timezone: {customerTimezone}</div>
+                ) : null}
               </div>
             </div>
           </div>
@@ -78,43 +111,32 @@ export function Step5Success({ selectedType, selectedDate, selectedTime, preview
 
         {fullPreviewUrl && (
           <div className="mt-6 sm:mt-8 max-w-md mx-auto w-full">
-            <p className="text-sm font-medium text-gray-600 mb-2">Share booking:</p>
-            <div className="flex items-center gap-2 rounded-lg border border-gray-200 bg-gradient-to-br from-indigo-50 to-blue-50 px-3 py-2">
-              <a
-                href={fullPreviewUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex-1 truncate text-sm text-indigo-600 hover:text-indigo-700 hover:underline"
-              >
-                {fullPreviewUrl}
-              </a>
+            <p className="text-sm text-gray-600 mb-3">Share your booking link:</p>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                readOnly
+                value={fullPreviewUrl}
+                className="flex-1 px-4 py-2 text-sm border border-gray-200 rounded-lg bg-gray-50 text-gray-700 truncate"
+              />
               <button
-                type="button"
                 onClick={handleCopy}
-                className="flex-shrink-0 rounded-md p-1.5 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600"
-                aria-label="Copy link"
+                className="px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition-colors whitespace-nowrap"
               >
-                {copied ? (
-                  <svg className="h-4 w-4 text-green-600" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                  </svg>
-                ) : (
-                  <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-                    <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
-                  </svg>
-                )}
+                {copied ? 'Copied!' : 'Copy'}
               </button>
             </div>
           </div>
         )}
 
-        <div className="mt-8 flex items-center justify-center gap-2 text-gray-400">
-          <div className="w-12 h-px bg-gradient-to-r from-transparent to-gray-300" />
-          <svg className="w-5 h-5 text-red-600" fill="currentColor" viewBox="0 0 20 20">
-            <path fillRule="evenodd" d="M3.172 5.172a4 4 0 015.656 0L10 6.343l1.172-1.171a4 4 0 115.656 5.656L10 17.657l-6.828-6.829a4 4 0 010-5.656z" clipRule="evenodd" />
-          </svg>
-          <div className="w-12 h-px bg-gradient-to-l from-transparent to-gray-300" />
+        <div className="flex justify-center gap-2 mt-8">
+          {SUCCESS_CONFETTI_COLORS.map((color, i) => (
+            <div
+              key={i}
+              className="w-2 h-2 rounded-full animate-bounce"
+              style={{ backgroundColor: color, animationDelay: `${i * 0.1}s` }}
+            />
+          ))}
         </div>
       </div>
     </div>

@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useLayoutEffect } from 'react';
 import type { Department, EventType, Service, ServiceProvider } from '@/src/types/bookingForm';
 import type { IntakeFormSettings } from '@/src/types/workspace';
 import {
@@ -8,7 +8,17 @@ import {
   DEFAULT_ACCENT_COLOR,
   DEFAULT_PRIMARY_COLOR,
 } from '@/src/constants/booking';
-import { formatDateWithTimezone, formatTimeWithTimezone } from '@/src/utils/bookingTime';
+import { formatDateWithTimezone } from '@/src/utils/bookingTime';
+import {
+  formatDateOnlyInTimezone,
+  formatTimeOnlyInTimezone,
+  getTimezoneAbbreviation,
+} from '@/lib/date-timezone';
+import {
+  step3PerfSidebarDateRendered,
+  step3PerfSidebarTimeRendered,
+} from '@/src/utils/bookingStep3Perf';
+import { needsTimezoneConversion } from '@/src/utils/timezone';
 import {
   resolve_workspace_logo_src,
   workspace_logo_is_remote,
@@ -36,8 +46,10 @@ interface BookingPreviewSidebarProps {
   email: string;
   phone: string;
   notes: string;
-  /** IANA timezone for time display (workspace or browser); fixes Android 4pm→4am bug */
+  /** IANA timezone for customer time display */
   displayTimezone?: string | null;
+  providerTimezone?: string | null;
+  selectedStartUtc?: string | null;
   /** Step 1 optional catalog selections (user_services–scoped), shown after department name */
   selectedStep1ServiceIds?: string[];
   step1CatalogServices?: Service[];
@@ -67,6 +79,8 @@ export function BookingPreviewSidebar({
   phone,
   notes,
   displayTimezone,
+  providerTimezone,
+  selectedStartUtc,
   selectedStep1ServiceIds = [],
   step1CatalogServices = [],
   intakeForm,
@@ -96,6 +110,14 @@ export function BookingPreviewSidebar({
   const hasAdditionalInfo =
     showIntakeInPreview &&
     (customFieldRows.length > 0 || notes.trim().length > 0);
+
+  useLayoutEffect(() => {
+    if (selectedDate) step3PerfSidebarDateRendered(selectedDate);
+  }, [selectedDate]);
+
+  useLayoutEffect(() => {
+    if (selectedTime) step3PerfSidebarTimeRendered(selectedTime);
+  }, [selectedTime, selectedStartUtc]);
 
   return (
     <div
@@ -252,8 +274,22 @@ export function BookingPreviewSidebar({
                     <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Time</div>
                   </div>
                   <div className="font-bold text-gray-900 text-base sm:text-lg pl-9 sm:pl-11">
-                    {formatTimeWithTimezone(selectedDate, selectedTime, displayTimezone)}
+                    {selectedStartUtc && displayTimezone
+                      ? formatTimeOnlyInTimezone(selectedStartUtc, displayTimezone)
+                      : displayTimezone?.trim()
+                        ? `${selectedTime} (${getTimezoneAbbreviation(displayTimezone.trim(), selectedDate ?? undefined)})`
+                        : selectedTime}
                   </div>
+                  {selectedStartUtc &&
+                  displayTimezone &&
+                  providerTimezone &&
+                  needsTimezoneConversion(providerTimezone, displayTimezone) ? (
+                    <div className="text-xs text-gray-500 pl-9 sm:pl-11 mt-1">
+                      Host:{' '}
+                      {formatDateOnlyInTimezone(selectedStartUtc, providerTimezone)},{' '}
+                      {formatTimeOnlyInTimezone(selectedStartUtc, providerTimezone)}
+                    </div>
+                  ) : null}
                 </div>
               )}
 

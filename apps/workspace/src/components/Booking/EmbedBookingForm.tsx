@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useCallback, useMemo, lazy, Suspense } from 'react';
 import type { Workspace } from '@app/db';
-import type { Department, EventType, IntakeValues, ServiceProvider } from '@/src/types/bookingForm';
+import type { Department, EventType, IntakeValues, ServiceProvider, Timeslot } from '@/src/types/bookingForm';
 import { useEmbedBookingFormData } from '@/src/hooks/useEmbedBookingFormData';
 import { useAutoAdvanceStep1 } from '@/src/hooks/useAutoAdvanceStep1';
 import { useTimeslots } from '@/src/hooks/useTimeslots';
@@ -18,7 +18,12 @@ import {
   resolveEffectiveBookingDurationMinutes,
 } from '@/src/utils/bookingDuration';
 import { isTimeSlotBooked, normalizeDate } from '@/src/utils/bookingTime';
-import { getDisplayTimezone, parseTimeStringTo24h } from '@/src/utils/timezone';
+import {
+  isWorkspaceTimezoneConfigured,
+  resolveCustomerTimezone,
+  resolveProviderTimezone,
+} from '@/src/utils/timezone';
+import { useLocationContext } from '@app/location';
 import { normalizeInviteePhoneForStorage } from '@/src/utils/phone';
 import {
   getSortedFilteredEventTypes,
@@ -38,6 +43,11 @@ import { Step2ServiceSelection } from './MultiStepBooking/Step2ServiceSelection'
 import { Step4IntakeForm } from './MultiStepBooking/Step4IntakeForm';
 import { Step5Success } from './MultiStepBooking/Step5Success';
 import { AdminNoticeBanner, AdminNoticeIcon } from './MultiStepBooking/AdminNotice';
+import {
+  step3PerfDateCommitted,
+  step3PerfSlotCommitted,
+  step3PerfSync,
+} from '@/src/utils/bookingStep3Perf';
 import {
   can_navigate_to_booking_step,
   type booking_step_nav_context,
@@ -73,6 +83,7 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
   const [selectedType, setSelectedType] = useState<EventType | null>(null);
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
   const [selectedTime, setSelectedTime] = useState('');
+  const [selectedStartUtc, setSelectedStartUtc] = useState<string | null>(null);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
@@ -207,6 +218,20 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
     [providerScopedCatalogServices, services]
   );
 
+  const {
+    customerTimezone: manualCustomerTz,
+    setCustomerTimezone,
+    context: locationCtx,
+    hasManualTimezone,
+    refresh: refreshLocation,
+  } = useLocationContext({
+    hostTimezone: generalSettings?.timezone,
+  });
+
+  const viewerTimezone = resolveCustomerTimezone(manualCustomerTz, locationCtx?.timezone);
+  const providerTimezone = resolveProviderTimezone(generalSettings?.timezone, viewerTimezone);
+  const workspaceTimezoneConfigured = isWorkspaceTimezoneConfigured(generalSettings?.timezone);
+
   const timeslots = useTimeslots(
     selectedType,
     selectedDate,
@@ -214,7 +239,46 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
     existingBookings,
     isRescheduleMode ? 60 : 0,
     selectedServiceIds,
-    serviceCatalogForSlots
+    serviceCatalogForSlots,
+    providerTimezone,
+    viewerTimezone
+  );
+
+  const handleSelectDate = useCallback((date: Date) => {
+    const t0 = performance.now();
+    setSelectedDate(date);
+    setSelectedTime('');
+    setSelectedStartUtc(null);
+    step3PerfSync('EmbedBookingForm handleSelectDate sync', t0);
+  }, []);
+
+  const handleSelectSlot = useCallback((slot: Timeslot) => {
+    const t0 = performance.now();
+    setSelectedTime(slot.time);
+    setSelectedStartUtc(slot.startUtc);
+    step3PerfSync('EmbedBookingForm handleSelectSlot sync', t0, {
+      startUtc: slot.startUtc,
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!selectedDate) return;
+    const enabled = timeslots.filter((s) => !s.disabled).length;
+    step3PerfDateCommitted(selectedDate, enabled);
+  }, [selectedDate, timeslots]);
+
+  useEffect(() => {
+    if (!selectedTime && !selectedStartUtc) return;
+    step3PerfSlotCommitted(selectedTime, selectedStartUtc);
+  }, [selectedTime, selectedStartUtc]);
+
+  const handleTimezoneChange = useCallback(
+    (tz: string) => {
+      setCustomerTimezone(tz);
+      setSelectedTime('');
+      setSelectedStartUtc(null);
+    },
+    [setCustomerTimezone]
   );
 
   const hideIntakeCatalogServices = providerScopedCatalogServices.length > 0;
@@ -333,6 +397,12 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
   useEffect(() => {
     if (step === 3 && !selectedDate) setCurrentMonth(new Date());
   }, [step, selectedDate]);
+
+  useEffect(() => {
+    if (step === 3 && !hasManualTimezone) {
+      void refreshLocation();
+    }
+  }, [step, hasManualTimezone, refreshLocation]);
 
   useEffect(() => {
     if (selectedDate && selectedTime) {
@@ -456,8 +526,10 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
       setError('Please select a date and time');
       return;
     }
-    const selectedSlot = timeslots.find((s) => s.time === selectedTime);
-    if (selectedSlot?.disabled) {
+    const selectedSlot = timeslots.find((s) =>
+      selectedStartUtc ? s.startUtc === selectedStartUtc : s.time === selectedTime
+    );
+    if (selectedSlot?.disabled || !selectedSlot?.startUtc) {
       setError('This time slot is not available. Please select another time.');
       return;
     }
@@ -466,36 +538,24 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
     setError(null);
 
     try {
-      const parsed = parseTimeStringTo24h(selectedTime);
-      if (!parsed) {
-        setError('Invalid time selection. Please try again.');
-        setLoading(false);
-        return;
-      }
-      const startDate = new Date(selectedDate);
-      startDate.setHours(parsed.hour, parsed.minute, 0, 0);
+      const durationMin = resolveEffectiveBookingDurationMinutes(
+        selectedType,
+        selectedServiceIds,
+        serviceCatalogForSlots
+      );
+      const startDate = new Date(selectedSlot.startUtc);
       if (startDate < new Date()) {
         setError('Cannot reschedule to a time in the past.');
         setLoading(false);
         return;
       }
 
-      const endDate = new Date(startDate);
-      endDate.setMinutes(
-        endDate.getMinutes() +
-          resolveEffectiveBookingDurationMinutes(
-            selectedType,
-            selectedServiceIds,
-            serviceCatalogForSlots
-          )
-      );
+      const endDate = new Date(startDate.getTime() + durationMin * 60_000);
       if (isTimeSlotBooked(startDate, endDate, selectedDate, existingBookings)) {
         setError('This time slot has already been booked. Please select another time.');
         setLoading(false);
         return;
       }
-
-      const timezone = getDisplayTimezone(generalSettings?.timezone);
 
       const res = await fetch('/api/embed/bookings/reschedule', {
         method: 'POST',
@@ -504,7 +564,9 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
           public_code: rescheduleCode,
           start_at: startDate.toISOString(),
           end_at: endDate.toISOString(),
-          ...(timezone ? { timezone } : {}),
+          customer_timezone: viewerTimezone,
+          provider_timezone: providerTimezone,
+          timezone: viewerTimezone,
         }),
       });
 
@@ -550,8 +612,10 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
         return;
       }
     }
-    const selectedSlot = timeslots.find((s) => s.time === selectedTime);
-    if (selectedSlot?.disabled) {
+    const selectedSlot = timeslots.find((s) =>
+      selectedStartUtc ? s.startUtc === selectedStartUtc : s.time === selectedTime
+    );
+    if (selectedSlot?.disabled || !selectedSlot?.startUtc) {
       setError('This time slot is not available. Please select another time.');
       return;
     }
@@ -560,29 +624,19 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
     setError(null);
 
     try {
-      const parsed = parseTimeStringTo24h(selectedTime);
-      if (!parsed) {
-        setError('Invalid time selection. Please try again.');
-        setLoading(false);
-        return;
-      }
-      const startDate = new Date(selectedDate);
-      startDate.setHours(parsed.hour, parsed.minute, 0, 0);
+      const durationMin = resolveEffectiveBookingDurationMinutes(
+        selectedType,
+        selectedServiceIds,
+        serviceCatalogForSlots
+      );
+      const startDate = new Date(selectedSlot.startUtc);
       if (startDate < new Date()) {
         setError('Cannot book a time slot in the past. Please select a future time.');
         setLoading(false);
         return;
       }
 
-      const endDate = new Date(startDate);
-      endDate.setMinutes(
-        endDate.getMinutes() +
-          resolveEffectiveBookingDurationMinutes(
-            selectedType,
-            selectedServiceIds,
-            serviceCatalogForSlots
-          )
-      );
+      const endDate = new Date(startDate.getTime() + durationMin * 60_000);
       if (isTimeSlotBooked(startDate, endDate, selectedDate, existingBookings)) {
         setError('This time slot has already been booked. Please refresh and select another time.');
         setLoading(false);
@@ -646,8 +700,6 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
         intakeFormPayload.file_upload_url = uploadResult.url;
       }
 
-      const timezone = getDisplayTimezone(generalSettings?.timezone);
-
       const service_provider_id =
         effectiveProviderId ??
         (departments.length === 0
@@ -672,7 +724,9 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
           end_at: endDate.toISOString(),
           intake_form: Object.keys(intakeFormPayload).length > 0 ? intakeFormPayload : null,
           ...(meetingKey ? { location: { meeting_option: meetingKey } } : {}),
-          ...(timezone ? { timezone } : {}),
+          customer_timezone: viewerTimezone,
+          provider_timezone: providerTimezone,
+          timezone: viewerTimezone,
         }),
       });
 
@@ -737,7 +791,9 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
             email={email}
             phone={phone}
             notes={notes}
-            displayTimezone={getDisplayTimezone(generalSettings?.timezone)}
+            displayTimezone={viewerTimezone}
+            providerTimezone={providerTimezone}
+            selectedStartUtc={selectedStartUtc}
             selectedStep1ServiceIds={selectedServiceIds}
             step1CatalogServices={providerScopedCatalogServices}
             intakeForm={intakeForm}
@@ -816,8 +872,14 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
                     departmentsCount={departments.length}
                     workspacePrimaryColor={workspacePrimaryColor}
                     workspaceAccentColor={workspaceAccentColor}
-                    onSelectDate={setSelectedDate}
+                    onSelectDate={handleSelectDate}
                     onSelectTime={setSelectedTime}
+                    onSelectSlot={handleSelectSlot}
+                    selectedStartUtc={selectedStartUtc}
+                    customerTimezone={viewerTimezone}
+                    providerTimezone={providerTimezone}
+                    workspaceTimezoneConfigured={workspaceTimezoneConfigured}
+                    onTimezoneChange={handleTimezoneChange}
                     onToggleCalendar={() => setShowCalendar((s) => !s)}
                     onNavigateMonth={(dir) =>
                       setCurrentMonth((prev) => {
@@ -872,6 +934,7 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
                   onTouchedName={() => setTouched((t) => ({ ...t, name: true }))}
                   onTouchedEmail={() => setTouched((t) => ({ ...t, email: true }))}
                   onTouchedPhone={() => setTouched((t) => ({ ...t, phone: true }))}
+                  profileCountry={locationCtx?.country ?? undefined}
                   onTouchedCustomField={(id) => setTouchedCustomFields((prev) => ({ ...prev, [id]: true }))}
                   file={file}
                   onFileChange={handleFileChange}
@@ -889,6 +952,9 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
                   selectedType={selectedType}
                   selectedDate={selectedDate}
                   selectedTime={selectedTime}
+                  selectedStartUtc={selectedStartUtc}
+                  customerTimezone={viewerTimezone}
+                  providerTimezone={providerTimezone}
                   previewUrl={previewUrl}
                   isReschedule={isRescheduleMode}
                 />

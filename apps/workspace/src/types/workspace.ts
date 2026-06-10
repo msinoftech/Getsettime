@@ -34,6 +34,12 @@ export type GeneralSettings = {
   timezone?: string | null;
 };
 
+/** ipapi.co/json snapshot saved once at workspace registration. */
+export type localization_settings = Record<string, unknown> & {
+  fetched_at?: string;
+  error?: string;
+};
+
 export type IntakeFormServiceSettings = {
   enabled?: boolean;
   allowed_service_ids?: string[];
@@ -103,6 +109,8 @@ export type WorkspaceSettings = {
   notifications?: workspace_notifications_settings;
   /** Public booking link slugs keyed by service provider user id */
   links?: Record<string, { slug?: string }>;
+  /** Write-once ipapi geo snapshot from workspace registration */
+  localization?: localization_settings;
 };
 
 export type WorkspaceSettingsHook = {

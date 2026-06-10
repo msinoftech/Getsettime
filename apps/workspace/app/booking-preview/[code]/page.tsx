@@ -3,6 +3,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { formatDate, formatTime } from '@/src/utils/date';
+import { formatFullDateTimeInTimezone } from '@/lib/date-timezone';
+import { needsTimezoneConversion } from '@/src/utils/timezone';
 import { StatusBadge } from '@/src/components/Booking/StatusBadge';
 import type { NormalizedIntakeForm } from '@/src/utils/intakeForm';
 import {
@@ -495,12 +497,28 @@ function BookingPreviewContent({
     [booking.location, booking.event_types?.location_type]
   );
 
+  const customerTz = booking.customer_timezone?.trim() || null;
+  const providerTz = booking.provider_timezone?.trim() || null;
+
   const startDisplay =
     booking.start_at != null
-      ? `${formatDate(booking.start_at)}, ${formatTime(booking.start_at)}`
+      ? customerTz
+        ? formatFullDateTimeInTimezone(booking.start_at, customerTz)
+        : `${formatDate(booking.start_at)}, ${formatTime(booking.start_at)}`
       : 'N/A';
   const endDisplay =
-    booking.end_at != null ? `${formatDate(booking.end_at)}, ${formatTime(booking.end_at)}` : 'N/A';
+    booking.end_at != null
+      ? customerTz
+        ? formatFullDateTimeInTimezone(booking.end_at, customerTz)
+        : `${formatDate(booking.end_at)}, ${formatTime(booking.end_at)}`
+      : 'N/A';
+  const hostStartDisplay =
+    booking.start_at != null &&
+    providerTz &&
+    customerTz &&
+    needsTimezoneConversion(providerTz, customerTz)
+      ? formatFullDateTimeInTimezone(booking.start_at, providerTz)
+      : null;
 
   const previous_appointment_times = useMemo(
     () => get_previous_appointment_times(booking.metadata),
@@ -869,6 +887,9 @@ ${booking_preview_supplement_css()}
                   )}
                   <div className="bp-print-fields-grid grid gap-4 sm:grid-cols-2">
                   <InfoCard label="Start Date / Time" value={startDisplay} accent="indigo" />
+                  {hostStartDisplay && (
+                    <InfoCard label="Host Start Time" value={hostStartDisplay} accent="violet" />
+                  )}
                   <InfoCard label="End Date / Time" value={endDisplay} />
                   <InfoCard label="Duration" value={durationDisplay} />
                   <InfoCard

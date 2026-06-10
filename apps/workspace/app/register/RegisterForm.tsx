@@ -391,7 +391,13 @@ export default function RegisterForm() {
       const res = await with_network_timeout(
         fetch("/api/auth/bootstrap-workspace", {
           method: "POST",
-          headers: { Authorization: `Bearer ${session.access_token}` },
+          headers: {
+            Authorization: `Bearer ${session.access_token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          }),
         }),
         ONBOARDING_BOOTSTRAP_TIMEOUT_MS,
         timeoutMessage

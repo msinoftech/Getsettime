@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createSupabaseServerClient } from '@app/db';
 import { getLocalTimePartsInTimezone } from '@/lib/date-timezone';
+import {
+  formatDualTimeBlock,
+  resolveBookingTimezonesForInsert,
+  resolveValidationTimezone,
+} from '@/lib/booking-timezone-api';
 import { appendActivityLog } from '@/lib/activity-log';
 import {
   admin_whatsapp_phones_for_booking,
@@ -42,7 +47,7 @@ const NON_RESCHEDULABLE_STATUSES = ['cancelled', 'completed'];
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { public_code, start_at, end_at, timezone: clientTimezone } = body;
+    const { public_code, start_at, end_at } = body;
 
     if (!public_code) {
       return NextResponse.json({ error: 'Booking code is required' }, { status: 400 });
@@ -112,7 +117,18 @@ export async function POST(req: NextRequest) {
         : null
     );
 
-    const tz = typeof clientTimezone === 'string' && clientTimezone.trim() ? clientTimezone.trim() : null;
+    const workspaceTimezone =
+      (configData?.settings as { general?: { timezone?: string } } | undefined)?.general
+        ?.timezone ?? null;
+    const tzFields = resolveBookingTimezonesForInsert(
+      body as Record<string, unknown>,
+      workspaceTimezone
+    );
+    const tz = resolveValidationTimezone(
+      workspaceTimezone,
+      tzFields.customer_timezone,
+      tzFields.provider_timezone
+    );
     const startParts = tz ? getLocalTimePartsInTimezone(start_at, tz) : null;
     const endParts = tz && end_at ? getLocalTimePartsInTimezone(end_at, tz) : null;
 
@@ -204,6 +220,8 @@ export async function POST(req: NextRequest) {
       .update({
         start_at,
         end_at: resolvedEndAt || null,
+        customer_timezone: tzFields.customer_timezone,
+        provider_timezone: tzFields.provider_timezone,
         status: 'reschedule',
         is_reschedule_viewed: false,
         metadata: reschedule_metadata,
@@ -291,7 +309,14 @@ export async function POST(req: NextRequest) {
           duration: durationMinutes,
           previousStartTime: previousStartAt || undefined,
           previousEndTime: previousEndAt || undefined,
-          ...(clientTimezone ? { timezone: clientTimezone } : {}),
+          customerTimezone: tzFields.customer_timezone ?? undefined,
+          providerTimezone: tzFields.provider_timezone ?? undefined,
+          timezone: tzFields.customer_timezone ?? undefined,
+          dualTimeBlock: formatDualTimeBlock(
+            start_at,
+            tzFields.customer_timezone,
+            tzFields.provider_timezone
+          ),
           ...(embedRescheduleMeet
             ? { meetingUrl: embedRescheduleMeet, meetingLabel: 'Google Meet' }
             : {}),

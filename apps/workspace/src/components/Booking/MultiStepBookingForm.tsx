@@ -28,12 +28,23 @@ import {
   resolveEffectiveBookingDurationMinutes,
 } from '../../utils/bookingDuration';
 import { isTimeSlotBooked } from '../../utils/bookingTime';
-import { getDisplayTimezone, parseTimeStringTo24h } from '../../utils/timezone';
+import {
+  isWorkspaceTimezoneConfigured,
+  resolveCustomerTimezone,
+  resolveProviderTimezone,
+} from '../../utils/timezone';
+import { useLocationContext } from '@app/location';
+import type { Timeslot } from '../../types/bookingForm';
 import { normalizeInviteePhoneForStorage } from '@/src/utils/phone';
 import {
   can_navigate_to_booking_step,
   type booking_step_nav_context,
 } from '@/src/utils/booking_step_navigation';
+import {
+  step3PerfDateCommitted,
+  step3PerfSlotCommitted,
+  step3PerfSync,
+} from '@/src/utils/bookingStep3Perf';
 
 import { BookingPreviewSidebar } from './MultiStepBooking/BookingPreviewSidebar';
 import { ProgressIndicator } from './MultiStepBooking/ProgressIndicator';
@@ -66,6 +77,7 @@ const MultiStepBookingForm = ({
   const [selectedType, setSelectedType] = useState<EventType | null>(null);
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
   const [selectedTime, setSelectedTime] = useState('');
+  const [selectedStartUtc, setSelectedStartUtc] = useState<string | null>(null);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
@@ -204,6 +216,24 @@ const MultiStepBookingForm = ({
     [providerScopedCatalogServices, services]
   );
 
+  const profileCountry =
+    typeof user?.user_metadata?.country === 'string' ? user.user_metadata.country : undefined;
+
+  const {
+    customerTimezone: manualCustomerTz,
+    setCustomerTimezone,
+    context: locationCtx,
+    hasManualTimezone,
+    refresh: refreshLocation,
+  } = useLocationContext({
+    hostTimezone: general?.timezone,
+    profileCountry,
+  });
+
+  const viewerTimezone = resolveCustomerTimezone(manualCustomerTz, locationCtx?.timezone);
+  const providerTimezone = resolveProviderTimezone(general?.timezone, viewerTimezone);
+  const workspaceTimezoneConfigured = isWorkspaceTimezoneConfigured(general?.timezone);
+
   const timeslots = useTimeslots(
     selectedType,
     selectedDate,
@@ -211,7 +241,46 @@ const MultiStepBookingForm = ({
     existingBookings,
     0,
     selectedServiceIds,
-    serviceCatalogForSlots
+    serviceCatalogForSlots,
+    providerTimezone,
+    viewerTimezone
+  );
+
+  const handleSelectDate = useCallback((date: Date) => {
+    const t0 = performance.now();
+    setSelectedDate(date);
+    setSelectedTime('');
+    setSelectedStartUtc(null);
+    step3PerfSync('MultiStepBookingForm handleSelectDate sync', t0);
+  }, []);
+
+  const handleSelectSlot = useCallback((slot: Timeslot) => {
+    const t0 = performance.now();
+    setSelectedTime(slot.time);
+    setSelectedStartUtc(slot.startUtc);
+    step3PerfSync('MultiStepBookingForm handleSelectSlot sync', t0, {
+      startUtc: slot.startUtc,
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!selectedDate) return;
+    const enabled = timeslots.filter((s) => !s.disabled).length;
+    step3PerfDateCommitted(selectedDate, enabled);
+  }, [selectedDate, timeslots]);
+
+  useEffect(() => {
+    if (!selectedTime && !selectedStartUtc) return;
+    step3PerfSlotCommitted(selectedTime, selectedStartUtc);
+  }, [selectedTime, selectedStartUtc]);
+
+  const handleTimezoneChange = useCallback(
+    (tz: string) => {
+      setCustomerTimezone(tz);
+      setSelectedTime('');
+      setSelectedStartUtc(null);
+    },
+    [setCustomerTimezone]
   );
 
   const hideIntakeCatalogServices = providerScopedCatalogServices.length > 0;
@@ -267,6 +336,7 @@ const MultiStepBookingForm = ({
       if (step === 3 && target < 3) {
         setSelectedDate(null);
         setSelectedTime('');
+        setSelectedStartUtc(null);
       }
       setStep(target);
     },
@@ -281,6 +351,7 @@ const MultiStepBookingForm = ({
     if (selectedType) {
       setSelectedDate(null);
       setSelectedTime('');
+      setSelectedStartUtc(null);
     }
   }, [selectedType]);
 
@@ -289,11 +360,27 @@ const MultiStepBookingForm = ({
   }, [step, selectedDate]);
 
   useEffect(() => {
-    if (selectedDate && selectedTime) {
-      const valid = timeslots.some((s) => s.time === selectedTime && !s.disabled);
-      if (!valid) setSelectedTime('');
-    } else if (!selectedDate) setSelectedTime('');
-  }, [selectedDate, timeslots, selectedTime]);
+    if (step === 3 && !hasManualTimezone) {
+      void refreshLocation();
+    }
+  }, [step, hasManualTimezone, refreshLocation]);
+
+  useEffect(() => {
+    if (selectedDate && (selectedTime || selectedStartUtc)) {
+      const valid = timeslots.some(
+        (s) =>
+          !s.disabled &&
+          (selectedStartUtc ? s.startUtc === selectedStartUtc : s.time === selectedTime)
+      );
+      if (!valid) {
+        setSelectedTime('');
+        setSelectedStartUtc(null);
+      }
+    } else if (!selectedDate) {
+      setSelectedTime('');
+      setSelectedStartUtc(null);
+    }
+  }, [selectedDate, timeslots, selectedTime, selectedStartUtc]);
 
   useEffect(() => {
     if (!intakeForm) return;
@@ -411,9 +498,15 @@ const MultiStepBookingForm = ({
         return;
       }
     }
-    const selectedSlot = timeslots.find((s) => s.time === selectedTime);
+    const selectedSlot = timeslots.find((s) =>
+      selectedStartUtc ? s.startUtc === selectedStartUtc : s.time === selectedTime
+    );
     if (selectedSlot?.disabled) {
       setError(`This time slot is not available${selectedSlot.reason ? ` (${selectedSlot.reason})` : ''}. Please select another time.`);
+      return;
+    }
+    if (!selectedSlot?.startUtc) {
+      setError('Invalid time selection. Please try again.');
       return;
     }
 
@@ -430,29 +523,19 @@ const MultiStepBookingForm = ({
         bookingStatus = 'confirmed';
       }
 
-      const parsed = parseTimeStringTo24h(selectedTime);
-      if (!parsed) {
-        setError('Invalid time selection. Please try again.');
-        setLoading(false);
-        return;
-      }
-      const startDate = new Date(selectedDate);
-      startDate.setHours(parsed.hour, parsed.minute, 0, 0);
+      const durationMin = resolveEffectiveBookingDurationMinutes(
+        selectedType,
+        selectedServiceIds,
+        serviceCatalogForSlots
+      );
+      const startDate = new Date(selectedSlot.startUtc);
       if (startDate < new Date()) {
         setError('Cannot book a time slot in the past. Please select a future time.');
         setLoading(false);
         return;
       }
 
-      const endDate = new Date(startDate);
-      endDate.setMinutes(
-        endDate.getMinutes() +
-          resolveEffectiveBookingDurationMinutes(
-            selectedType,
-            selectedServiceIds,
-            serviceCatalogForSlots
-          )
-      );
+      const endDate = new Date(startDate.getTime() + durationMin * 60_000);
       if (isTimeSlotBooked(startDate, endDate, selectedDate, existingBookings)) {
         setError('This time slot has already been booked. Please refresh and select another time.');
         setLoading(false);
@@ -521,8 +604,6 @@ const MultiStepBookingForm = ({
 
       if (Object.keys(intakeFormPayload).length > 0) metadata.intake_form = intakeFormPayload;
 
-      const timezone = getDisplayTimezone(general?.timezone);
-
       const service_provider_id =
         departments.length === 0
           ? selectedProvider?.id ?? null
@@ -545,7 +626,9 @@ const MultiStepBookingForm = ({
           status: bookingStatus,
           ...(meetingKey ? { location: { meeting_option: meetingKey } } : {}),
           metadata: Object.keys(metadata).length > 0 ? metadata : null,
-          ...(timezone ? { timezone } : {}),
+          customer_timezone: viewerTimezone,
+          provider_timezone: providerTimezone,
+          timezone: viewerTimezone,
         }),
       });
 
@@ -614,7 +697,9 @@ const MultiStepBookingForm = ({
             email={email}
             phone={phone}
             notes={notes}
-            displayTimezone={getDisplayTimezone(general?.timezone)}
+            displayTimezone={viewerTimezone}
+            providerTimezone={providerTimezone}
+            selectedStartUtc={selectedStartUtc}
             selectedStep1ServiceIds={selectedServiceIds}
             step1CatalogServices={providerScopedCatalogServices}
             intakeForm={intakeForm}
@@ -704,8 +789,14 @@ const MultiStepBookingForm = ({
                     departmentsCount={departments.length}
                     workspacePrimaryColor={workspacePrimaryColor}
                     workspaceAccentColor={workspaceAccentColor}
-                    onSelectDate={setSelectedDate}
+                    onSelectDate={handleSelectDate}
                     onSelectTime={setSelectedTime}
+                    onSelectSlot={handleSelectSlot}
+                    selectedStartUtc={selectedStartUtc}
+                    customerTimezone={viewerTimezone}
+                    providerTimezone={providerTimezone}
+                    workspaceTimezoneConfigured={workspaceTimezoneConfigured}
+                    onTimezoneChange={handleTimezoneChange}
                     onToggleCalendar={() => setShowCalendar((s) => !s)}
                     onNavigateMonth={(dir) => setCurrentMonth((prev) => {
                       const next = new Date(prev);
@@ -717,6 +808,7 @@ const MultiStepBookingForm = ({
                       setStep(departments.length === 0 ? 2 : 1);
                       setSelectedDate(null);
                       setSelectedTime('');
+                      setSelectedStartUtc(null);
                     }}
                     onContinue={() => setStep(4)}
                     onDaysChange={setDays}

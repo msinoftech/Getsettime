@@ -1,17 +1,71 @@
 import { SupabaseClient } from '@supabase/supabase-js';
 import { assignFreePlanToWorkspace } from '@app/db/subscription';
+import { getTimezoneForCountry } from '@app/location';
 import { ROLE_SERVICE_PROVIDER } from '@/src/constants/roles';
 import { resolveMeetingOptionsForServiceProvider } from '@/src/utils/providerSettingsResolution';
 import { workspace_meeting_options_to_location } from '@/src/utils/meeting_options';
+import type { localization_settings } from '@/src/types/workspace';
+import type { IpapiJsonResponse } from '@/lib/ipapi-geo';
 
-export function getDefaultConfigurationSettings(workspaceName: string) {
+export type RegistrationGeoInput = {
+  ipapi?: IpapiJsonResponse | null;
+  edgeCountry?: string | null;
+  browserTimezone?: string | null;
+};
+
+export function buildLocalizationFromIpapi(
+  ipapi: IpapiJsonResponse | null | undefined,
+  edgeCountry?: string | null
+): localization_settings | undefined {
+  if (ipapi && !ipapi.error) {
+    return {
+      ...ipapi,
+      fetched_at: new Date().toISOString(),
+    };
+  }
+  if (edgeCountry) {
+    return {
+      country_code: edgeCountry,
+      fetched_at: new Date().toISOString(),
+      error: 'geo_unavailable',
+    };
+  }
+  return undefined;
+}
+
+export function resolveRegistrationTimezone(geo: RegistrationGeoInput): string {
+  const fromIpapi = geo.ipapi?.timezone?.trim();
+  if (fromIpapi) return fromIpapi;
+  const browser = geo.browserTimezone?.trim();
+  if (browser) return browser;
+  const country = geo.ipapi?.country_code?.toUpperCase() ?? geo.edgeCountry?.toUpperCase();
+  if (country) {
+    const mapped = getTimezoneForCountry(country);
+    if (mapped) return mapped;
+  }
+  return '';
+}
+
+export function getDefaultConfigurationSettings(
+  workspaceName: string,
+  registrationGeo?: RegistrationGeoInput
+) {
+  const timezone = registrationGeo
+    ? resolveRegistrationTimezone(registrationGeo)
+    : '';
+  const localization = registrationGeo
+    ? buildLocalizationFromIpapi(registrationGeo.ipapi, registrationGeo.edgeCountry)
+    : undefined;
+
   return {
     general: {
       logoUrl: null,
       accentColor: '#1de4a9',
       accountName: workspaceName,
       primaryColor: '#4b39f4',
+      ...(timezone ? { timezone } : {}),
     },
+    ...(localization ? { localization } : {}),
     intake_form: {
       name: true,
       email: true,
@@ -45,6 +99,7 @@ export interface CreateWorkspaceParams {
   userName: string;
   userEmail: string;
   supabaseAdmin: SupabaseClient;
+  registrationGeo?: RegistrationGeoInput;
 }
 
 export interface WorkspaceResult {
@@ -197,7 +252,7 @@ function parseMetadataWorkspaceId(raw: unknown): number {
 export async function getOrCreateWorkspace(
   params: CreateWorkspaceParams
 ): Promise<{ data: WorkspaceResult | null; error: string | null }> {
-  const { userId, userName, userEmail, supabaseAdmin } = params;
+  const { userId, userName, userEmail, supabaseAdmin, registrationGeo } = params;
 
   try {
     const { data: userData } = await supabaseAdmin.auth.admin.getUserById(userId);
@@ -281,8 +336,8 @@ export async function getOrCreateWorkspace(
       return { data: null, error: 'Failed to create workspace' };
     }
 
-    // Insert default configuration
-    const defaultSettings = getDefaultConfigurationSettings(workspaceName);
+    // Insert default configuration (includes localization + timezone from registration geo)
+    const defaultSettings = getDefaultConfigurationSettings(workspaceName, registrationGeo);
     const { error: configError } = await supabaseAdmin
       .from('configurations')
       .insert({

@@ -7,6 +7,7 @@ import {
   syncInvitedUserWorkspaceMetadata,
 } from "@/lib/workspace-service";
 import { sendWorkspaceWelcomeEmail } from "@/lib/send-workspace-welcome-email";
+import { resolveRegistrationGeoFromHeaders } from "@/lib/ipapi-geo";
 
 export async function POST(req: Request) {
   try {
@@ -97,12 +98,26 @@ export async function POST(req: Request) {
       );
     }
 
+    let browserTimezone: string | undefined;
+    try {
+      const body = await req.json() as { timezone?: string };
+      browserTimezone = typeof body.timezone === "string" ? body.timezone.trim() : undefined;
+    } catch {
+      browserTimezone = undefined;
+    }
+
+    const registrationGeo = await resolveRegistrationGeoFromHeaders(
+      req.headers,
+      browserTimezone
+    );
+
     // Get or create workspace (ensures one user = one workspace) — workspace owners / self-signup only
     const { data: workspaceResult, error: workspaceError } = await getOrCreateWorkspace({
       userId: user.id,
       userName: name,
       userEmail,
       supabaseAdmin,
+      registrationGeo,
     });
 
     if (workspaceError || !workspaceResult) {

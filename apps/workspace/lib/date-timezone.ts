@@ -1,7 +1,8 @@
 /**
- * Extract local date/time parts from a UTC ISO string in a specific timezone.
- * Used for availability validation where schedule times are in workspace/client timezone.
+ * Timezone utilities for availability validation and slot conversion.
  */
+import { TZDate } from '@date-fns/tz';
+
 export interface LocalTimeParts {
   dayOfWeek: number; // 0=Sun, 1=Mon, ...
   dateStr: string; // YYYY-MM-DD
@@ -45,4 +46,91 @@ export function getLocalTimePartsInTimezone(
   const startMinutes = hour * 60 + minute;
 
   return { dayOfWeek, dateStr, hours: hour, minutes: minute, startMinutes };
+}
+
+/** Build UTC ISO from a calendar date + clock time in a specific IANA timezone. */
+export function localDateTimeToUtcIso(
+  dateStr: string,
+  hour: number,
+  minute: number,
+  timezone: string
+): string {
+  const [y, m, d] = dateStr.split('-').map((x) => parseInt(x, 10));
+  const zoned = new TZDate(y, m - 1, d, hour, minute, 0, 0, timezone);
+  return zoned.toISOString();
+}
+
+/** Format UTC ISO instant for display in a timezone (12h with abbrev). */
+export function formatUtcInTimezone(
+  iso: string,
+  timezone: string,
+  options?: Intl.DateTimeFormatOptions
+): string {
+  const date = new Date(iso);
+  const opts: Intl.DateTimeFormatOptions = {
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+    timeZoneName: 'short',
+    timeZone: timezone,
+    ...options,
+  };
+  return date.toLocaleString('en-US', opts);
+}
+
+/** YYYY-MM-DD for an instant in a given timezone. */
+export function getCalendarDateInTimezone(isoOrDate: string | Date, timezone: string): string {
+  const iso = typeof isoOrDate === 'string' ? isoOrDate : isoOrDate.toISOString();
+  return getLocalTimePartsInTimezone(iso, timezone).dateStr;
+}
+
+/** Short timezone label (e.g. IST, EST). */
+export function getTimezoneAbbreviation(timezone: string, date?: Date): string {
+  const d = date ?? new Date();
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: timezone,
+    timeZoneName: 'short',
+  }).formatToParts(d);
+  return parts.find((p) => p.type === 'timeZoneName')?.value ?? timezone;
+}
+
+/** Format calendar date only in a timezone (no time). */
+export function formatDateOnlyInTimezone(iso: string, timezone: string): string {
+  const date = new Date(iso);
+  return date.toLocaleDateString('en-US', {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    timeZone: timezone,
+  });
+}
+
+/** Format time only with timezone abbrev, e.g. "1:30 PM (GMT+10)". */
+export function formatTimeOnlyInTimezone(iso: string, timezone: string): string {
+  const date = new Date(iso);
+  const time = date.toLocaleString('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+    timeZone: timezone,
+  });
+  const abbrev = getTimezoneAbbreviation(timezone, date);
+  return `${time} (${abbrev})`;
+}
+
+/** Format full date+time in timezone for confirmations. */
+export function formatFullDateTimeInTimezone(iso: string, timezone: string): string {
+  const date = new Date(iso);
+  return date.toLocaleString('en-US', {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+    timeZoneName: 'short',
+    timeZone: timezone,
+  });
 }

@@ -1,10 +1,10 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/src/providers/AuthProvider";
 import { useSubscription } from "@/src/hooks/useSubscription";
 import { formatBookingLimitLabel } from "@app/db/subscription";
+import { DashboardUpgradeModal } from "./DashboardUpgradeModal";
 
 function dismissKey(workspaceId: number) {
   return `free_plan_welcome_dismissed_${workspaceId}`;
@@ -14,6 +14,7 @@ export function FreePlanWelcomeBanner() {
   const { user } = useAuth();
   const { data, loading } = useSubscription(Boolean(user));
   const [dismissed, setDismissed] = useState(true);
+  const [show_upgrade_modal, set_show_upgrade_modal] = useState(false);
 
   const workspaceIdRaw = user?.user_metadata?.workspace_id;
   const workspaceId =
@@ -72,12 +73,13 @@ export function FreePlanWelcomeBanner() {
           </ul>
         </div>
         <div className="flex shrink-0 flex-col gap-2 sm:items-end">
-          <Link
-            href="/billings"
+          <button
+            type="button"
+            onClick={() => set_show_upgrade_modal(true)}
             className="inline-flex items-center justify-center rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
           >
             Upgrade Plan
-          </Link>
+          </button>
           <button
             type="button"
             onClick={handleDismiss}
@@ -87,6 +89,12 @@ export function FreePlanWelcomeBanner() {
           </button>
         </div>
       </div>
+      <DashboardUpgradeModal
+        open={show_upgrade_modal}
+        onClose={() => set_show_upgrade_modal(false)}
+        usedBookings={data.usage.bookings_this_month}
+        bookingLimit={data.usage.booking_limit}
+      />
     </div>
   );
 }

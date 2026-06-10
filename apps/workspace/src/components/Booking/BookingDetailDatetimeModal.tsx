@@ -5,7 +5,7 @@ import type { Department, EventType, Service, ServiceProvider } from '@/src/type
 import { useBookingFormData } from '@/src/hooks/useBookingFormData';
 import { useTimeslots } from '@/src/hooks/useTimeslots';
 import { Step3DateTime } from '@/src/components/Booking/MultiStepBooking/Step3DateTime';
-import type { AvailabilitySettings } from '@/src/types/bookingForm';
+import type { AvailabilitySettings, Timeslot } from '@/src/types/bookingForm';
 import type { Booking as BusySlotBooking } from '@/src/types/bookingForm';
 import {
   intakeServiceIdsFromMetadata,
@@ -13,7 +13,12 @@ import {
   resolveEffectiveBookingDurationMinutes,
 } from '@/src/utils/bookingDuration';
 import { isTimeSlotBooked, normalizeDate } from '@/src/utils/bookingTime';
-import { getDisplayTimezone, parseTimeStringTo24h } from '@/src/utils/timezone';
+import {
+  isWorkspaceTimezoneConfigured,
+  resolveCustomerTimezone,
+  resolveProviderTimezone,
+} from '@/src/utils/timezone';
+import { useLocationContext } from '@app/location';
 import type { Booking } from '@/src/types/booking';
 import type { NormalizedIntakeForm } from '@/src/utils/intakeForm';
 import type { IntakeFormSettings } from '@/src/types/workspace';
@@ -68,7 +73,13 @@ export function BookingDetailDatetimeModal({
   workspaceAccentColor: string | null;
   clientTimezone: string | null;
   onClose: () => void;
-  onConfirm: (payload: { start_at: string; end_at: string; status?: string }) => void;
+  onConfirm: (payload: {
+    start_at: string;
+    end_at: string;
+    status?: string;
+    customer_timezone?: string;
+    provider_timezone?: string;
+  }) => void;
   saving: boolean;
 }) {
   const [selectedDepartment, setSelectedDepartment] = useState<Department | null>(null);
@@ -76,6 +87,7 @@ export function BookingDetailDatetimeModal({
   const [selectedType, setSelectedType] = useState<EventType | null>(null);
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
   const [selectedTime, setSelectedTime] = useState('');
+  const [selectedStartUtc, setSelectedStartUtc] = useState<string | null>(null);
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [showCalendar, setShowCalendar] = useState(false);
   const [days, setDays] = useState<Date[]>(() =>
@@ -88,6 +100,22 @@ export function BookingDetailDatetimeModal({
   const [error, setError] = useState<string | null>(null);
   const [rescheduleServiceCatalog, setRescheduleServiceCatalog] = useState<Service[]>([]);
 
+  const {
+    customerTimezone: manualCustomerTz,
+    setCustomerTimezone,
+    context: locationCtx,
+  } = useLocationContext({
+    hostTimezone: clientTimezone,
+    profileCountry: undefined,
+  });
+
+  const viewerTimezone = resolveCustomerTimezone(
+    manualCustomerTz ?? booking.customer_timezone,
+    locationCtx?.timezone
+  );
+  const providerTimezone = resolveProviderTimezone(clientTimezone, viewerTimezone);
+  const workspaceTimezoneConfigured = isWorkspaceTimezoneConfigured(clientTimezone);
+
   const intakeServiceIds = useMemo(
     () => intakeServiceIdsFromMetadata(booking.metadata),
     [booking.metadata]
@@ -96,6 +124,7 @@ export function BookingDetailDatetimeModal({
   const onAvailabilityChange = useCallback(() => {
     setSelectedDate(null);
     setSelectedTime('');
+    setSelectedStartUtc(null);
   }, []);
 
   const {
@@ -143,7 +172,23 @@ export function BookingDetailDatetimeModal({
     existing_for_slots as BusySlotBooking[],
     minLead,
     intakeServiceIds,
-    serviceCatalogForSlots
+    serviceCatalogForSlots,
+    providerTimezone,
+    viewerTimezone
+  );
+
+  const handleSelectSlot = useCallback((slot: Timeslot) => {
+    setSelectedTime(slot.time);
+    setSelectedStartUtc(slot.startUtc);
+  }, []);
+
+  const handleTimezoneChange = useCallback(
+    (tz: string) => {
+      setCustomerTimezone(tz);
+      setSelectedTime('');
+      setSelectedStartUtc(null);
+    },
+    [setCustomerTimezone]
   );
 
   useEffect(() => {
@@ -233,25 +278,31 @@ export function BookingDetailDatetimeModal({
     const d = new Date(booking.start_at);
     setSelectedDate(normalizeDate(d));
     setCurrentMonth(new Date(d.getFullYear(), d.getMonth(), 1));
+    setSelectedStartUtc(booking.start_at);
   }, [open, booking.start_at]);
 
   useEffect(() => {
-    if (!open || !booking.start_at || !selectedDate) return;
-    const d = new Date(booking.start_at);
-    const pad = (n: number) => String(n).padStart(2, '0');
-    const h = d.getHours();
-    const m = d.getMinutes();
-    const hour12 = h % 12 === 0 ? 12 : h % 12;
-    const ampm = h >= 12 ? 'PM' : 'AM';
-    const timeStr = `${hour12}:${pad(m)} ${ampm}`;
-    setSelectedTime(timeStr);
-  }, [open, booking.start_at, selectedDate]);
+    if (!open || !booking.start_at || !selectedDate || timeslots.length === 0) return;
+    const slot =
+      timeslots.find((s) => s.startUtc === booking.start_at && !s.disabled) ??
+      timeslots.find((s) => !s.disabled);
+    if (slot) {
+      setSelectedTime(slot.time);
+      setSelectedStartUtc(slot.startUtc);
+    }
+  }, [open, booking.start_at, selectedDate, timeslots]);
 
   useEffect(() => {
     if (selectedDate && selectedTime) {
       const valid = timeslots.some((s) => s.time === selectedTime && !s.disabled);
-      if (!valid) setSelectedTime('');
-    } else if (!selectedDate) setSelectedTime('');
+      if (!valid) {
+        setSelectedTime('');
+        setSelectedStartUtc(null);
+      }
+    } else if (!selectedDate) {
+      setSelectedTime('');
+      setSelectedStartUtc(null);
+    }
   }, [selectedDate, timeslots, selectedTime]);
 
   const title =
@@ -264,33 +315,31 @@ export function BookingDetailDatetimeModal({
       setError('Please select date and time');
       return;
     }
-    const slot = timeslots.find((s) => s.time === selectedTime);
+    const slot = timeslots.find(
+      (s) => s.time === selectedTime || s.startUtc === selectedStartUtc
+    );
     if (slot?.disabled) {
       setError(
         `This time slot is not available${slot.reason ? ` (${slot.reason})` : ''}.`
       );
       return;
     }
-    const parsed = parseTimeStringTo24h(selectedTime);
-    if (!parsed) {
+    const startIso = selectedStartUtc ?? slot?.startUtc;
+    if (!startIso) {
       setError('Invalid time');
       return;
     }
-    const startDate = new Date(selectedDate);
-    startDate.setHours(parsed.hour, parsed.minute, 0, 0);
+    const startDate = new Date(startIso);
     if (startDate < new Date()) {
       setError('Cannot select a time in the past.');
       return;
     }
-    const endDate = new Date(startDate);
-    endDate.setMinutes(
-      endDate.getMinutes() +
-        resolveEffectiveBookingDurationMinutes(
-          selectedType,
-          intakeServiceIds,
-          serviceCatalogForSlots
-        )
+    const durationMin = resolveEffectiveBookingDurationMinutes(
+      selectedType,
+      intakeServiceIds,
+      serviceCatalogForSlots
     );
+    const endDate = new Date(startDate.getTime() + durationMin * 60_000);
     if (
       isTimeSlotBooked(
         startDate,
@@ -303,9 +352,17 @@ export function BookingDetailDatetimeModal({
       return;
     }
 
-    const payload: { start_at: string; end_at: string; status?: string } = {
-      start_at: startDate.toISOString(),
+    const payload: {
+      start_at: string;
+      end_at: string;
+      status?: string;
+      customer_timezone: string;
+      provider_timezone: string;
+    } = {
+      start_at: startIso,
       end_at: endDate.toISOString(),
+      customer_timezone: viewerTimezone,
+      provider_timezone: providerTimezone,
     };
 
     if (mode === 'reschedule') payload.status = 'reschedule';
@@ -315,9 +372,6 @@ export function BookingDetailDatetimeModal({
 
   if (!open) return null;
 
-  const tz = getDisplayTimezone(clientTimezone ?? undefined);
-
-  /** Match intake/booking-form: implicit workspace host when picker is unnecessary */
   const ready =
     Boolean(selectedType) &&
     !loadingDepartments &&
@@ -379,6 +433,7 @@ export function BookingDetailDatetimeModal({
               workspaceAccentColor={workspaceAccentColor}
               onSelectDate={setSelectedDate}
               onSelectTime={setSelectedTime}
+              onSelectSlot={handleSelectSlot}
               onToggleCalendar={() => setShowCalendar((s) => !s)}
               onNavigateMonth={(dir) =>
                 setCurrentMonth((prev) => {
@@ -397,10 +452,12 @@ export function BookingDetailDatetimeModal({
               previousStartAt={booking.start_at}
               previousEndAt={booking.end_at}
               minLeadTimeMinutes={minLead}
+              customerTimezone={viewerTimezone}
+              providerTimezone={providerTimezone}
+              workspaceTimezoneConfigured={workspaceTimezoneConfigured}
+              selectedStartUtc={selectedStartUtc}
+              onTimezoneChange={handleTimezoneChange}
             />
-            <p className="mt-2 text-center text-xs text-slate-500">
-              Times shown in {tz || 'local timezone'}.
-            </p>
           </div>
         )}
       </div>

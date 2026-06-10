@@ -11,6 +11,8 @@ export type Booking = {
   invitee_phone: string | null;
   start_at: string | null;
   end_at: string | null;
+  customer_timezone: string | null;
+  provider_timezone: string | null;
   status: string | null;
   location: Record<string, unknown> | null;
   payment_id: string | null;

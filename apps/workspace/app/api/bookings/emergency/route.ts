@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { findOrCreateContact } from '@/lib/contact-linking';
+import { resolveBookingTimezonesForInsert } from '@/lib/booking-timezone-api';
 
 export async function POST(req: NextRequest) {
   try {
@@ -80,6 +81,20 @@ export async function POST(req: NextRequest) {
       invitee_phone?.trim() || null
     );
 
+    const { data: configRow } = await supabase
+      .from('configurations')
+      .select('settings')
+      .eq('workspace_id', workspaceId)
+      .maybeSingle();
+
+    const workspaceTimezone =
+      (configRow?.settings as { general?: { timezone?: string } } | undefined)?.general
+        ?.timezone ?? null;
+    const tzFields = resolveBookingTimezonesForInsert(
+      body as Record<string, unknown>,
+      workspaceTimezone
+    );
+
     const publicCode = crypto.randomUUID();
 
     const { data, error } = await supabase
@@ -101,6 +116,8 @@ export async function POST(req: NextRequest) {
         payment_id: null,
         metadata,
         public_code: publicCode,
+        customer_timezone: tzFields.customer_timezone,
+        provider_timezone: tzFields.provider_timezone,
       })
       .select()
       .single();

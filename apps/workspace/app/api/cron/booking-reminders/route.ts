@@ -7,6 +7,7 @@ import { post_booking_whatsapp_notification } from '@/lib/post_booking_whatsapp_
 import { is_whatsapp_user_enabled } from '@/lib/workspace-notification-flags';
 import { resolveNotificationsForServiceProvider } from '@/src/utils/providerSettingsResolution';
 import { resolve_meeting_join_url_from_booking } from '@/src/utils/google_meet';
+import { emailTimezoneFields } from '@/lib/booking-timezone-api';
 
 const BATCH_WINDOW_MINUTES = 15;
 const SMS_REMINDER_MINUTES = 60;
@@ -45,7 +46,7 @@ function isAuthorized(req: NextRequest): boolean {
   return customHeader === cronSecret;
 }
 
-function formatBookingTime(startAt: string): string {
+function formatBookingTime(startAt: string, timezone?: string | null): string {
   const opts: Intl.DateTimeFormatOptions = {
     weekday: 'short',
     year: 'numeric',
@@ -54,6 +55,7 @@ function formatBookingTime(startAt: string): string {
     hour: '2-digit',
     minute: '2-digit',
     timeZoneName: 'short',
+    ...(timezone?.trim() && { timeZone: timezone.trim() }),
   };
   return new Date(startAt).toLocaleString('en-US', opts);
 }
@@ -147,7 +149,7 @@ async function process24hEmailReminders(
 
   const { data: bookings, error } = await supabase
     .from('bookings')
-    .select('id, workspace_id, service_provider_id, invitee_name, invitee_email, invitee_phone, start_at, end_at, event_type_id, contact_id, metadata, location, contacts(phone, email, name), event_types(title, duration_minutes)')
+    .select('id, workspace_id, service_provider_id, invitee_name, invitee_email, invitee_phone, start_at, end_at, customer_timezone, provider_timezone, event_type_id, contact_id, metadata, location, contacts(phone, email, name), event_types(title, duration_minutes)')
     .gte('start_at', windowStart.toISOString())
     .lte('start_at', windowEnd.toISOString())
     .neq('status', 'cancelled')
@@ -197,6 +199,15 @@ async function process24hEmailReminders(
     const meetUrl = resolve_meeting_join_url_from_booking(booking.location, booking.metadata);
 
     try {
+      const customerTz =
+        (booking as { customer_timezone?: string | null }).customer_timezone ?? null;
+      const providerTz =
+        (booking as { provider_timezone?: string | null }).provider_timezone ?? null;
+      const tzEmail = emailTimezoneFields(
+        customerTz,
+        providerTz,
+        booking.start_at!
+      );
       await sendReminderEmail({
         inviteeName: name,
         inviteeEmail: email,
@@ -204,6 +215,7 @@ async function process24hEmailReminders(
         startTime: booking.start_at!,
         endTime: booking.end_at || booking.start_at!,
         duration,
+        ...tzEmail,
         ...(noteStrMeta.trim() ? { notes: noteStrMeta } : {}),
         ...(meetUrl?.trim()
           ? { meetingUrl: meetUrl.trim(), meetingLabel: 'Google Meet' }
@@ -238,7 +250,7 @@ async function process1hSmsReminders(
 
   const { data: bookings, error } = await supabase
     .from('bookings')
-    .select('id, workspace_id, service_provider_id, invitee_name, invitee_phone, invitee_email, start_at, end_at, event_type_id, contact_id, metadata, location, contacts(phone, email, name), event_types(title)')
+    .select('id, workspace_id, service_provider_id, invitee_name, invitee_phone, invitee_email, start_at, end_at, customer_timezone, provider_timezone, event_type_id, contact_id, metadata, location, contacts(phone, email, name), event_types(title)')
     .gte('start_at', windowStart.toISOString())
     .lte('start_at', windowEnd.toISOString())
     .neq('status', 'cancelled')
@@ -286,7 +298,9 @@ async function process1hSmsReminders(
     }
 
     const eventTitle = resolveEventTitle(booking as Record<string, unknown>);
-    const when = formatBookingTime(booking.start_at!);
+    const customerTz =
+      (booking as { customer_timezone?: string | null }).customer_timezone ?? null;
+    const when = formatBookingTime(booking.start_at!, customerTz);
     const meetUrlSms = resolve_meeting_join_url_from_booking(
       (booking as Record<string, unknown>).location,
       booking.metadata
@@ -379,7 +393,9 @@ async function process1hWhatsAppReminders(
     }
 
     const eventTitle = resolveEventTitle(booking as Record<string, unknown>);
-    const when = formatBookingTime(booking.start_at!);
+    const customerTz =
+      (booking as { customer_timezone?: string | null }).customer_timezone ?? null;
+    const when = formatBookingTime(booking.start_at!, customerTz);
     const meetUrlWa = resolve_meeting_join_url_from_booking(
       (booking as Record<string, unknown>).location,
       booking.metadata
@@ -489,7 +505,7 @@ async function processPostMeetingFollowUps(
 
   const { data: bookings, error } = await supabase
     .from('bookings')
-    .select('id, workspace_id, service_provider_id, invitee_name, invitee_email, invitee_phone, start_at, end_at, event_type_id, contact_id, metadata, contacts(phone, email, name), event_types(title, duration_minutes)')
+    .select('id, workspace_id, service_provider_id, invitee_name, invitee_email, invitee_phone, start_at, end_at, customer_timezone, provider_timezone, event_type_id, contact_id, metadata, contacts(phone, email, name), event_types(title, duration_minutes)')
     .gte('end_at', windowStart.toISOString())
     .lte('end_at', windowEnd.toISOString())
     .eq('status', 'completed')
@@ -534,6 +550,15 @@ async function processPostMeetingFollowUps(
     const duration = (et as { duration_minutes?: number } | null)?.duration_minutes || 30;
 
     try {
+      const followCustomerTz =
+        (booking as { customer_timezone?: string | null }).customer_timezone ?? null;
+      const followProviderTz =
+        (booking as { provider_timezone?: string | null }).provider_timezone ?? null;
+      const followTzEmail = emailTimezoneFields(
+        followCustomerTz,
+        followProviderTz,
+        booking.start_at!
+      );
       await sendFollowUpEmail({
         inviteeName: name,
         inviteeEmail: email,
@@ -541,6 +566,7 @@ async function processPostMeetingFollowUps(
         startTime: booking.start_at!,
         endTime: booking.end_at || booking.start_at!,
         duration,
+        ...followTzEmail,
         notes: (booking.metadata as Record<string, unknown>)?.notes as string | undefined,
       });
       await supabase.from('bookings').update({ followup_email_sent_at: new Date().toISOString() }).eq('id', booking.id);

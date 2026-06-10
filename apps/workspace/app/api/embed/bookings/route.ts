@@ -5,6 +5,11 @@ import { verifyOTP, isOTPVerified } from '@/lib/otp-service';
 import { findOrCreateContact } from '@/lib/contact-linking';
 import { getLocalTimePartsInTimezone } from '@/lib/date-timezone';
 import {
+  formatDualTimeBlock,
+  resolveBookingTimezonesForInsert,
+  resolveValidationTimezone,
+} from '@/lib/booking-timezone-api';
+import {
   admin_whatsapp_phones_for_booking,
   resolve_provider_notification_contact,
   sole_workspace_department_display_name,
@@ -181,7 +186,6 @@ export async function POST(req: NextRequest) {
       otp_code,
       verified_identifier,
       intake_form,
-      timezone: clientTimezone,
       location,
     } = body;
 
@@ -363,9 +367,20 @@ export async function POST(req: NextRequest) {
       configData?.settings?.meeting_options as Record<string, unknown> | undefined,
       bookingServiceProviderId
     );
-    
-    // Use timezone-aware parsing when client sends timezone (fixes Vercel UTC vs local mismatch)
-    const tz = typeof clientTimezone === 'string' && clientTimezone.trim() ? clientTimezone.trim() : null;
+
+    const workspaceTimezone =
+      (configData?.settings as { general?: { timezone?: string } } | undefined)?.general
+        ?.timezone ?? null;
+    const tzFields = resolveBookingTimezonesForInsert(
+      body as Record<string, unknown>,
+      workspaceTimezone
+    );
+
+    const tz = resolveValidationTimezone(
+      workspaceTimezone,
+      tzFields.customer_timezone,
+      tzFields.provider_timezone
+    );
     const startParts = tz ? getLocalTimePartsInTimezone(start_at, tz) : null;
     const endParts = tz && end_at ? getLocalTimePartsInTimezone(end_at, tz) : null;
 
@@ -549,6 +564,8 @@ export async function POST(req: NextRequest) {
         contact_id: contactId ?? null,
         start_at,
         end_at: resolvedEndAt || null,
+        customer_timezone: tzFields.customer_timezone,
+        provider_timezone: tzFields.provider_timezone,
         status: bookingStatus,
         location: locationForInsert,
         payment_id: null,
@@ -647,15 +664,23 @@ export async function POST(req: NextRequest) {
       const wantsMeet = booking_wants_google_meet(locationForInsert);
       const { createCalendarEvent } = await import('@/lib/google-calendar-service');
       const endAtCal = resolvedEndAt;
-      const tzCal =
-        typeof clientTimezone === 'string' && clientTimezone.trim()
-          ? clientTimezone.trim()
-          : undefined;
+      const tzCal = tzFields.provider_timezone?.trim() || tzFields.customer_timezone?.trim();
+      const dualTime = formatDualTimeBlock(
+        start_at,
+        tzFields.customer_timezone,
+        tzFields.provider_timezone
+      );
+      const calDescription = [
+        dualTime,
+        metadataPayload.notes ? String(metadataPayload.notes) : '',
+      ]
+        .filter(Boolean)
+        .join('\n\n');
       const { eventId, meetLink, error: calInsertErr } = await createCalendarEvent({
         workspaceId: Number(workspace_id),
         serviceProviderId: service_provider_id || undefined,
         summary: `${eventTypeName}: ${invitee_name.trim()}`,
-        description: metadataPayload.notes ? String(metadataPayload.notes) : undefined,
+        description: calDescription || undefined,
         startAt: start_at,
         endAt: endAtCal,
         location: calendar_event_location_string(location),
@@ -730,7 +755,14 @@ export async function POST(req: NextRequest) {
           endTime: resolvedEndAt,
           duration: durationMinutes,
           notes: metadataPayload.notes ? String(metadataPayload.notes) : undefined,
-          ...(clientTimezone ? { timezone: clientTimezone } : {}),
+          customerTimezone: tzFields.customer_timezone ?? undefined,
+          providerTimezone: tzFields.provider_timezone ?? undefined,
+          timezone: tzFields.customer_timezone ?? undefined,
+          dualTimeBlock: formatDualTimeBlock(
+            start_at,
+            tzFields.customer_timezone,
+            tzFields.provider_timezone
+          ),
           ...(meetingUrlAfterCalendar?.trim()
             ? {
                 meetingUrl: meetingUrlAfterCalendar.trim(),
@@ -791,7 +823,9 @@ export async function POST(req: NextRequest) {
           hour: '2-digit',
           minute: '2-digit',
           timeZoneName: 'short',
-          ...(clientTimezone?.trim() && { timeZone: clientTimezone.trim() }),
+          ...(tzFields.customer_timezone?.trim() && {
+            timeZone: tzFields.customer_timezone.trim(),
+          }),
         };
         const when = new Date(start_at).toLocaleString('en-US', whenOpts);
 

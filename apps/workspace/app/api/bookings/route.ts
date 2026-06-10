@@ -3,6 +3,12 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { findOrCreateContact, resolveContactForInviteeUpdate } from '@/lib/contact-linking';
 import { getLocalTimePartsInTimezone } from '@/lib/date-timezone';
+import {
+  emailTimezoneFields,
+  formatDualTimeBlock,
+  resolveBookingTimezonesForInsert,
+  resolveValidationTimezone,
+} from '@/lib/booking-timezone-api';
 import { appendActivityLog } from '@/lib/activity-log';
 import {
   admin_whatsapp_phones_for_booking,
@@ -401,7 +407,6 @@ export async function POST(req: NextRequest) {
       location,
       payment_id,
       metadata,
-      timezone: clientTimezone,
     } = body;
 
     if (!invitee_name || !invitee_name.trim()) {
@@ -490,9 +495,21 @@ export async function POST(req: NextRequest) {
       configData?.settings?.meeting_options as Record<string, unknown> | undefined,
       bookingServiceProviderId
     );
-    
-    // Use timezone-aware parsing when client sends timezone (fixes Vercel UTC vs local mismatch)
-    const tz = typeof clientTimezone === 'string' && clientTimezone.trim() ? clientTimezone.trim() : null;
+
+    const workspaceTimezone =
+      (configData?.settings as { general?: { timezone?: string } } | undefined)?.general
+        ?.timezone ?? null;
+    const tzFields = resolveBookingTimezonesForInsert(
+      body as Record<string, unknown>,
+      workspaceTimezone
+    );
+
+    // Use timezone-aware parsing in provider/visitor timezone (fixes Vercel UTC vs local mismatch)
+    const tz = resolveValidationTimezone(
+      workspaceTimezone,
+      tzFields.customer_timezone,
+      tzFields.provider_timezone
+    );
     const startParts = tz ? getLocalTimePartsInTimezone(start_at, tz) : null;
     const endParts = tz && end_at ? getLocalTimePartsInTimezone(end_at, tz) : null;
 
@@ -653,6 +670,8 @@ export async function POST(req: NextRequest) {
         contact_id: contactId ?? null,
         start_at: start_at,
         end_at: resolvedEndAt || null,
+        customer_timezone: tzFields.customer_timezone,
+        provider_timezone: tzFields.provider_timezone,
         status: status || 'pending',
         location: normalizedBookingLocation,
         payment_id: payment_id || null,
@@ -748,15 +767,23 @@ export async function POST(req: NextRequest) {
     try {
       const wantsMeet = booking_wants_google_meet(normalizedBookingLocation);
       const { createCalendarEvent } = await import('@/lib/google-calendar-service');
-      const tzCal =
-        typeof clientTimezone === 'string' && clientTimezone.trim()
-          ? clientTimezone.trim()
-          : undefined;
+      const tzCal = tzFields.provider_timezone?.trim() || tzFields.customer_timezone?.trim();
+      const dualTime = formatDualTimeBlock(
+        start_at,
+        tzFields.customer_timezone,
+        tzFields.provider_timezone
+      );
+      const calDescription = [
+        dualTime,
+        metadata?.notes ? String(metadata.notes) : '',
+      ]
+        .filter(Boolean)
+        .join('\n\n');
       const { eventId, meetLink, error: calInsertErr } = await createCalendarEvent({
         workspaceId: Number(workspaceId),
         serviceProviderId: service_provider_id || undefined,
         summary: `${eventTypeName}: ${invitee_name.trim()}`,
-        description: metadata?.notes ? String(metadata.notes) : undefined,
+        description: calDescription || undefined,
         startAt: start_at,
         endAt: resolvedEndAt,
         location: calendar_event_location_string(location),
@@ -828,7 +855,14 @@ export async function POST(req: NextRequest) {
           endTime: resolvedEndAt,
           duration: durationMinutes,
           notes: metadata?.notes || undefined,
-          ...(clientTimezone ? { timezone: clientTimezone } : {}),
+          customerTimezone: tzFields.customer_timezone ?? undefined,
+          providerTimezone: tzFields.provider_timezone ?? undefined,
+          timezone: tzFields.customer_timezone ?? undefined,
+          dualTimeBlock: formatDualTimeBlock(
+            start_at,
+            tzFields.customer_timezone,
+            tzFields.provider_timezone
+          ),
           ...(meetingUrlAfterCalendar?.trim()
             ? {
                 meetingUrl: meetingUrlAfterCalendar.trim(),
@@ -892,7 +926,9 @@ export async function POST(req: NextRequest) {
           hour: '2-digit',
           minute: '2-digit',
           timeZoneName: 'short',
-          ...(clientTimezone?.trim() && { timeZone: clientTimezone.trim() }),
+          ...(tzFields.customer_timezone?.trim() && {
+            timeZone: tzFields.customer_timezone.trim(),
+          }),
         };
         const when = new Date(start_at).toLocaleString('en-US', whenOpts);
 
@@ -1018,6 +1054,8 @@ export async function PATCH(req: NextRequest) {
       metadata,
       is_viewed,
       is_reschedule_viewed,
+      customer_timezone,
+      provider_timezone,
     } = body;
 
     if (!id) {
@@ -1033,7 +1071,7 @@ export async function PATCH(req: NextRequest) {
     const { data: existingRow, error: existingError } = await supabase
       .from('bookings')
       .select(
-        'start_at, end_at, status, invitee_name, invitee_email, invitee_phone, event_type_id, service_provider_id, department_id, metadata, public_code, contact_id'
+        'start_at, end_at, status, invitee_name, invitee_email, invitee_phone, event_type_id, service_provider_id, department_id, metadata, public_code, contact_id, customer_timezone, provider_timezone'
       )
       .eq('id', id)
       .eq('workspace_id', workspaceId)
@@ -1093,6 +1131,166 @@ export async function PATCH(req: NextRequest) {
         existingRow.start_at,
         existingRow.end_at ?? null
       );
+    }
+
+    if (timeChanged && start_at) {
+      const effectiveDurationMinutes = await resolveEffectiveDurationForBookingRequest(
+        supabase,
+        workspaceId,
+        (event_type_id !== undefined ? event_type_id : existingRow.event_type_id) as string | null,
+        (metadata !== undefined ? metadata : existingRow.metadata) as Record<string, unknown> | null
+      );
+      const durationValidation = validateBookingEndAt(
+        start_at,
+        end_at ?? existingRow.end_at,
+        effectiveDurationMinutes
+      );
+      if (!durationValidation.ok) {
+        return NextResponse.json({ error: durationValidation.message }, { status: 400 });
+      }
+      if (end_at === undefined) {
+        updateData.end_at = durationValidation.resolvedEndAt;
+      }
+
+      const { data: patchConfig } = await supabase
+        .from('configurations')
+        .select('settings')
+        .eq('workspace_id', workspaceId)
+        .single();
+
+      const patchServiceProviderId =
+        service_provider_id !== undefined
+          ? (typeof service_provider_id === 'string' && service_provider_id.trim()
+              ? service_provider_id.trim()
+              : null)
+          : typeof existingRow.service_provider_id === 'string' &&
+              existingRow.service_provider_id.trim()
+            ? existingRow.service_provider_id.trim()
+            : null;
+
+      const patchAvailabilityData: AvailabilitySettings =
+        patchConfig?.settings?.availability || {};
+      const patchAvailability = resolveAvailabilityForServiceProvider(
+        patchAvailabilityData,
+        patchServiceProviderId
+      );
+
+      const workspaceTimezone =
+        (patchConfig?.settings as { general?: { timezone?: string } } | undefined)?.general
+          ?.timezone ?? null;
+      const tzFields = resolveBookingTimezonesForInsert(
+        body as Record<string, unknown>,
+        workspaceTimezone
+      );
+      const patchCustomerTz =
+        tzFields.customer_timezone ??
+        (typeof existingRow.customer_timezone === 'string'
+          ? existingRow.customer_timezone.trim() || null
+          : null);
+      const patchProviderTz =
+        tzFields.provider_timezone ??
+        (typeof existingRow.provider_timezone === 'string'
+          ? existingRow.provider_timezone.trim() || null
+          : null);
+
+      if (customer_timezone !== undefined || provider_timezone !== undefined || timeChanged) {
+        updateData.customer_timezone = patchCustomerTz;
+        updateData.provider_timezone = patchProviderTz;
+      }
+
+      const tz = resolveValidationTimezone(
+        workspaceTimezone,
+        patchCustomerTz,
+        patchProviderTz
+      );
+      const startDate = new Date(start_at);
+      const resolvedEndAt =
+        (updateData.end_at as string | undefined) ??
+        end_at ??
+        existingRow.end_at ??
+        start_at;
+      const endDate = new Date(resolvedEndAt);
+      const startParts = tz ? getLocalTimePartsInTimezone(start_at, tz) : null;
+      const endParts = tz ? getLocalTimePartsInTimezone(resolvedEndAt, tz) : null;
+
+      const dayName: DayName = startParts
+        ? (['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][startParts.dayOfWeek] as DayName)
+        : (['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][startDate.getDay()] as DayName);
+      const daySchedule = patchAvailability.timesheet?.[dayName];
+
+      if (!daySchedule || !daySchedule.enabled) {
+        return NextResponse.json(
+          { error: 'The selected day is not available.' },
+          { status: 400 }
+        );
+      }
+
+      const startMinutes = startParts
+        ? startParts.startMinutes
+        : startDate.getHours() * 60 + startDate.getMinutes();
+      const endMinutes = endParts
+        ? endParts.startMinutes
+        : endDate.getHours() * 60 + endDate.getMinutes();
+      const scheduleStart =
+        parseInt(daySchedule.startTime.split(':')[0]) * 60 +
+        parseInt(daySchedule.startTime.split(':')[1]);
+      const scheduleEnd =
+        parseInt(daySchedule.endTime.split(':')[0]) * 60 +
+        parseInt(daySchedule.endTime.split(':')[1]);
+
+      if (startMinutes < scheduleStart || endMinutes > scheduleEnd) {
+        return NextResponse.json(
+          { error: 'This time slot is outside available hours.' },
+          { status: 400 }
+        );
+      }
+
+      if (daySchedule.breaks?.length) {
+        const conflictsWithBreak = daySchedule.breaks.some((breakTime) => {
+          const breakStart =
+            parseInt(breakTime.start.split(':')[0]) * 60 +
+            parseInt(breakTime.start.split(':')[1]);
+          const breakEnd =
+            parseInt(breakTime.end.split(':')[0]) * 60 +
+            parseInt(breakTime.end.split(':')[1]);
+          return startMinutes < breakEnd && endMinutes > breakStart;
+        });
+        if (conflictsWithBreak) {
+          return NextResponse.json(
+            { error: 'This time slot conflicts with a break time.' },
+            { status: 400 }
+          );
+        }
+      }
+
+      const dateStr = startParts ? startParts.dateStr : startDate.toISOString().split('T')[0];
+      const slotHour = startParts ? startParts.hours : startDate.getHours();
+      const individualKey = `${dateStr}-${slotHour}`;
+      if (patchAvailability.individual?.[individualKey] === false) {
+        return NextResponse.json(
+          { error: 'This time slot has been marked as unavailable.' },
+          { status: 400 }
+        );
+      }
+    } else if (customer_timezone !== undefined || provider_timezone !== undefined) {
+      const { data: tzConfig } = await supabase
+        .from('configurations')
+        .select('settings')
+        .eq('workspace_id', workspaceId)
+        .maybeSingle();
+      const workspaceTimezone =
+        (tzConfig?.settings as { general?: { timezone?: string } } | undefined)?.general
+          ?.timezone ?? null;
+      const tzFields = resolveBookingTimezonesForInsert(
+        body as Record<string, unknown>,
+        workspaceTimezone
+      );
+      if (customer_timezone !== undefined) {
+        updateData.customer_timezone = tzFields.customer_timezone;
+      }
+      if (provider_timezone !== undefined) {
+        updateData.provider_timezone = tzFields.provider_timezone;
+      }
     }
 
     const next_invitee_name =
@@ -1247,6 +1445,11 @@ export async function PATCH(req: NextRequest) {
           data.metadata
         )?.trim();
 
+        const patchTzEmail = emailTimezoneFields(
+          (data as { customer_timezone?: string | null }).customer_timezone,
+          (data as { provider_timezone?: string | null }).provider_timezone,
+          newStart!
+        );
         const { sendBookingRescheduleEmails } = await import('@/lib/email-service');
         await sendBookingRescheduleEmails({
           inviteeName: data.invitee_name || 'Invitee',
@@ -1260,6 +1463,7 @@ export async function PATCH(req: NextRequest) {
           startTime: newStart!,
           endTime: newEnd!,
           duration: durationMinutes,
+          ...patchTzEmail,
           ...(prevStart ? { previousStartTime: prevStart } : {}),
           ...(prevEnd ? { previousEndTime: prevEnd } : {}),
           ...(rescheduleMeetUrl
@@ -1463,6 +1667,12 @@ export async function PATCH(req: NextRequest) {
         const startT = data.start_at ?? existingRow.start_at ?? '';
         const endT = data.end_at ?? existingRow.end_at ?? startT;
 
+        const statusTzEmail = emailTimezoneFields(
+          (data as { customer_timezone?: string | null }).customer_timezone,
+          (data as { provider_timezone?: string | null }).provider_timezone,
+          startT
+        );
+
         if (newStatusNorm === 'cancelled') {
           const { sendBookingCancellationEmails } = await import('@/lib/email-service');
           await sendBookingCancellationEmails({
@@ -1477,6 +1687,7 @@ export async function PATCH(req: NextRequest) {
             startTime: startT,
             endTime: endT,
             duration: durationMinutes,
+            ...statusTzEmail,
           });
 
           try {
@@ -1512,6 +1723,7 @@ export async function PATCH(req: NextRequest) {
             startTime: startT,
             endTime: endT,
             duration: durationMinutes,
+            ...statusTzEmail,
             ...(notesFromMeta ? { notes: notesFromMeta } : {}),
             previousStatus: displayPrev,
             newStatus: displayNew,

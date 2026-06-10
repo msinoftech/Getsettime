@@ -3,6 +3,7 @@
 import { PhoneInput, type CountryIso2 } from 'react-international-phone';
 import 'react-international-phone/style.css';
 import { useDefaultPhoneCountry } from '@/src/hooks/useDefaultPhoneCountry';
+import { DEFAULT_COUNTRY } from '@app/location';
 import { saveCountry } from '@/src/services/countryDetection';
 import { BOOKING_PLACEHOLDERS } from '@/src/constants/booking';
 
@@ -24,7 +25,11 @@ export function BookingPhoneInput({
   inputClassName = '',
 }: BookingPhoneInputProps) {
   const { country, loadingCountry } = useDefaultPhoneCountry(profileCountry);
-  const defaultCountryLower = country.toLowerCase() as CountryIso2;
+  const countryIso2 =
+    typeof country === 'string' && country.trim().length === 2
+      ? country.trim().toUpperCase()
+      : DEFAULT_COUNTRY;
+  const defaultCountryLower = countryIso2.toLowerCase() as CountryIso2;
 
   if (loadingCountry) {
     return (

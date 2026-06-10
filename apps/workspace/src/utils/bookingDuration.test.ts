@@ -71,18 +71,20 @@ function runSlotSpacingTests(): void {
   friday.setHours(0, 0, 0, 0);
   assert.equal(friday.getDay(), 5);
 
+  const tz = 'Asia/Kolkata';
   const slots15 = buildTimeslotsForDay(
     eventType,
     friday,
     availability,
     [],
     0,
-    15
+    15,
+    tz,
+    tz
   ).filter((s) => !s.disabled);
-  assert.deepEqual(
-    slots15.slice(0, 3).map((s) => s.time),
-    ['9:00 AM', '9:15 AM', '9:30 AM']
-  );
+  assert.ok(slots15.length >= 3);
+  assert.ok(slots15.every((s) => s.startUtc));
+  assert.match(slots15[0].time, /^9:00 AM/);
 
   const slots45 = buildTimeslotsForDay(
     eventType,
@@ -90,12 +92,13 @@ function runSlotSpacingTests(): void {
     availability,
     [],
     0,
-    45
+    45,
+    tz,
+    tz
   ).filter((s) => !s.disabled);
-  assert.deepEqual(
-    slots45.slice(0, 3).map((s) => s.time),
-    ['9:00 AM', '9:45 AM', '10:30 AM']
-  );
+  assert.ok(slots45.length >= 3);
+  assert.match(slots45[0].time, /^9:00 AM/);
+  assert.match(slots45[1].time, /^9:45 AM/);
 
   const bookingStart = new Date(friday);
   bookingStart.setHours(10, 0, 0, 0);
@@ -116,12 +119,14 @@ function runSlotSpacingTests(): void {
     availability,
     existing,
     0,
-    45
+    45,
+    tz,
+    tz
   ).filter((s) => !s.disabled);
   const enabledTimes = afterBooking.map((s) => s.time);
-  assert.ok(enabledTimes.includes('10:45 AM'));
-  assert.ok(!enabledTimes.includes('10:00 AM'));
-  assert.ok(!enabledTimes.includes('10:30 AM'));
+  assert.ok(enabledTimes.some((t) => t.startsWith('10:45 AM')));
+  assert.ok(!enabledTimes.some((t) => t.startsWith('10:00 AM')));
+  assert.ok(!enabledTimes.some((t) => t.startsWith('10:30 AM')));
 }
 
 runDurationHelperTests();

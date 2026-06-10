@@ -5,7 +5,7 @@ import {
   detectCountry,
   DEFAULT_COUNTRY,
   getCachedCountry,
-} from '@/src/services/countryDetection';
+} from '@app/location';
 
 function isProfileCountryIso2(profileCountry?: string | null): boolean {
   const p = profileCountry?.trim().toUpperCase();
@@ -27,9 +27,9 @@ export function useDefaultPhoneCountry(profileCountry?: string | null) {
     let cancelled = false;
     if (!profileIso2) setLoadingCountry(true);
 
-    void detectCountry({ profileCountry: profileIso2 ?? profileCountry }).then((code) => {
+    void detectCountry({ profileCountry: profileIso2 ?? profileCountry }).then((result) => {
       if (!cancelled) {
-        setCountry(code);
+        setCountry(result.country);
         setLoadingCountry(false);
       }
     });

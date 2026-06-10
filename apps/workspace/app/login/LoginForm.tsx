@@ -287,7 +287,13 @@ export default function LoginForm() {
       if (!hasWorkspaceId) {
         const bootRes = await fetch("/api/auth/bootstrap-workspace", {
           method: "POST",
-          headers: { Authorization: `Bearer ${accessToken}` },
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          }),
         });
         if (bootRes.ok) {
           await supabase.auth.refreshSession();

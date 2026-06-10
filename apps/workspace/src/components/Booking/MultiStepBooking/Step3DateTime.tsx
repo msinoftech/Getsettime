@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useRef, useCallback, useEffect } from 'react';
+import React, { useRef, useCallback, useEffect, useMemo } from 'react';
 import type {
   AvailabilitySettings,
   Booking,
@@ -19,6 +19,18 @@ import {
 } from '@/src/constants/booking';
 import { getCalendarDays, isToday, normalizeDate } from '@/src/utils/bookingTime';
 import { isDateAvailable } from '@/src/utils/bookingAvailability';
+import { TimezoneSelector } from './TimezoneSelector';
+import {
+  formatFullDateTimeInTimezone,
+  getTimezoneAbbreviation,
+} from '@/lib/date-timezone';
+import { needsTimezoneConversion } from '@/src/utils/timezone';
+import {
+  step3PerfDateClickStart,
+  step3PerfLog,
+  step3PerfSlotClickStart,
+  step3PerfSync,
+} from '@/src/utils/bookingStep3Perf';
 
 interface Step3DateTimeProps {
   selectedDate: Date | null;
@@ -51,6 +63,12 @@ interface Step3DateTimeProps {
   previousEndAt?: string | null;
   /** Matches useTimeslots lead time (e.g. embed reschedule). */
   minLeadTimeMinutes?: number;
+  customerTimezone?: string;
+  providerTimezone?: string;
+  workspaceTimezoneConfigured?: boolean;
+  selectedStartUtc?: string | null;
+  onTimezoneChange?: (timezone: string) => void;
+  onSelectSlot?: (slot: Timeslot) => void;
 }
 
 export function Step3DateTime({
@@ -83,6 +101,12 @@ export function Step3DateTime({
   previousStartAt,
   previousEndAt,
   minLeadTimeMinutes = 0,
+  customerTimezone = '',
+  providerTimezone = '',
+  workspaceTimezoneConfigured = false,
+  selectedStartUtc = null,
+  onTimezoneChange,
+  onSelectSlot,
 }: Step3DateTimeProps) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const selectedDateRef = useRef<HTMLButtonElement | null>(null);
@@ -148,20 +172,73 @@ export function Step3DateTime({
     }
   }, [selectedDate]);
 
-  const checkDateAvailable = (date: Date) =>
-    isDateAvailable(
-      date,
-      availabilitySettings,
-      selectedType,
-      existingBookings,
-      minLeadTimeMinutes,
-      selectedServiceIds,
-      serviceCatalog
-    );
-
   const hasNewSelection = Boolean(selectedDate && selectedTime);
 
+  const viewerTimezoneAbbrev = useMemo(() => {
+    if (!customerTimezone?.trim()) return null;
+    return getTimezoneAbbreviation(customerTimezone.trim());
+  }, [customerTimezone]);
+
+  const existingBookingsSig = useMemo(
+    () =>
+      existingBookings
+        .map((b) => `${b.id}:${b.start_at}:${b.end_at ?? ''}`)
+        .join('|'),
+    [existingBookings]
+  );
+
+  const availableDays = useMemo(() => {
+    const t0 = performance.now();
+    const result = days.filter((d) => {
+      const past = d < new Date() && !isToday(d);
+      if (past) return false;
+      if (!availabilitySettings?.timesheet || !selectedType) return true;
+      return isDateAvailable(
+        d,
+        availabilitySettings,
+        selectedType,
+        existingBookings,
+        minLeadTimeMinutes,
+        selectedServiceIds,
+        serviceCatalog,
+        providerTimezone,
+        customerTimezone
+      );
+    });
+    const ms = performance.now() - t0;
+    if (ms > 50) {
+      step3PerfLog('date strip filter (isDateAvailable per day)', {
+        ms: `${ms.toFixed(1)}ms`,
+        daysChecked: days.length,
+        daysShown: result.length,
+      });
+    }
+    return result;
+  }, [
+    days,
+    availabilitySettings,
+    selectedType,
+    existingBookings,
+    existingBookingsSig,
+    minLeadTimeMinutes,
+    selectedServiceIds,
+    serviceCatalog,
+    providerTimezone,
+    customerTimezone,
+  ]);
+
   const formatPreviousDateTime = (iso: string) => {
+    if (customerTimezone) {
+      const customer = formatFullDateTimeInTimezone(iso, customerTimezone);
+      if (
+        providerTimezone &&
+        needsTimezoneConversion(providerTimezone, customerTimezone)
+      ) {
+        const host = formatFullDateTimeInTimezone(iso, providerTimezone);
+        return `${customer} (Host: ${host})`;
+      }
+      return customer;
+    }
     const d = new Date(iso);
     return d.toLocaleString(undefined, {
       weekday: 'short',
@@ -267,7 +344,20 @@ export function Step3DateTime({
                 }
                 const isSelected = selectedDate?.toDateString() === date.toDateString();
                 const isTodayDate = isToday(date);
-                const isAvailable = checkDateAvailable(date);
+                const isAvailable =
+                  !availabilitySettings?.timesheet || !selectedType
+                    ? true
+                    : isDateAvailable(
+                        date,
+                        availabilitySettings,
+                        selectedType,
+                        existingBookings,
+                        minLeadTimeMinutes,
+                        selectedServiceIds,
+                        serviceCatalog,
+                        providerTimezone,
+                        customerTimezone
+                      );
                 const isPast = date < new Date() && !isTodayDate;
                 const isDisabled = !isAvailable || isPast;
                 return (
@@ -276,6 +366,8 @@ export function Step3DateTime({
                     onClick={() => {
                       if (!isDisabled) {
                         const nd = normalizeDate(date);
+                        step3PerfDateClickStart(nd.toDateString());
+                        const t0 = performance.now();
                         onSelectDate(nd);
                         onSelectTime('');
                         if (onSetCurrentMonth && (date.getMonth() !== currentMonth.getMonth() || date.getFullYear() !== currentMonth.getFullYear())) {
@@ -295,6 +387,7 @@ export function Step3DateTime({
                           }
                           return prev;
                         });
+                        step3PerfSync('Step3DateTime calendar date click handler', t0);
                       }
                     }}
                     disabled={isDisabled}
@@ -326,21 +419,21 @@ export function Step3DateTime({
             ref={scrollContainerRef}
             className="flex flex-nowrap gap-2 sm:gap-3 overflow-x-auto overflow-y-hidden py-2 sm:pb-3 -mx-1 px-1 scroll-smooth [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar-track]:bg-gray-100 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-gray-300"
           >
-            {days
-              .filter((d) => {
-                const past = d < new Date() && !isToday(d);
-                if (past) return false;
-                if (!availabilitySettings?.timesheet) return true;
-                return checkDateAvailable(d);
-              })
-              .map((d) => {
+            {availableDays.map((d) => {
                 const isSelected = selectedDate?.toDateString() === d.toDateString();
                 const isTodayDate = isToday(d);
                 return (
                   <button
                     key={d.toISOString()}
                     ref={(el) => { if (isSelected) selectedDateRef.current = el; }}
-                    onClick={() => { onSelectDate(normalizeDate(d)); onSelectTime(''); }}
+                    onClick={() => {
+                      const nd = normalizeDate(d);
+                      step3PerfDateClickStart(nd.toDateString());
+                      const t0 = performance.now();
+                      onSelectDate(nd);
+                      onSelectTime('');
+                      step3PerfSync('Step3DateTime date strip click handler', t0);
+                    }}
                     className={`group flex-none min-w-[70px] p-2 rounded-xl sm:rounded-2xl transition-all duration-300 relative overflow-hidden ${
                       isSelected
                         ? 'text-white bg-indigo-600 shadow-xl scale-105 ring-2 sm:ring-4 ring-indigo-200 z-10'
@@ -369,6 +462,14 @@ export function Step3DateTime({
       </div>
 
       <div>
+        {customerTimezone && onTimezoneChange ? (
+          <TimezoneSelector
+            customerTimezone={customerTimezone}
+            providerTimezone={providerTimezone}
+            workspaceTimezoneConfigured={workspaceTimezoneConfigured}
+            onTimezoneChange={onTimezoneChange}
+          />
+        ) : null}
         <div className="flex items-center gap-2 mb-3 sm:mb-4">
           <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-gradient-to-br from-blue-100 to-blue-200 flex items-center justify-center flex-shrink-0">
             <svg className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -377,9 +478,12 @@ export function Step3DateTime({
           </div>
           <div className="text-xs sm:text-sm font-bold text-gray-700 uppercase tracking-wide">
             {BOOKING_BUTTON_LABELS.availableTimes}
-            <span className="text-xs text-gray-500 ml-2 normal-case font-normal">
-              ({Intl.DateTimeFormat().resolvedOptions().timeZone})
-            </span>
+            {customerTimezone ? (
+              <span className="text-xs text-gray-500 ml-2 normal-case font-normal">
+                ({customerTimezone})
+                {viewerTimezoneAbbrev ? ` - ${viewerTimezoneAbbrev}` : ''}
+              </span>
+            ) : null}
           </div>
         </div>
         {loadingAvailability || loadingBookings ? (
@@ -404,12 +508,23 @@ export function Step3DateTime({
             {timeslots
               .filter((s) => !s.disabled)
               .map((slot) => {
-                const isSelected = selectedTime === slot.time;
+                const isSelected =
+                  selectedStartUtc === slot.startUtc ||
+                  (!selectedStartUtc && selectedTime === slot.time);
                 return (
                   <button
-                    key={slot.time}
-                    onClick={() => onSelectTime(slot.time)}
+                    key={slot.startUtc}
+                    onClick={() => {
+                      step3PerfSlotClickStart(slot.time);
+                      const t0 = performance.now();
+                      onSelectTime(slot.time);
+                      onSelectSlot?.(slot);
+                      step3PerfSync('Step3DateTime timeslot click handler', t0, {
+                        startUtc: slot.startUtc,
+                      });
+                    }}
                     disabled={!selectedDate}
+                    title={slot.hostTime ? `Host: ${slot.hostTime}` : undefined}
                     className={`group relative p-2.5 sm:p-3 lg:p-4 rounded-lg sm:rounded-xl transition-all duration-300 text-xs sm:text-sm font-bold overflow-hidden ${
                       isSelected
                         ? 'bg-gradient-to-br from-indigo-600 to-indigo-700 text-white shadow-xl scale-105 ring-2 sm:ring-4 ring-indigo-200'

@@ -14,6 +14,7 @@ import {
 import { workspaceAdminNeedsOnboardingWizard } from '@/lib/auth_onboarding';
 import { getPublicSiteOrigin } from '@/lib/request-site-origin';
 import { ROLE_SERVICE_PROVIDER } from '@/src/constants/roles';
+import { resolveRegistrationGeoFromHeaders } from '@/lib/ipapi-geo';
 
 interface GoogleSignupData {
   access_token: string;
@@ -227,12 +228,15 @@ export async function GET(req: Request) {
 
       const userId = userData.user.id;
 
+      const registrationGeo = await resolveRegistrationGeoFromHeaders(req.headers);
+
       // Create workspace for the new user
       const { data: workspaceResult, error: workspaceError } = await getOrCreateWorkspace({
         userId,
         userName: name,
         userEmail: email,
         supabaseAdmin,
+        registrationGeo,
       });
 
       if (workspaceError || !workspaceResult) {

@@ -1,24 +1,16 @@
 /**
  * Centralized timezone management for booking forms and display.
- * Use getDisplayTimezone() to resolve: workspace timezone > browser timezone > UTC.
  */
+import { getBrowserTimezone as getBrowserTzFromLocation } from '@app/location';
 
 const FALLBACK_TIMEZONE = 'UTC';
 
-/** Get the browser's IANA timezone (e.g. Asia/Kolkata). Works on iOS, Android, and desktop. */
 export function getBrowserTimezone(): string {
-  if (typeof Intl === 'undefined') return FALLBACK_TIMEZONE;
-  try {
-    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    return tz && tz.length > 0 ? tz : FALLBACK_TIMEZONE;
-  } catch {
-    return FALLBACK_TIMEZONE;
-  }
+  return getBrowserTzFromLocation();
 }
 
 /**
- * Get the timezone to use for display and API.
- * Order: workspace setting > browser timezone > UTC.
+ * @deprecated Use resolveProviderTimezone / resolveCustomerTimezone explicitly.
  */
 export function getDisplayTimezone(workspaceTimezone?: string | null): string {
   const ws = workspaceTimezone?.trim();
@@ -26,10 +18,36 @@ export function getDisplayTimezone(workspaceTimezone?: string | null): string {
   return getBrowserTimezone();
 }
 
+/** Host/provider timezone: workspace setting or visitor mode via customer TZ. */
+export function resolveProviderTimezone(
+  workspaceTimezone: string | null | undefined,
+  customerTimezone: string
+): string {
+  const ws = workspaceTimezone?.trim();
+  if (ws) return ws;
+  const customer = customerTimezone?.trim();
+  if (customer) return customer;
+  return FALLBACK_TIMEZONE;
+}
+
+/** Customer/viewer timezone: manual override → detected → browser → UTC. */
+export function resolveCustomerTimezone(
+  manualOverride?: string | null,
+  detected?: string | null
+): string {
+  return manualOverride?.trim() || detected?.trim() || getBrowserTimezone() || FALLBACK_TIMEZONE;
+}
+
+export function needsTimezoneConversion(providerTz: string, customerTz: string): boolean {
+  return providerTz.trim() !== customerTz.trim();
+}
+
+export function isWorkspaceTimezoneConfigured(workspaceTimezone?: string | null): boolean {
+  return Boolean(workspaceTimezone?.trim());
+}
+
 /**
  * Parse time string like "4:00 PM" or "4:00 pm" to 24h { hour, minute }.
- * Locale-invariant: handles PM/pm/AM/am case-insensitively for reliable Android support.
- * Supports "4:00 PM" (space) and "4:00PM" (no space).
  */
 export function parseTimeStringTo24h(timeStr: string): { hour: number; minute: number } | null {
   if (!timeStr || typeof timeStr !== 'string') return null;
@@ -52,10 +70,6 @@ export function parseTimeStringTo24h(timeStr: string): { hour: number; minute: n
   return { hour: hour24, minute };
 }
 
-/**
- * Format a date + time string (e.g. "4:00 PM") for display in a given timezone.
- * Uses robust parsing to fix Android AM/PM case issues.
- */
 export function formatDateTimeForDisplay(
   date: Date,
   timeString: string,

@@ -165,6 +165,13 @@ export async function POST(req: Request) {
     const firstName = String(name).split(" ")[0] || String(name);
     const fullName = String(name);
 
+    const templateTimezone =
+      typeof body.timezone === "string" && body.timezone.trim()
+        ? body.timezone.trim()
+        : typeof body.customer_timezone === "string" && body.customer_timezone.trim()
+          ? body.customer_timezone.trim()
+          : undefined;
+
     const formatDateTimeForTemplate = (value: unknown) => {
       if (!value) return "Not provided";
       const date = new Date(String(value));
@@ -177,6 +184,8 @@ export async function POST(req: Request) {
         hour: "numeric",
         minute: "2-digit",
         hour12: true,
+        timeZoneName: "short",
+        ...(templateTimezone ? { timeZone: templateTimezone } : {}),
       });
     };
     const formattedStart = formatDateTimeForTemplate(start);

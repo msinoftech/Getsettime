@@ -26,8 +26,12 @@ interface BookingEmailData {
   endTime: string;
   duration: number;
   notes?: string;
-  /** IANA timezone (e.g. Asia/Kolkata) for displaying booking time in recipient's timezone */
+  /** IANA timezone for invitee display */
   timezone?: string;
+  customerTimezone?: string;
+  providerTimezone?: string;
+  /** Pre-formatted dual-time block when customer and provider zones differ */
+  dualTimeBlock?: string;
   previousStartTime?: string;
   previousEndTime?: string;
   meetingUrl?: string;
@@ -73,6 +77,25 @@ const booking_email_provider_row = (data: BookingEmailData): string => {
         <div class="detail-row">
           <span class="label">Service Provider:</span> ${v}
         </div>`;
+};
+
+const booking_email_dual_time_row = (data: BookingEmailData): string => {
+  const block = data.dualTimeBlock?.trim();
+  if (!block || !block.includes('\n')) return '';
+  return `
+        <div class="detail-row">
+          <span class="label">Also scheduled as:</span><br>${block.replace(/\n/g, '<br>')}
+        </div>`;
+};
+
+const recipient_timezone = (
+  data: BookingEmailData,
+  role: 'customer' | 'provider'
+): string | undefined => {
+  if (role === 'provider') {
+    return data.providerTimezone?.trim() || data.timezone?.trim();
+  }
+  return data.customerTimezone?.trim() || data.timezone?.trim();
 };
 
 const booking_email_meeting_row = (data: BookingEmailData): string => {
@@ -122,11 +145,12 @@ const getUserEmailTemplate = (data: BookingEmailData): string => {
           <span class="label">Event:</span> ${data.eventTypeName}
         </div>${booking_email_department_row(data)}${booking_email_provider_row(data)}
         <div class="detail-row">
-          <span class="label">Start Time:</span> ${formatDateTime(data.startTime, data.timezone)}
+          <span class="label">Start Time:</span> ${formatDateTime(data.startTime, recipient_timezone(data, 'customer'))}
         </div>
         <div class="detail-row">
-          <span class="label">End Time:</span> ${formatDateTime(data.endTime, data.timezone)}
+          <span class="label">End Time:</span> ${formatDateTime(data.endTime, recipient_timezone(data, 'customer'))}
         </div>
+        ${booking_email_dual_time_row(data)}
         <div class="detail-row">
           <span class="label">Duration:</span> ${data.duration} minutes
         </div>
@@ -192,11 +216,12 @@ const getProviderEmailTemplate = (data: BookingEmailData): string => {
           <span class="label">Event Type:</span> ${data.eventTypeName}
         </div>${booking_email_department_row(data)}
         <div class="detail-row">
-          <span class="label">Start Time:</span> ${formatDateTime(data.startTime, data.timezone)}
+          <span class="label">Start Time:</span> ${formatDateTime(data.startTime, recipient_timezone(data, 'provider'))}
         </div>
         <div class="detail-row">
-          <span class="label">End Time:</span> ${formatDateTime(data.endTime, data.timezone)}
+          <span class="label">End Time:</span> ${formatDateTime(data.endTime, recipient_timezone(data, 'provider'))}
         </div>
+        ${booking_email_dual_time_row(data)}
         <div class="detail-row">
           <span class="label">Duration:</span> ${data.duration} minutes
         </div>
@@ -343,11 +368,12 @@ const getReminderEmailTemplate = (data: BookingEmailData): string => {
           <span class="label">Event:</span> ${data.eventTypeName}
         </div>${booking_email_department_row(data)}${booking_email_provider_row(data)}
         <div class="detail-row">
-          <span class="label">Start Time:</span> ${formatDateTime(data.startTime, data.timezone)}
+          <span class="label">Start Time:</span> ${formatDateTime(data.startTime, recipient_timezone(data, 'customer'))}
         </div>
         <div class="detail-row">
-          <span class="label">End Time:</span> ${formatDateTime(data.endTime, data.timezone)}
+          <span class="label">End Time:</span> ${formatDateTime(data.endTime, recipient_timezone(data, 'customer'))}
         </div>
+        ${booking_email_dual_time_row(data)}
         <div class="detail-row">
           <span class="label">Duration:</span> ${data.duration} minutes
         </div>
@@ -406,8 +432,9 @@ const getFollowUpEmailTemplate = (data: BookingEmailData): string => {
           <span class="label">Event:</span> ${data.eventTypeName}
         </div>
         <div class="detail-row">
-          <span class="label">Date:</span> ${formatDateTime(data.startTime, data.timezone)}
+          <span class="label">Date:</span> ${formatDateTime(data.startTime, recipient_timezone(data, 'customer'))}
         </div>
+        ${booking_email_dual_time_row(data)}
         <div class="detail-row">
           <span class="label">Duration:</span> ${data.duration} minutes
         </div>
@@ -485,15 +512,16 @@ const getUserRescheduleEmailTemplate = (data: BookingEmailData): string => {
         </div>${booking_email_department_row(data)}${booking_email_provider_row(data)}
         ${data.previousStartTime ? `
         <div class="detail-row">
-          <span class="label">Previous Time:</span> <span class="old-time">${formatDateTime(data.previousStartTime, data.timezone)}</span>
+          <span class="label">Previous Time:</span> <span class="old-time">${formatDateTime(data.previousStartTime, recipient_timezone(data, 'customer'))}</span>
         </div>
         ` : ''}
         <div class="detail-row">
-          <span class="label">New Start Time:</span> ${formatDateTime(data.startTime, data.timezone)}
+          <span class="label">New Start Time:</span> ${formatDateTime(data.startTime, recipient_timezone(data, 'customer'))}
         </div>
         <div class="detail-row">
-          <span class="label">New End Time:</span> ${formatDateTime(data.endTime, data.timezone)}
+          <span class="label">New End Time:</span> ${formatDateTime(data.endTime, recipient_timezone(data, 'customer'))}
         </div>
+        ${booking_email_dual_time_row(data)}
         <div class="detail-row">
           <span class="label">Duration:</span> ${data.duration} minutes
         </div>
@@ -554,15 +582,16 @@ const getProviderRescheduleEmailTemplate = (data: BookingEmailData): string => {
         </div>${booking_email_department_row(data)}
         ${data.previousStartTime ? `
         <div class="detail-row">
-          <span class="label">Previous Time:</span> <span class="old-time">${formatDateTime(data.previousStartTime, data.timezone)}</span>
+          <span class="label">Previous Time:</span> <span class="old-time">${formatDateTime(data.previousStartTime, recipient_timezone(data, 'provider'))}</span>
         </div>
         ` : ''}
         <div class="detail-row">
-          <span class="label">New Start Time:</span> ${formatDateTime(data.startTime, data.timezone)}
+          <span class="label">New Start Time:</span> ${formatDateTime(data.startTime, recipient_timezone(data, 'provider'))}
         </div>
         <div class="detail-row">
-          <span class="label">New End Time:</span> ${formatDateTime(data.endTime, data.timezone)}
+          <span class="label">New End Time:</span> ${formatDateTime(data.endTime, recipient_timezone(data, 'provider'))}
         </div>
+        ${booking_email_dual_time_row(data)}
         <div class="detail-row">
           <span class="label">Duration:</span> ${data.duration} minutes
         </div>
@@ -662,11 +691,12 @@ const getUserCancellationEmailTemplate = (data: BookingEmailData): string => {
           <span class="label">Event:</span> ${data.eventTypeName}
         </div>${booking_email_department_row(data)}${booking_email_provider_row(data)}
         <div class="detail-row">
-          <span class="label">Start Time:</span> ${formatDateTime(data.startTime, data.timezone)}
+          <span class="label">Start Time:</span> ${formatDateTime(data.startTime, recipient_timezone(data, 'customer'))}
         </div>
         <div class="detail-row">
-          <span class="label">End Time:</span> ${formatDateTime(data.endTime, data.timezone)}
+          <span class="label">End Time:</span> ${formatDateTime(data.endTime, recipient_timezone(data, 'customer'))}
         </div>
+        ${booking_email_dual_time_row(data)}
         <div class="detail-row">
           <span class="label">Duration:</span> ${data.duration} minutes
         </div>
@@ -724,11 +754,12 @@ const getProviderCancellationEmailTemplate = (data: BookingEmailData): string =>
           <span class="label">Event Type:</span> ${data.eventTypeName}
         </div>${booking_email_department_row(data)}
         <div class="detail-row">
-          <span class="label">Start Time:</span> ${formatDateTime(data.startTime, data.timezone)}
+          <span class="label">Start Time:</span> ${formatDateTime(data.startTime, recipient_timezone(data, 'provider'))}
         </div>
         <div class="detail-row">
-          <span class="label">End Time:</span> ${formatDateTime(data.endTime, data.timezone)}
+          <span class="label">End Time:</span> ${formatDateTime(data.endTime, recipient_timezone(data, 'provider'))}
         </div>
+        ${booking_email_dual_time_row(data)}
         <div class="detail-row">
           <span class="label">Duration:</span> ${data.duration} minutes
         </div>
@@ -829,11 +860,12 @@ const getUserStatusChangeEmailTemplate = (data: BookingStatusChangeEmailData): s
           <span class="label">Event:</span> ${data.eventTypeName}
         </div>${booking_email_department_row(data)}${booking_email_provider_row(data)}
         <div class="detail-row">
-          <span class="label">Start Time:</span> ${formatDateTime(data.startTime, data.timezone)}
+          <span class="label">Start Time:</span> ${formatDateTime(data.startTime, recipient_timezone(data, 'customer'))}
         </div>
         <div class="detail-row">
-          <span class="label">End Time:</span> ${formatDateTime(data.endTime, data.timezone)}
+          <span class="label">End Time:</span> ${formatDateTime(data.endTime, recipient_timezone(data, 'customer'))}
         </div>
+        ${booking_email_dual_time_row(data)}
         <div class="detail-row">
           <span class="label">Duration:</span> ${data.duration} minutes
         </div>
@@ -891,11 +923,12 @@ const getProviderStatusChangeEmailTemplate = (data: BookingStatusChangeEmailData
           <span class="label">Event:</span> ${data.eventTypeName}
         </div>${booking_email_department_row(data)}
         <div class="detail-row">
-          <span class="label">Start Time:</span> ${formatDateTime(data.startTime, data.timezone)}
+          <span class="label">Start Time:</span> ${formatDateTime(data.startTime, recipient_timezone(data, 'provider'))}
         </div>
         <div class="detail-row">
-          <span class="label">End Time:</span> ${formatDateTime(data.endTime, data.timezone)}
+          <span class="label">End Time:</span> ${formatDateTime(data.endTime, recipient_timezone(data, 'provider'))}
         </div>
+        ${booking_email_dual_time_row(data)}
         <div class="detail-row">
           <span class="label">Duration:</span> ${data.duration} minutes
         </div>

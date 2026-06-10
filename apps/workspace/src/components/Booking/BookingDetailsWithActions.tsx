@@ -258,7 +258,13 @@ export function BookingDetailsWithActions({
     () => set_dt_mode('reschedule');
 
   const handle_datetime_confirm = useCallback(
-    async (payload: { start_at: string; end_at: string; status?: string }) => {
+    async (payload: {
+      start_at: string;
+      end_at: string;
+      status?: string;
+      customer_timezone?: string;
+      provider_timezone?: string;
+    }) => {
       const mode_now = dt_mode;
       if (!mode_now) return;
       try {
@@ -301,7 +307,16 @@ export function BookingDetailsWithActions({
             end_at: payload.end_at,
             status: booking_status,
             metadata: Object.keys(baseMeta).length ? baseMeta : null,
-            ...(timezone ? { timezone } : {}),
+            customer_timezone:
+              payload.customer_timezone ??
+              booking.customer_timezone ??
+              timezone ??
+              undefined,
+            provider_timezone:
+              payload.provider_timezone ??
+              booking.provider_timezone ??
+              timezone ??
+              undefined,
           };
 
           const res = await fetch('/api/bookings', {

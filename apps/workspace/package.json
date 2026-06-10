@@ -7,12 +7,15 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test:booking-duration": "npx tsx src/utils/bookingDuration.test.ts"
+    "test:booking-duration": "npx tsx src/utils/bookingDuration.test.ts",
+    "test:timezone": "npx tsx src/utils/timezoneBooking.test.ts"
   },
   "dependencies": {
     "@app/db": "*",
     "@app/icons": "*",
+    "@app/location": "*",
     "@app/ui": "*",
+    "@date-fns/tz": "^1.2.0",
     "apexcharts": "^5.3.6",
     "autoprefixer": "^10.4.22",
     "axios": "^1.13.2",

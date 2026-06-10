@@ -9,7 +9,9 @@ import {
   resolveEffectiveBookingDurationMinutes,
   type ServiceDurationCatalogItem,
 } from '@/src/utils/bookingDuration';
+import { getBrowserTimezone } from '@app/location';
 import { buildTimeslotsForDay } from '@/src/utils/bookingTime';
+import { step3PerfSync } from '@/src/utils/bookingStep3Perf';
 
 export function useTimeslots(
   selectedType: EventType | null,
@@ -18,23 +20,39 @@ export function useTimeslots(
   existingBookings: Booking[],
   minLeadTimeMinutes = 0,
   selectedServiceIds: string[] = [],
-  serviceCatalog: ServiceDurationCatalogItem[] = []
+  serviceCatalog: ServiceDurationCatalogItem[] = [],
+  providerTimezone?: string | null,
+  viewerTimezone?: string | null
 ): Timeslot[] {
   return useMemo(() => {
     if (!selectedType || !selectedDate) return [];
+    const t0 = performance.now();
+    const fallback = getBrowserTimezone();
+    const providerTz = providerTimezone?.trim() || viewerTimezone?.trim() || fallback;
+    const viewerTz = viewerTimezone?.trim() || providerTimezone?.trim() || fallback;
     const effectiveDuration = resolveEffectiveBookingDurationMinutes(
       selectedType,
       selectedServiceIds,
       serviceCatalog
     );
-    return buildTimeslotsForDay(
+    const slots = buildTimeslotsForDay(
       selectedType,
       selectedDate,
       availabilitySettings,
       existingBookings,
       minLeadTimeMinutes,
-      effectiveDuration
+      effectiveDuration,
+      providerTz,
+      viewerTz
     );
+    const enabled = slots.filter((s) => !s.disabled).length;
+    step3PerfSync('useTimeslots build', t0, {
+      date: selectedDate.toDateString(),
+      totalSlots: slots.length,
+      enabledSlots: enabled,
+      existingBookings: existingBookings.length,
+    });
+    return slots;
   }, [
     selectedType,
     selectedDate,
@@ -43,5 +61,7 @@ export function useTimeslots(
     minLeadTimeMinutes,
     selectedServiceIds,
     serviceCatalog,
+    providerTimezone,
+    viewerTimezone,
   ]);
 }
