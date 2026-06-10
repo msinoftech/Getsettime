@@ -1,5 +1,6 @@
 'use client';
 
+import type { CSSProperties } from 'react';
 import { PhoneInput, type CountryIso2 } from 'react-international-phone';
 import 'react-international-phone/style.css';
 import { useDefaultPhoneCountry } from '@/src/hooks/useDefaultPhoneCountry';
@@ -43,7 +44,7 @@ export function BookingPhoneInput({
   }
 
   return (
-    <div className="booking-phone-input group relative rounded-xl border-2 border-gray-200 bg-white transition-all focus-within:border-indigo-500 hover:border-gray-300">
+    <div className="booking-phone-input group w-full rounded-xl border-2 border-gray-200 bg-white transition-all focus-within:border-indigo-500 hover:border-gray-300">
       <PhoneInput
         key={defaultCountryLower}
         defaultCountry={defaultCountryLower}
@@ -55,15 +56,28 @@ export function BookingPhoneInput({
         onBlur={onBlur}
         placeholder={BOOKING_PLACEHOLDERS.phone}
         required={required}
-        className="w-full"
-        inputClassName={`!h-auto !min-h-[52px] !w-full !border-0 !bg-transparent !pl-[118px] !pr-4 !py-4 !text-base !outline-none focus:!ring-0 ${inputClassName}`}
+        forceDialCode
+        disableDialCodeAndPrefix
+        showDisabledDialCodeAndPrefix
+        className="booking-phone-input__root"
+        style={
+          {
+            '--react-international-phone-border-color': 'transparent',
+            '--react-international-phone-dial-code-preview-border-color': 'transparent',
+            '--react-international-phone-country-selector-border-color': 'transparent',
+            width: '100%',
+          } as CSSProperties
+        }
+        inputClassName={`booking-phone-input__field ${inputClassName}`}
         countrySelectorStyleProps={{
-          buttonClassName:
-            '!absolute !left-3 !top-1/2 !z-10 !h-10 !-translate-y-1/2 !rounded-lg !border !border-gray-200 !bg-gray-50 !px-2 hover:!bg-indigo-50',
+          buttonClassName: 'booking-phone-input__country-btn',
           dropdownStyleProps: {
             className:
               '!mt-2 !rounded-xl !border !border-gray-100 !bg-white !p-2 !shadow-xl',
           },
+        }}
+        dialCodePreviewStyleProps={{
+          className: 'booking-phone-input__dial-code',
         }}
       />
     </div>

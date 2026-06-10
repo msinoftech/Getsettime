@@ -128,12 +128,77 @@ body{
 }
 
 /* Booking phone input (react-international-phone) */
-.booking-phone-input .react-international-phone-country-selector-button {
-  height: 40px;
+.booking-phone-input {
+  width: 100%;
 }
 
-.booking-phone-input .react-international-phone-input {
+.booking-phone-input .booking-phone-input__root {
+  display: block;
+  width: 100%;
+}
+
+.booking-phone-input .react-international-phone-input-container {
+  display: flex;
+  width: 100%;
+  align-items: stretch;
+}
+
+.booking-phone-input .react-international-phone-country-selector {
+  flex: 0 0 auto;
+}
+
+.booking-phone-input .booking-phone-input__country-btn {
+  height: 52px;
+  min-width: 4.25rem;
+  border: 0 !important;
+  border-right: 1px solid #e5e7eb !important;
+  border-radius: 0 !important;
+  margin-right: 0 !important;
+  background-color: #f9fafb !important;
+  padding: 0 0.5rem;
+}
+
+.booking-phone-input .booking-phone-input__country-btn:hover {
+  background-color: #eef2ff !important;
+}
+
+.booking-phone-input .booking-phone-input__dial-code {
+  flex: 0 0 auto;
+  height: 52px;
+  border: 0 !important;
+  border-right: 1px solid #e5e7eb !important;
+  margin-right: 0 !important;
+  background-color: #f9fafb !important;
+  padding: 0 0.625rem;
+  color: #374151;
+  font-size: 1rem;
+  font-weight: 500;
+  user-select: none;
+  cursor: default;
+}
+
+.booking-phone-input .react-international-phone-input,
+.booking-phone-input .booking-phone-input__field {
+  flex: 1 1 0%;
+  min-width: 0;
+  width: auto !important;
+  min-height: 52px;
+  height: auto !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  margin: 0 !important;
+  background: transparent !important;
+  padding: 1rem !important;
   font-family: inherit;
+  font-size: 1rem !important;
+  outline: none;
+  box-shadow: none !important;
+}
+
+.booking-phone-input .react-international-phone-input:focus,
+.booking-phone-input .booking-phone-input__field:focus {
+  box-shadow: none !important;
+  outline: none !important;
 }
 
 .booking-phone-input .react-international-phone-country-selector-dropdown {

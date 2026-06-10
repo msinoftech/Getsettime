@@ -8,6 +8,7 @@ import {
   formatDualTimeBlock,
   resolveBookingTimezonesForInsert,
   resolveValidationTimezone,
+  whatsapp_timezone_payload,
 } from '@/lib/booking-timezone-api';
 import {
   admin_whatsapp_phones_for_booking,
@@ -862,6 +863,10 @@ export async function POST(req: NextRequest) {
           send_to_admin: whatsapp_admin,
           admin_phone: admin_whatsapp_phones,
           skip_contact_form_email: true,
+          ...whatsapp_timezone_payload(
+            tzFields.customer_timezone,
+            tzFields.provider_timezone
+          ),
         });
       }
     } catch (whatsappError) {

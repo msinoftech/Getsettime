@@ -6,6 +6,7 @@ import {
   resolve_provider_notification_contact,
 } from '@/lib/booking_service_provider_phone';
 import { post_booking_whatsapp_notification } from '@/lib/post_booking_whatsapp_notification';
+import { readBookingTimezonesFromRow, whatsapp_timezone_payload } from '@/lib/booking-timezone-api';
 import {
   is_whatsapp_admin_enabled,
   type workspace_notifications_settings,
@@ -28,7 +29,7 @@ export async function POST(
 
     const { data: booking, error: fetchError } = await supabase
       .from('bookings')
-      .select('id, workspace_id, status, invitee_name, invitee_email, invitee_phone, start_at, end_at, event_type_id, service_provider_id, department_id, metadata')
+      .select('id, workspace_id, status, invitee_name, invitee_email, invitee_phone, start_at, end_at, event_type_id, service_provider_id, department_id, metadata, customer_timezone, provider_timezone')
       .eq('public_code', code)
       .single();
 
@@ -173,6 +174,7 @@ export async function POST(
         const noteStr =
           metaNotes !== undefined && metaNotes !== null ? String(metaNotes) : '';
 
+        const cancelTz = readBookingTimezonesFromRow(booking);
         await post_booking_whatsapp_notification(origin, {
           name: booking.invitee_name || 'Invitee',
           email: booking.invitee_email || null,
@@ -193,6 +195,10 @@ export async function POST(
           admin_phone: admin_whatsapp_phones,
           skip_contact_form_email: true,
           notification_kind: 'cancel',
+          ...whatsapp_timezone_payload(
+            cancelTz.customer_timezone,
+            cancelTz.provider_timezone
+          ),
         });
       }
     } catch { /* non-blocking */ }

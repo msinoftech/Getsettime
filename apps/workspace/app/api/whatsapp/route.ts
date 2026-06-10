@@ -2,6 +2,10 @@ import { NextResponse } from "next/server";
 import { sendWhatsAppTemplate } from "@workspace/lib/whatsapp";
 import nodemailer from "nodemailer";
 import type { WhatsAppTemplateComponent } from "@workspace/lib/types";
+import {
+  formatBookingNotificationDateTime,
+  notification_timezone_for_role,
+} from "@/lib/booking-timezone-api";
 
 function normalize_admin_phones(admin_phone: unknown): string[] {
   if (admin_phone == null) return [];
@@ -165,31 +169,25 @@ export async function POST(req: Request) {
     const firstName = String(name).split(" ")[0] || String(name);
     const fullName = String(name);
 
-    const templateTimezone =
-      typeof body.timezone === "string" && body.timezone.trim()
-        ? body.timezone.trim()
-        : typeof body.customer_timezone === "string" && body.customer_timezone.trim()
-          ? body.customer_timezone.trim()
-          : undefined;
-
-    const formatDateTimeForTemplate = (value: unknown) => {
-      if (!value) return "Not provided";
-      const date = new Date(String(value));
-      if (Number.isNaN(date.getTime())) return String(value);
-      return date.toLocaleString("en-US", {
-        weekday: "long",
-        month: "long",
-        day: "numeric",
-        year: "numeric",
-        hour: "numeric",
-        minute: "2-digit",
-        hour12: true,
-        timeZoneName: "short",
-        ...(templateTimezone ? { timeZone: templateTimezone } : {}),
-      });
+    const timezoneFields = {
+      customer_timezone:
+        typeof body.customer_timezone === "string" ? body.customer_timezone : null,
+      provider_timezone:
+        typeof body.provider_timezone === "string" ? body.provider_timezone : null,
+      timezone: typeof body.timezone === "string" ? body.timezone : null,
     };
-    const formattedStart = formatDateTimeForTemplate(start);
-    const formattedEnd = formatDateTimeForTemplate(end);
+
+    const formatDateTimeForTemplate = (value: unknown, role: "customer" | "provider") => {
+      if (!value) return "Not provided";
+      const iso = String(value);
+      const tz = notification_timezone_for_role(role, timezoneFields);
+      return formatBookingNotificationDateTime(iso, tz);
+    };
+
+    const userFormattedStart = formatDateTimeForTemplate(start, "customer");
+    const userFormattedEnd = formatDateTimeForTemplate(end, "customer");
+    const adminFormattedStart = formatDateTimeForTemplate(start, "provider");
+    const adminFormattedEnd = formatDateTimeForTemplate(end, "provider");
 
     const safeService = text_or_empty(service);
     const safeDepartment = text_or_empty(department);
@@ -207,8 +205,8 @@ export async function POST(req: Request) {
         safeService || "N/A",
         safeDepartment || "N/A",
         safeProvider || "N/A",
-        formattedStart,
-        formattedEnd,
+        userFormattedStart,
+        userFormattedEnd,
         safeNote || "N/A",
         String(arrive_early_min ?? 10),
         String(arrive_early_max ?? 15),
@@ -218,16 +216,16 @@ export async function POST(req: Request) {
         safeService || "N/A",
         safeProvider || "N/A",
         safeDepartment || "N/A",
-        formattedStart,
-        formattedEnd,
+        userFormattedStart,
+        userFormattedEnd,
         String(arrive_early_min ?? 10),
       ],
       cancel: [
         firstName || "N/A",
         safeService || "N/A",
         safeProvider || "N/A",
-        formattedStart,
-        formattedEnd,
+        userFormattedStart,
+        userFormattedEnd,
         safeCancelledBy,
       ],
       reschedule: [
@@ -235,8 +233,8 @@ export async function POST(req: Request) {
         safeService || "N/A",
         safeProvider || "N/A",
         safeDepartment || "N/A",
-        formattedStart,
-        formattedEnd,
+        userFormattedStart,
+        userFormattedEnd,
         String(arrive_early_min ?? 10),
       ],
     };
@@ -249,13 +247,36 @@ export async function POST(req: Request) {
         safeService || "N/A",
         safeDepartment || "N/A",
         safeProvider || "N/A",
-        formattedStart,
-        formattedEnd,
+        adminFormattedStart,
+        adminFormattedEnd,
         safeNote || "N/A",
       ],
-      reminder: userTemplateParamsByKind.reminder,
-      cancel: userTemplateParamsByKind.cancel,
-      reschedule: userTemplateParamsByKind.reschedule,
+      reminder: [
+        firstName || "N/A",
+        safeService || "N/A",
+        safeProvider || "N/A",
+        safeDepartment || "N/A",
+        adminFormattedStart,
+        adminFormattedEnd,
+        String(arrive_early_min ?? 10),
+      ],
+      cancel: [
+        firstName || "N/A",
+        safeService || "N/A",
+        safeProvider || "N/A",
+        adminFormattedStart,
+        adminFormattedEnd,
+        safeCancelledBy,
+      ],
+      reschedule: [
+        firstName || "N/A",
+        safeService || "N/A",
+        safeProvider || "N/A",
+        safeDepartment || "N/A",
+        adminFormattedStart,
+        adminFormattedEnd,
+        String(arrive_early_min ?? 10),
+      ],
     };
 
     const userTemplateParams = userTemplateParamsByKind[whatsapp_flow_kind];

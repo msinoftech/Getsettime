@@ -15,7 +15,7 @@ import {
 } from '@/lib/workspace-notification-flags';
 import { appendActivityLog } from '@/lib/activity-log';
 import { resolve_meeting_join_url_from_booking } from '@/src/utils/google_meet';
-import { emailTimezoneFields } from '@/lib/booking-timezone-api';
+import { emailTimezoneFields, readBookingTimezonesFromRow, whatsapp_timezone_payload } from '@/lib/booking-timezone-api';
 import { formatFullDateTimeInTimezone } from '@/lib/date-timezone';
 
 type Channel = 'email' | 'whatsapp';
@@ -303,6 +303,7 @@ export async function POST(
       );
     }
 
+    const reminderTz = readBookingTimezonesFromRow(booking);
     const result_whatsapp = await post_booking_whatsapp_notification(origin.replace(/\/$/, ''), {
       name: booking.invitee_name?.trim() || 'Invitee',
       email: booking.invitee_email?.trim() || null,
@@ -322,6 +323,10 @@ export async function POST(
       ...(admin_ok && admin_phones.length ? { admin_phone: admin_phones } : {}),
       skip_contact_form_email: true,
       notification_kind: 'reminder',
+      ...whatsapp_timezone_payload(
+        reminderTz.customer_timezone,
+        reminderTz.provider_timezone
+      ),
     });
 
     if (!result_whatsapp.ok) {

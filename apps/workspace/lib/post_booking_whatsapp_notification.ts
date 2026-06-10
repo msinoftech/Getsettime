@@ -16,6 +16,8 @@ export type post_booking_whatsapp_notification_payload = {
   arrive_early_max?: number;
   booking_reference?: string;
   cancelled_by?: string;
+  customer_timezone?: string;
+  provider_timezone?: string;
   send_to_user: boolean;
   send_to_admin: boolean;
   admin_phone?: string[];
@@ -65,6 +67,12 @@ export async function post_booking_whatsapp_notification(
   }
   if (payload.notification_kind !== undefined) {
     body.notification_kind = payload.notification_kind;
+  }
+  if (payload.customer_timezone?.trim()) {
+    body.customer_timezone = payload.customer_timezone.trim();
+  }
+  if (payload.provider_timezone?.trim()) {
+    body.provider_timezone = payload.provider_timezone.trim();
   }
 
   try {

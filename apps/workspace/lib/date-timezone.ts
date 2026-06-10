@@ -119,18 +119,32 @@ export function formatTimeOnlyInTimezone(iso: string, timezone: string): string 
   return `${time} (${abbrev})`;
 }
 
-/** Format full date+time in timezone for confirmations. */
-export function formatFullDateTimeInTimezone(iso: string, timezone: string): string {
+/** Full date+time for email/WhatsApp with timezone in parentheses, e.g. "... 02:00 PM (GMT+5:30)". */
+export function formatNotificationDateTimeInTimezone(
+  iso: string,
+  timezone?: string | null
+): string {
   const date = new Date(iso);
-  return date.toLocaleString('en-US', {
+  if (Number.isNaN(date.getTime())) return iso;
+  const tz = timezone?.trim();
+  const opts: Intl.DateTimeFormatOptions = {
     weekday: 'long',
     year: 'numeric',
     month: 'long',
     day: 'numeric',
-    hour: 'numeric',
+    hour: '2-digit',
     minute: '2-digit',
     hour12: true,
-    timeZoneName: 'short',
-    timeZone: timezone,
-  });
+  };
+  if (!tz) {
+    return date.toLocaleString('en-US', { ...opts, timeZoneName: 'short' });
+  }
+  const dateTime = date.toLocaleString('en-US', { ...opts, timeZone: tz });
+  const abbrev = getTimezoneAbbreviation(tz, date);
+  return `${dateTime} (${abbrev})`;
+}
+
+/** Format full date+time in timezone for confirmations. */
+export function formatFullDateTimeInTimezone(iso: string, timezone: string): string {
+  return formatNotificationDateTimeInTimezone(iso, timezone);
 }

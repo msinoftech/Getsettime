@@ -1,5 +1,8 @@
 import { resolveProviderTimezone } from '@/src/utils/timezone';
-import { formatFullDateTimeInTimezone } from '@/lib/date-timezone';
+import {
+  formatFullDateTimeInTimezone,
+  formatNotificationDateTimeInTimezone,
+} from '@/lib/date-timezone';
 
 export type booking_timezone_fields = {
   customer_timezone: string | null;
@@ -57,19 +60,63 @@ export function resolveValidationTimezone(
   return null;
 }
 
+export type dual_time_email_audience = 'customer' | 'provider';
+
 export function formatDualTimeBlock(
   startIso: string,
   customerTimezone: string | null | undefined,
-  providerTimezone: string | null | undefined
+  providerTimezone: string | null | undefined,
+  audience: dual_time_email_audience = 'customer'
 ): string {
   const customerTz = customerTimezone?.trim();
   const providerTz = providerTimezone?.trim();
   if (!customerTz && !providerTz) return '';
   if (customerTz && providerTz && customerTz !== providerTz) {
-    return `Your time: ${formatFullDateTimeInTimezone(startIso, customerTz)}\nHost time: ${formatFullDateTimeInTimezone(startIso, providerTz)}`;
+    const customerTime = formatFullDateTimeInTimezone(startIso, customerTz);
+    const providerTime = formatFullDateTimeInTimezone(startIso, providerTz);
+    if (audience === 'provider') {
+      return `Customer time: ${customerTime}\nYour time: ${providerTime}`;
+    }
+    return `Your time: ${customerTime}\nHost time: ${providerTime}`;
   }
   const tz = customerTz || providerTz!;
   return formatFullDateTimeInTimezone(startIso, tz);
+}
+
+export function notification_timezone_for_role(
+  role: 'customer' | 'provider',
+  fields: {
+    customer_timezone?: string | null;
+    provider_timezone?: string | null;
+    timezone?: string | null;
+  }
+): string | undefined {
+  const customer = fields.customer_timezone?.trim();
+  const provider = fields.provider_timezone?.trim();
+  const legacy = fields.timezone?.trim();
+  if (role === 'provider') {
+    return provider || legacy || customer || undefined;
+  }
+  return customer || legacy || provider || undefined;
+}
+
+export function formatBookingNotificationDateTime(
+  iso: string,
+  timezone?: string | null
+): string {
+  return formatNotificationDateTimeInTimezone(iso, timezone);
+}
+
+export function whatsapp_timezone_payload(
+  customer_timezone: string | null | undefined,
+  provider_timezone: string | null | undefined
+): { customer_timezone?: string; provider_timezone?: string } {
+  const customer = customer_timezone?.trim();
+  const provider = provider_timezone?.trim();
+  return {
+    ...(customer ? { customer_timezone: customer } : {}),
+    ...(provider ? { provider_timezone: provider } : {}),
+  };
 }
 
 export function readBookingTimezonesFromRow(booking: {

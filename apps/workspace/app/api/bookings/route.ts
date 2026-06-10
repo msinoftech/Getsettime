@@ -8,6 +8,7 @@ import {
   formatDualTimeBlock,
   resolveBookingTimezonesForInsert,
   resolveValidationTimezone,
+  whatsapp_timezone_payload,
 } from '@/lib/booking-timezone-api';
 import { appendActivityLog } from '@/lib/activity-log';
 import {
@@ -963,6 +964,10 @@ export async function POST(req: NextRequest) {
           send_to_admin: whatsapp_admin,
           admin_phone: admin_whatsapp_phones,
           skip_contact_form_email: true,
+          ...whatsapp_timezone_payload(
+            tzFields.customer_timezone,
+            tzFields.provider_timezone
+          ),
         });
       }
     } catch (whatsappError) {
@@ -1562,6 +1567,10 @@ export async function PATCH(req: NextRequest) {
                 : {}),
               skip_contact_form_email: true,
               notification_kind: 'reschedule',
+              ...whatsapp_timezone_payload(
+                (data as { customer_timezone?: string | null }).customer_timezone,
+                (data as { provider_timezone?: string | null }).provider_timezone
+              ),
             });
           }
         }
@@ -1813,6 +1822,10 @@ export async function PATCH(req: NextRequest) {
                 : {}),
               skip_contact_form_email: true,
               notification_kind: 'cancel',
+              ...whatsapp_timezone_payload(
+                (data as { customer_timezone?: string | null }).customer_timezone,
+                (data as { provider_timezone?: string | null }).provider_timezone
+              ),
             });
           } else if (!isCancelled && inviteePhoneStatus && whatsapp_user) {
             await post_booking_whatsapp_notification(origin, {
@@ -1832,6 +1845,10 @@ export async function PATCH(req: NextRequest) {
               send_to_user: true,
               send_to_admin: false,
               skip_contact_form_email: true,
+              ...whatsapp_timezone_payload(
+                (data as { customer_timezone?: string | null }).customer_timezone,
+                (data as { provider_timezone?: string | null }).provider_timezone
+              ),
             });
           }
         }

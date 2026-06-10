@@ -233,7 +233,7 @@ export function BookingPreviewSidebar({
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                       </svg>
                     </div>
-                    <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Service</div>
+                    <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Event Duration</div>
                   </div>
                   <div className="font-bold text-gray-900 text-base sm:text-lg pl-9 sm:pl-11">
                     {selectedType.title}

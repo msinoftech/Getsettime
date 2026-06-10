@@ -4,6 +4,7 @@ import { getLocalTimePartsInTimezone } from '@/lib/date-timezone';
 import {
   formatDualTimeBlock,
   resolveBookingTimezonesForInsert,
+  whatsapp_timezone_payload,
   resolveValidationTimezone,
 } from '@/lib/booking-timezone-api';
 import { appendActivityLog } from '@/lib/activity-log';
@@ -377,6 +378,10 @@ export async function POST(req: NextRequest) {
           send_to_user: false,
           send_to_admin: true,
           admin_phone: admin_whatsapp_phones,
+          ...whatsapp_timezone_payload(
+            tzFields.customer_timezone,
+            tzFields.provider_timezone
+          ),
           skip_contact_form_email: true,
           notification_kind: 'reschedule',
         });

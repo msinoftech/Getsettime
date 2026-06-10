@@ -4,6 +4,7 @@ import { isValidPhone, toE164, sendSMS } from '@/lib/twilio-sms';
 import { sendReminderEmail, sendFollowUpEmail } from '@/lib/email-service';
 import { getServerAppOrigin } from '@/lib/request-site-origin';
 import { post_booking_whatsapp_notification } from '@/lib/post_booking_whatsapp_notification';
+import { readBookingTimezonesFromRow, whatsapp_timezone_payload } from '@/lib/booking-timezone-api';
 import { is_whatsapp_user_enabled } from '@/lib/workspace-notification-flags';
 import { resolveNotificationsForServiceProvider } from '@/src/utils/providerSettingsResolution';
 import { resolve_meeting_join_url_from_booking } from '@/src/utils/google_meet';
@@ -341,7 +342,7 @@ async function process1hWhatsAppReminders(
   const { data: bookings, error } = await supabase
     .from('bookings')
     .select(
-      'id, public_code, workspace_id, invitee_name, invitee_phone, invitee_email, start_at, end_at, event_type_id, department_id, service_provider_id, metadata, location, contact_id, contacts(phone, email, name), event_types(title, buffer_before, buffer_after)',
+      'id, public_code, workspace_id, invitee_name, invitee_phone, invitee_email, start_at, end_at, event_type_id, department_id, service_provider_id, metadata, location, contact_id, customer_timezone, provider_timezone, contacts(phone, email, name), event_types(title, buffer_before, buffer_after)',
     )
     .gte('start_at', windowStart.toISOString())
     .lte('start_at', windowEnd.toISOString())
@@ -453,6 +454,9 @@ async function process1hWhatsAppReminders(
           ? booking.public_code.trim()
           : String(booking.id);
 
+      const reminderTz = readBookingTimezonesFromRow(
+        booking as { customer_timezone?: string | null; provider_timezone?: string | null }
+      );
       const result = await post_booking_whatsapp_notification(origin, {
         name,
         email: email || null,
@@ -471,6 +475,10 @@ async function process1hWhatsAppReminders(
         send_to_admin: false,
         skip_contact_form_email: true,
         notification_kind: 'reminder',
+        ...whatsapp_timezone_payload(
+          reminderTz.customer_timezone,
+          reminderTz.provider_timezone
+        ),
       });
       if (!result.ok) {
         throw new Error(result.error || 'WhatsApp reminder failed');
