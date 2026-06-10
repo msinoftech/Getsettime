@@ -441,8 +441,8 @@ export function hasBookableSlotForDay(
   existingBookings: Booking[],
   minLeadTimeMinutes = 0,
   slotDurationMinutes?: number,
-  providerTimezone?: string,
-  viewerTimezone?: string
+  providerTimezone?: string | null,
+  viewerTimezone?: string | null
 ): boolean {
   const duration =
     typeof slotDurationMinutes === 'number' &&

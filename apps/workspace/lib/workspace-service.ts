@@ -18,8 +18,9 @@ export function buildLocalizationFromIpapi(
   edgeCountry?: string | null
 ): localization_settings | undefined {
   if (ipapi && !ipapi.error) {
+    const { error: _apiError, ...snapshot } = ipapi;
     return {
-      ...ipapi,
+      ...snapshot,
       fetched_at: new Date().toISOString(),
     };
   }
