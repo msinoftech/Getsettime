@@ -12,8 +12,16 @@ import {
 } from "react-icons/lu";
 import { BOOKING_STATUSES } from "@/src/types/booking";
 import { BOOKING_SORT_OPTIONS } from "@app/db";
-import type { EventType, ServiceProvider } from "@/src/types/booking-entities";
-import { capitalize_booking_display_label, getServiceProviderName } from "@/src/utils/booking";
+import type {
+  EventType,
+  ServiceProvider,
+  TeamMemberDisplay,
+} from "@/src/types/booking-entities";
+import {
+  capitalize_booking_display_label,
+  getServiceProviderName,
+  getTeamMemberName,
+} from "@/src/utils/booking";
 
 interface BookingFiltersProps {
   filter: string;
@@ -24,6 +32,7 @@ interface BookingFiltersProps {
   sortFilter: string;
   eventTypes: EventType[] | undefined;
   serviceProviders: ServiceProvider[] | undefined;
+  teamMembers: TeamMemberDisplay[] | undefined;
   /** Count of rows matching the current query (e.g. pagination total). */
   resultCount: number;
   onFilterChange: (value: string) => void;
@@ -60,6 +69,7 @@ export function BookingFilters({
   sortFilter,
   eventTypes,
   serviceProviders,
+  teamMembers,
   resultCount,
   onFilterChange,
   onDateFilterChange,
@@ -75,6 +85,7 @@ export function BookingFilters({
   const panelId = useId();
   const eventTypesList = eventTypes ?? [];
   const providersList = serviceProviders ?? [];
+  const teamMembersList = teamMembers ?? [];
   const sortedProviders = [...providersList].sort((a, b) =>
     capitalize_booking_display_label(
       getServiceProviderName(a.id, providersList)
@@ -225,11 +236,25 @@ export function BookingFilters({
                         (a.duration_minutes ?? Infinity) -
                         (b.duration_minutes ?? Infinity)
                     )
-                    .map((eventType) => (
-                      <option key={eventType.id} value={eventType.id}>
-                        {eventType.title}
-                      </option>
-                    ))}
+                    .map((eventType) => {
+                      const ownerName = eventType.owner_id
+                        ? capitalize_booking_display_label(
+                            getTeamMemberName(
+                              eventType.owner_id,
+                              teamMembersList
+                            )
+                          )
+                        : null;
+                      const label =
+                        ownerName && ownerName !== "N/A"
+                          ? `${eventType.title} (${ownerName})`
+                          : eventType.title;
+                      return (
+                        <option key={eventType.id} value={eventType.id}>
+                          {label}
+                        </option>
+                      );
+                    })}
                 </select>
                 <LuChevronDown
                   className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"

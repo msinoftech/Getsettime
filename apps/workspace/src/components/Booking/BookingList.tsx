@@ -62,7 +62,8 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
   const { open: open_create_booking } = useCreateBookingModal();
   const { user } = useAuth();
   const { data: eventTypes } = useEventTypes();
-  const { data: serviceProviders, workspaceOwner } = useServiceProviders();
+  const { data: serviceProviders, teamMembers, workspaceOwner } =
+    useServiceProviders();
 
   const currentUserRole =
     (user?.user_metadata?.role as string | undefined) ?? null;
@@ -562,6 +563,7 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
             sortFilter={sortFilter}
             eventTypes={eventTypes}
             serviceProviders={serviceProviders}
+            teamMembers={teamMembers}
             resultCount={pagination.total}
             onFilterChange={setFilter}
             onDateFilterChange={setDateFilter}

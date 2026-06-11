@@ -30,7 +30,10 @@ import { supabase } from "@/lib/supabaseClient";
 import { useAuth } from "@/src/providers/AuthProvider";
 import { ConfirmModal } from "@/src/components/ui/ConfirmModal";
 import { UpgradePlanModal } from "@/src/components/Subscription/UpgradePlanModal";
-import { useSubscription } from "@/src/hooks/useSubscription";
+import {
+  useSubscription,
+  type SubscriptionApiResponse,
+} from "@/src/hooks/useSubscription";
 import { TeamMemberSkeleton } from "@/src/components/ui/TeamMemberSkeleton";
 import {
   ROLE_SERVICE_PROVIDER,
@@ -85,6 +88,23 @@ function countOtherActiveServiceProviders(
       !m.deactivated &&
       teamMemberActsAsServiceProvider(m)
   ).length;
+}
+
+function isServiceProviderPlanLimitReached(
+  subscription: SubscriptionApiResponse | null
+): boolean {
+  if (!subscription) return false;
+  return (
+    subscription.usage.service_provider_count >=
+    subscription.usage.service_provider_limit
+  );
+}
+
+function getServiceProviderLimitUpgradeMessage(
+  subscription: SubscriptionApiResponse
+): string {
+  const { service_provider_limit, service_provider_count } = subscription.usage;
+  return `Your ${subscription.plan.name} plan allows up to ${service_provider_limit} service providers, and you already have ${service_provider_count}. Upgrade your plan or contact your administrator to add more.`;
 }
 
 function getSortedDepartmentIdsForDisplay(
@@ -612,21 +632,41 @@ export default function TeamMembersPage() {
   };
 
   const toggleAdditionalRole = (role: string) => {
-    setMemberFormData(prev => {
-      const formTarget = roleModalMember ?? editingMember;
-      if (
-        formTarget &&
-        role === ROLE_SERVICE_PROVIDER &&
-        formTarget.is_workspace_owner &&
-        formTarget.role === ROLE_WORKSPACE_ADMIN &&
-        prev.additional_roles.includes(role)
-      ) {
-        if (countOtherActiveServiceProviders(teamMembers, formTarget.id) < 1) {
-          return prev;
-        }
+    const formTarget = roleModalMember ?? editingMember;
+    if (!formTarget) return;
+
+    const isAdding = !memberFormData.additional_roles.includes(role);
+
+    if (
+      !isAdding &&
+      role === ROLE_SERVICE_PROVIDER &&
+      formTarget.is_workspace_owner &&
+      formTarget.role === ROLE_WORKSPACE_ADMIN
+    ) {
+      if (countOtherActiveServiceProviders(teamMembers, formTarget.id) < 1) {
+        return;
       }
+    }
+
+    if (
+      isAdding &&
+      role === ROLE_SERVICE_PROVIDER &&
+      formTarget.is_workspace_owner &&
+      !teamMemberActsAsServiceProvider(formTarget) &&
+      isServiceProviderPlanLimitReached(subscription)
+    ) {
+      setUpgradeModalMessage(
+        subscription
+          ? getServiceProviderLimitUpgradeMessage(subscription)
+          : "Upgrade your plan to add more service providers."
+      );
+      setUpgradeModalOpen(true);
+      return;
+    }
+
+    setMemberFormData((prev) => {
       const additional_roles = prev.additional_roles.includes(role)
-        ? prev.additional_roles.filter(r => r !== role)
+        ? prev.additional_roles.filter((r) => r !== role)
         : [...prev.additional_roles, role];
       return {
         ...prev,
@@ -690,6 +730,24 @@ export default function TeamMembersPage() {
           additional_roles: memberFormData.additional_roles,
         });
 
+      const targetCurrentlyActsAsServiceProvider =
+        teamMemberActsAsServiceProvider(targetMember);
+
+      if (
+        !targetCurrentlyActsAsServiceProvider &&
+        actsAsServiceProviderInForm &&
+        isServiceProviderPlanLimitReached(subscription)
+      ) {
+        setUpgradeModalMessage(
+          subscription
+            ? getServiceProviderLimitUpgradeMessage(subscription)
+            : "Upgrade your plan to add more service providers."
+        );
+        setUpgradeModalOpen(true);
+        setLoading(false);
+        return;
+      }
+
       const body = {
         id: targetMember.id,
         name: memberFormData.name,
@@ -721,8 +779,18 @@ export default function TeamMembersPage() {
           else handleMemberFormCancel();
         }, 1500);
       } else {
-        const errorData = await response.json();
-        setError(errorData.error || 'Failed to update team member');
+        const errorData = (await response.json()) as {
+          error?: string;
+          upgradeRequired?: boolean;
+        };
+        if (errorData.upgradeRequired) {
+          setUpgradeModalMessage(
+            errorData.error || "Upgrade your plan to add more service providers."
+          );
+          setUpgradeModalOpen(true);
+        } else {
+          setError(errorData.error || "Failed to update team member");
+        }
       }
     } catch (error) {
       console.error('Error saving team member:', error);
@@ -1323,6 +1391,15 @@ export default function TeamMembersPage() {
             ? countOtherActiveServiceProviders(teamMembers, editingMember.id)
             : 0
         }
+        serviceProviderLimitReached={isServiceProviderPlanLimitReached(subscription)}
+        serviceProviderLimitMessage={
+          subscription
+            ? getServiceProviderLimitUpgradeMessage(subscription)
+            : "Upgrade your plan to add more service providers."
+        }
+        targetActsAsServiceProvider={
+          editingMember ? teamMemberActsAsServiceProvider(editingMember) : false
+        }
         onCancel={handleMemberFormCancel}
         onSubmit={handleMemberFormSubmit}
         onChange={setMemberFormData}
@@ -1341,6 +1418,15 @@ export default function TeamMembersPage() {
           otherActiveServiceProviderCount={countOtherActiveServiceProviders(
             teamMembers,
             roleModalMember.id
+          )}
+          serviceProviderLimitReached={isServiceProviderPlanLimitReached(subscription)}
+          serviceProviderLimitMessage={
+            subscription
+              ? getServiceProviderLimitUpgradeMessage(subscription)
+              : "Upgrade your plan to add more service providers."
+          }
+          targetActsAsServiceProvider={teamMemberActsAsServiceProvider(
+            roleModalMember
           )}
           onCancel={handleRoleModalCancel}
           onSubmit={handleMemberFormSubmit}

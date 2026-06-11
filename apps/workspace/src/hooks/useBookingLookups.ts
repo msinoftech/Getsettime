@@ -7,6 +7,7 @@ import type {
   Department,
   ServiceProvider,
   Service,
+  TeamMemberDisplay,
 } from '@/src/types/booking-entities';
 import type { service_provider_display_source } from '@/src/utils/service_provider_display';
 import { userActsAsServiceProviderFromMetadata } from '@/lib/service_provider_role';
@@ -272,8 +273,21 @@ function team_member_to_owner_source(
   };
 }
 
+function team_member_to_display(m: TeamMember): TeamMemberDisplay {
+  return {
+    id: m.id,
+    email: m.email ?? '',
+    name:
+      m.raw_user_meta_data?.full_name ||
+      m.name ||
+      m.raw_user_meta_data?.name ||
+      undefined,
+  };
+}
+
 export function useServiceProviders() {
   const [data, setData] = useState<ServiceProvider[]>([]);
+  const [teamMembers, setTeamMembers] = useState<TeamMemberDisplay[]>([]);
   const [workspaceOwner, setWorkspaceOwner] =
     useState<service_provider_display_source | null>(null);
   const [workspaceOwnerUserId, setWorkspaceOwnerUserId] = useState<string | null>(
@@ -305,6 +319,9 @@ export function useServiceProviders() {
           );
           setWorkspaceOwnerUserId(ownerMember?.id ?? null);
         }
+        if (!cancelled) {
+          setTeamMembers(members.map(team_member_to_display));
+        }
         const providers: ServiceProvider[] = members
           .filter(memberActsAsServiceProvider)
           .map((m) => {
@@ -335,6 +352,7 @@ export function useServiceProviders() {
       } catch {
         if (!cancelled) {
           setData([]);
+          setTeamMembers([]);
           setWorkspaceOwner(null);
           setWorkspaceOwnerUserId(null);
         }
@@ -347,5 +365,5 @@ export function useServiceProviders() {
     return () => { cancelled = true; };
   }, []);
 
-  return { data, workspaceOwner, workspaceOwnerUserId, loading };
+  return { data, teamMembers, workspaceOwner, workspaceOwnerUserId, loading };
 }

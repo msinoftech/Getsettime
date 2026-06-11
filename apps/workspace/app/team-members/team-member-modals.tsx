@@ -662,6 +662,9 @@ export function EditTeamMemberModal({
   statusLabel,
   canAssignServiceProviderAdditionalRoles,
   otherActiveServiceProviderCount,
+  serviceProviderLimitReached,
+  serviceProviderLimitMessage,
+  targetActsAsServiceProvider,
   onCancel,
   onSubmit,
   onChange,
@@ -677,6 +680,9 @@ export function EditTeamMemberModal({
   canAssignServiceProviderAdditionalRoles: boolean;
   /** Excluding the edited user: members who are not deactivated and act as service provider. */
   otherActiveServiceProviderCount: number;
+  serviceProviderLimitReached: boolean;
+  serviceProviderLimitMessage: string;
+  targetActsAsServiceProvider: boolean;
   onCancel: () => void;
   onSubmit: (e: React.FormEvent) => void;
   onChange: (data: MemberFormData) => void;
@@ -841,15 +847,25 @@ export function EditTeamMemberModal({
                         r.value === ROLE_SERVICE_PROVIDER &&
                         checked &&
                         otherActiveServiceProviderCount < 1;
+                      const blockedServiceProviderAddition =
+                        r.value === ROLE_SERVICE_PROVIDER &&
+                        !checked &&
+                        serviceProviderLimitReached &&
+                        !targetActsAsServiceProvider;
+                      const blockedServiceProviderRole =
+                        blockedServiceProviderRemoval ||
+                        blockedServiceProviderAddition;
                       return (
                         <button
                           key={r.value}
                           type="button"
-                          disabled={blockedServiceProviderRemoval || loading}
+                          disabled={blockedServiceProviderRole || loading}
                           title={
                             blockedServiceProviderRemoval
                               ? "Add another active service provider before removing this role."
-                              : undefined
+                              : blockedServiceProviderAddition
+                                ? serviceProviderLimitMessage
+                                : undefined
                           }
                           onClick={() => onToggleAdditionalRole(r.value)}
                           className={`w-full rounded-lg px-3 py-2 text-left text-sm transition ${
@@ -863,6 +879,11 @@ export function EditTeamMemberModal({
                       );
                     })}
                   </div>
+                  {serviceProviderLimitReached && !targetActsAsServiceProvider ? (
+                    <p className="mt-3 text-xs text-amber-800">
+                      {serviceProviderLimitMessage}
+                    </p>
+                  ) : null}
                 </div>
               </div>
             )}
@@ -959,6 +980,9 @@ export function ManageRoleModal({
   memberFormData,
   canAssignServiceProviderAdditionalRoles,
   otherActiveServiceProviderCount,
+  serviceProviderLimitReached,
+  serviceProviderLimitMessage,
+  targetActsAsServiceProvider,
   onCancel,
   onSubmit,
   onChange,
@@ -973,6 +997,9 @@ export function ManageRoleModal({
   canAssignServiceProviderAdditionalRoles: boolean;
   /** Excluding this user: members who are not deactivated and act as service provider. */
   otherActiveServiceProviderCount: number;
+  serviceProviderLimitReached: boolean;
+  serviceProviderLimitMessage: string;
+  targetActsAsServiceProvider: boolean;
   onCancel: () => void;
   onSubmit: (e: React.FormEvent) => void;
   onChange: (data: MemberFormData) => void;
@@ -1077,15 +1104,25 @@ export function ManageRoleModal({
                         r.value === ROLE_SERVICE_PROVIDER &&
                         checked &&
                         otherActiveServiceProviderCount < 1;
+                      const blockedServiceProviderAddition =
+                        r.value === ROLE_SERVICE_PROVIDER &&
+                        !checked &&
+                        serviceProviderLimitReached &&
+                        !targetActsAsServiceProvider;
+                      const blockedServiceProviderRole =
+                        blockedServiceProviderRemoval ||
+                        blockedServiceProviderAddition;
                       return (
                         <button
                           key={r.value}
                           type="button"
-                          disabled={blockedServiceProviderRemoval || loading}
+                          disabled={blockedServiceProviderRole || loading}
                           title={
                             blockedServiceProviderRemoval
                               ? "Add another active service provider before removing this role."
-                              : undefined
+                              : blockedServiceProviderAddition
+                                ? serviceProviderLimitMessage
+                                : undefined
                           }
                           onClick={() => onToggleAdditionalRole(r.value)}
                           className={`w-full rounded-lg px-3 py-2 text-left text-sm transition ${
@@ -1099,6 +1136,11 @@ export function ManageRoleModal({
                       );
                     })}
                   </div>
+                  {serviceProviderLimitReached && !targetActsAsServiceProvider ? (
+                    <p className="mt-3 text-xs text-amber-800">
+                      {serviceProviderLimitMessage}
+                    </p>
+                  ) : null}
                 </div>
               </div>
             )}

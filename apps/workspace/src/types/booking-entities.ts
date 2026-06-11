@@ -2,11 +2,18 @@ export type EventType = {
   id: string;
   title: string;
   duration_minutes?: number | null;
+  owner_id?: string | null;
 };
 
 export type Department = {
   id: string;
   name: string;
+};
+
+export type TeamMemberDisplay = {
+  id: string;
+  email: string;
+  name?: string;
 };
 
 export type ServiceProvider = {

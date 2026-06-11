@@ -1,5 +1,18 @@
 import type { Booking } from '@/src/types/booking';
-import type { ServiceProvider, Department } from '@/src/types/booking-entities';
+import type {
+  ServiceProvider,
+  Department,
+  TeamMemberDisplay,
+} from '@/src/types/booking-entities';
+
+export function getTeamMemberName(
+  userId: string | null,
+  members: TeamMemberDisplay[]
+): string {
+  if (!userId) return 'N/A';
+  const member = members.find((m) => m.id === userId);
+  return member?.name?.trim() || member?.email || 'N/A';
+}
 
 export function getServiceProviderName(
   serviceProviderId: string | null,

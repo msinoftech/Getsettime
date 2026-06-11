@@ -653,6 +653,30 @@ export async function PUT(req: NextRequest) {
       additionalRolesToPersist = undefined;
     }
 
+    const finalPrimaryRole =
+      typeof role === 'string' && isValidRole(role) ? role : existingPrimary;
+    const finalAdditionalRoles =
+      additionalRolesToPersist ?? existingAdditionalRoles;
+    const existingActsAsServiceProvider =
+      userActsAsServiceProviderFromSupabaseUser(existingUser);
+    const willActAsServiceProvider = userActsAsServiceProviderFromMetadata({
+      role: finalPrimaryRole,
+      is_workspace_owner: targetIsOwner,
+      additional_roles: finalAdditionalRoles,
+    });
+
+    if (!existingActsAsServiceProvider && willActAsServiceProvider) {
+      try {
+        const { assertServiceProviderAllowed } = await import('@app/db/subscription');
+        await assertServiceProviderAllowed(adminClient, Number(workspaceId), 1);
+      } catch (planErr) {
+        const { planLimitErrorResponse } = await import('@/lib/plan-limit-response');
+        const planResp = planLimitErrorResponse(planErr);
+        if (planResp) return planResp;
+        throw planErr;
+      }
+    }
+
     const updatedMetadata = {
       ...existingUser.user_metadata,
       ...(name && { name }),
