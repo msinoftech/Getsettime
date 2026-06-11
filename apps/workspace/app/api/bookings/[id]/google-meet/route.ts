@@ -96,6 +96,7 @@ export async function POST(
 
     let meetLink: string | undefined;
     let nextMeta = meta;
+    let created_new_calendar_event = false;
 
     if (gcalId) {
       meetLink = await fetchGoogleMeetLinkForCalendarEvent({
@@ -135,6 +136,7 @@ export async function POST(
         metadata: { bookingId: booking.id, eventTypeName },
         addGoogleMeet: true,
         meetRequestId: booking.id,
+        sendUpdates: 'all',
         ...(tzRaw ? { timeZone: tzRaw } : {}),
       });
 
@@ -151,6 +153,7 @@ export async function POST(
 
       nextMeta = { ...nextMeta, google_calendar_event_id: eventId };
       meetLink = createdMeet;
+      created_new_calendar_event = true;
     }
 
     if (!meetLink?.trim()) {
@@ -179,6 +182,39 @@ export async function POST(
     if (upErr || !updated) {
       console.error('google-meet sync patch failed:', upErr);
       return NextResponse.json({ error: upErr?.message || 'Update failed' }, { status: 500 });
+    }
+
+    try {
+      const { notify_meet_link_if_first_stored } = await import(
+        '@/lib/meet-link-notification'
+      );
+      const meetNotify = await notify_meet_link_if_first_stored({
+        supabase,
+        booking: {
+          id: String(updated.id),
+          workspace_id: workspaceId,
+          invitee_name: updated.invitee_name,
+          invitee_email: updated.invitee_email,
+          service_provider_id: updated.service_provider_id,
+          department_id: updated.department_id,
+          event_type_id: updated.event_type_id,
+          start_at: updated.start_at,
+          end_at: updated.end_at,
+          metadata: (updated.metadata as Record<string, unknown> | null) ?? null,
+          customer_timezone: updated.customer_timezone,
+          provider_timezone: updated.provider_timezone,
+          event_types: updated.event_types,
+        },
+        previousLocation: booking.location,
+        newLocation: nextLoc,
+        meetingUrl: meetLink.trim(),
+        alsoSendGoogleCalendarInvites: !created_new_calendar_event,
+      });
+      if (meetNotify.errors.length > 0) {
+        console.warn('GetSetTime Meet notification:', meetNotify.errors);
+      }
+    } catch (meetNotifyErr) {
+      console.warn('GetSetTime Meet notification failed (non-blocking):', meetNotifyErr);
     }
 
     return NextResponse.json({ data: updated, synced: true });

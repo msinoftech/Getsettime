@@ -476,6 +476,177 @@ export const sendFollowUpEmail = async (data: BookingEmailData): Promise<void> =
   console.log('Follow-up email sent to:', data.inviteeEmail);
 };
 
+const meet_link_cta_block = (data: BookingEmailData): string => {
+  const url = data.meetingUrl?.trim();
+  if (!url) return '';
+  const safeUrl = url.replace(/"/g, '&quot;');
+  return `
+        <div style="margin: 24px 0; text-align: center;">
+          <a href="${safeUrl}" target="_blank" rel="noopener noreferrer" style="display: inline-block; background-color: #4f46e5; color: #ffffff; text-decoration: none; font-weight: bold; padding: 14px 28px; border-radius: 8px;">
+            Join GetSetTime Meet
+          </a>
+        </div>
+        <div class="detail-row" style="word-break: break-all;">
+          <span class="label">Meeting link:</span> <a href="${safeUrl}" target="_blank" rel="noopener noreferrer">${safeUrl}</a>
+        </div>`;
+};
+
+const getCustomerMeetLinkEmailTemplate = (data: BookingEmailData): string => {
+  return `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+    .header { background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%); color: white; padding: 20px; text-align: center; border-radius: 5px 5px 0 0; }
+    .content { background-color: #f9f9f9; padding: 30px; border: 1px solid #ddd; border-radius: 0 0 5px 5px; }
+    .booking-details { background-color: white; padding: 20px; margin: 20px 0; border-radius: 5px; border-left: 4px solid #4f46e5; }
+    .detail-row { margin: 10px 0; }
+    .label { font-weight: bold; color: #4f46e5; }
+    .footer { text-align: center; margin-top: 20px; padding-top: 20px; border-top: 1px solid #ddd; color: #666; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>Your GetSetTime Meet Link</h1>
+    </div>
+    <div class="content">
+      <p>Dear ${data.inviteeName},</p>
+      <p>Your video meeting link for <strong>${data.eventTypeName}</strong> is ready. Use the button below to join at your scheduled time.</p>
+
+      <div class="booking-details">
+        <h2 style="margin-top: 0; color: #4f46e5;">Meeting Details</h2>
+        ${meet_link_cta_block(data)}
+      </div>
+
+      <p>Please join a few minutes early and ensure your camera and microphone are working.</p>
+
+      <div class="footer">
+        <p>This is an automated message from GetSetTime. Please do not reply to this email.</p>
+        <p>&copy; ${new Date().getFullYear()} GetSetTime. All rights reserved.</p>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
+  `;
+};
+
+const getProviderMeetLinkEmailTemplate = (data: BookingEmailData): string => {
+  return `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+    .header { background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%); color: white; padding: 20px; text-align: center; border-radius: 5px 5px 0 0; }
+    .content { background-color: #f9f9f9; padding: 30px; border: 1px solid #ddd; border-radius: 0 0 5px 5px; }
+    .booking-details { background-color: white; padding: 20px; margin: 20px 0; border-radius: 5px; border-left: 4px solid #4f46e5; }
+    .detail-row { margin: 10px 0; }
+    .label { font-weight: bold; color: #4f46e5; }
+    .footer { text-align: center; margin-top: 20px; padding-top: 20px; border-top: 1px solid #ddd; color: #666; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>GetSetTime Meet Link Ready</h1>
+    </div>
+    <div class="content">
+      <p>Hello,</p>
+      <p>The GetSetTime Meet link for <strong>${data.eventTypeName}</strong> with <strong>${data.inviteeName}</strong> is now available.</p>
+
+      <div class="booking-details">
+        <h2 style="margin-top: 0; color: #4f46e5;">Meeting Details</h2>
+        ${meet_link_cta_block(data)}
+      </div>
+
+      <div class="footer">
+        <p>This is an automated notification from GetSetTime.</p>
+        <p>&copy; ${new Date().getFullYear()} GetSetTime. All rights reserved.</p>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
+  `;
+};
+
+export const sendCustomerMeetLinkEmail = async (data: BookingEmailData): Promise<void> => {
+  if (!data.inviteeEmail?.trim()) {
+    throw new Error('Invitee email is required');
+  }
+  if (!data.meetingUrl?.trim()) {
+    throw new Error('Meeting URL is required');
+  }
+  const transporter = createTransporter();
+  await transporter.sendMail({
+    from: `"GetSetTime Meet" <${process.env.SMTP_USER}>`,
+    to: data.inviteeEmail.trim(),
+    subject: `Your GetSetTime Meet link - ${data.eventTypeName}`,
+    html: getCustomerMeetLinkEmailTemplate(data),
+  });
+  console.log('GetSetTime Meet email sent to customer:', data.inviteeEmail);
+};
+
+export const sendProviderMeetLinkEmail = async (data: BookingEmailData): Promise<void> => {
+  if (!data.providerEmail?.trim()) return;
+  if (!data.meetingUrl?.trim()) {
+    throw new Error('Meeting URL is required');
+  }
+  const transporter = createTransporter();
+  await transporter.sendMail({
+    from: `"GetSetTime Meet" <${process.env.SMTP_USER}>`,
+    to: data.providerEmail.trim(),
+    subject: `GetSetTime Meet link ready - ${data.eventTypeName} with ${data.inviteeName}`,
+    html: getProviderMeetLinkEmailTemplate(data),
+  });
+  console.log('GetSetTime Meet email sent to provider:', data.providerEmail);
+};
+
+export const sendMeetLinkEmails = async (
+  data: BookingEmailData
+): Promise<{
+  userEmailSent: boolean;
+  providerEmailSent: boolean;
+  errors: string[];
+}> => {
+  const errors: string[] = [];
+  let userEmailSent = false;
+  let providerEmailSent = false;
+
+  if (data.inviteeEmail?.trim()) {
+    try {
+      await sendCustomerMeetLinkEmail(data);
+      userEmailSent = true;
+    } catch (error) {
+      const err = error as Error;
+      errors.push(`Failed to send GetSetTime Meet email to customer: ${err.message}`);
+      console.error('Customer meet link email error:', error);
+    }
+  } else {
+    errors.push('Customer email not provided for GetSetTime Meet notification');
+  }
+
+  if (data.providerEmail?.trim()) {
+    try {
+      await sendProviderMeetLinkEmail(data);
+      providerEmailSent = true;
+    } catch (error) {
+      const err = error as Error;
+      errors.push(`Failed to send GetSetTime Meet email to provider: ${err.message}`);
+      console.error('Provider meet link email error:', error);
+    }
+  }
+
+  return { userEmailSent, providerEmailSent, errors };
+};
+
 // --- Reschedule email templates ---
 
 const getUserRescheduleEmailTemplate = (data: BookingEmailData): string => {

@@ -25,6 +25,11 @@ export interface CreateCalendarEventParams {
   meetRequestId?: string | number | null;
   /** IANA timezone for event start/end when using dateTime. */
   timeZone?: string;
+  /**
+   * Google Calendar attendee notifications on insert.
+   * Default `none`; use `all` when creating an event after booking (deferred Meet).
+   */
+  sendUpdates?: 'none' | 'all' | 'externalOnly';
 }
 
 export interface BusySlot {
@@ -174,6 +179,7 @@ export async function createCalendarEvent(
     addGoogleMeet,
     meetRequestId,
     timeZone,
+    sendUpdates = 'none',
   } = params;
 
   /** DB ids may arrive as numbers; Meet requestId must be a trimmed string. */
@@ -230,7 +236,7 @@ export async function createCalendarEvent(
     const res = await calendar.events.insert({
       calendarId: 'primary',
       requestBody: event,
-      sendUpdates: 'none',
+      sendUpdates,
       ...(addGoogleMeet && meet_request_id ? { conferenceDataVersion: 1 } : {}),
     });
 
@@ -246,6 +252,64 @@ export async function createCalendarEvent(
     const msg = err instanceof Error ? err.message : 'Unknown error';
     console.error('createCalendarEvent error:', msg);
     return { eventId: null, error: msg };
+  }
+}
+
+/**
+ * Notify Google Calendar attendees after a Meet link is ready (deferred post-booking flow).
+ * Keeps initial booking-time inserts on sendUpdates: 'none'.
+ */
+export async function sendGoogleCalendarMeetInvites(params: {
+  workspaceId: number;
+  serviceProviderId?: string | null;
+  eventId: string;
+  attendeeEmail?: string | null;
+}): Promise<{ success: boolean; error?: string }> {
+  const eventId = params.eventId?.trim();
+  if (!eventId) {
+    return { success: false, error: 'Calendar event id is required' };
+  }
+
+  try {
+    const calendar = await getCalendarClient({
+      workspaceId: params.workspaceId,
+      serviceProviderId: params.serviceProviderId,
+    });
+    if (!calendar) {
+      return { success: false, error: 'Calendar not connected' };
+    }
+
+    const attendeeEmail = params.attendeeEmail?.trim() || null;
+    let requestBody: calendar_v3.Schema$Event = {};
+
+    if (attendeeEmail) {
+      const existing = await calendar.events.get({
+        calendarId: 'primary',
+        eventId,
+      });
+      const attendees = [...(existing.data.attendees ?? [])];
+      const alreadyListed = attendees.some(
+        (a) => a.email?.trim().toLowerCase() === attendeeEmail.toLowerCase()
+      );
+      if (!alreadyListed) {
+        attendees.push({ email: attendeeEmail });
+      }
+      requestBody = { attendees };
+    }
+
+    await calendar.events.patch({
+      calendarId: 'primary',
+      eventId,
+      requestBody,
+      sendUpdates: 'all',
+      conferenceDataVersion: 1,
+    });
+
+    return { success: true };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Unknown error';
+    console.error('sendGoogleCalendarMeetInvites error:', msg);
+    return { success: false, error: msg };
   }
 }
 

@@ -161,6 +161,12 @@ export interface BookingDetailsCardProps {
   onGoogleMeetSynced?: (booking: Booking) => void;
   /** Per-button loader + green checkmark after PATCH for status shortcuts */
   quickActionFeedback?: BookingQuickActionFeedback;
+  /** Increment to open invitee + booking inline edit from a parent toolbar. */
+  inlineEditSignal?: number;
+  /** Increment to save all sections currently in inline edit. */
+  inlineSaveSignal?: number;
+  onInlineEditStateChange?: (editing: boolean) => void;
+  onInlineSavePendingChange?: (pending: boolean) => void;
 }
 
 export function BookingDetailsCard({
@@ -191,6 +197,10 @@ export function BookingDetailsCard({
   onSaveAdminNotice,
   quickActionFeedback = null,
   onGoogleMeetSynced,
+  inlineEditSignal = 0,
+  inlineSaveSignal = 0,
+  onInlineEditStateChange,
+  onInlineSavePendingChange,
 }: BookingDetailsCardProps) {
   const invitee_inline_edit = typeof onSaveInvitee === 'function';
   const booking_inline_edit = typeof onSaveBookingDetails === 'function';
@@ -289,6 +299,17 @@ export function BookingDetailsCard({
     set_booking_info_editing(false);
   }, []);
 
+  const start_all_inline_edits_ref = useRef<() => void>(() => {});
+  start_all_inline_edits_ref.current = () => {
+    if (invitee_inline_edit) start_invitee_edit();
+    if (booking_inline_edit) start_booking_info_edit();
+  };
+
+  useEffect(() => {
+    if (!inlineEditSignal) return;
+    start_all_inline_edits_ref.current();
+  }, [inlineEditSignal]);
+
   const submit_booking_info_edit = useCallback(async () => {
     if (!onSaveBookingDetails) return;
     try {
@@ -316,6 +337,33 @@ export function BookingDetailsCard({
     draft_status,
     onSaveBookingDetails,
   ]);
+
+  const is_inline_editing = invitee_editing || booking_info_editing;
+  const is_inline_save_pending =
+    invitee_save_pending || booking_info_save_pending;
+
+  useEffect(() => {
+    onInlineEditStateChange?.(is_inline_editing);
+  }, [is_inline_editing, onInlineEditStateChange]);
+
+  useEffect(() => {
+    onInlineSavePendingChange?.(is_inline_save_pending);
+  }, [is_inline_save_pending, onInlineSavePendingChange]);
+
+  const save_all_inline_edits_ref = useRef<() => Promise<void>>(async () => {});
+  save_all_inline_edits_ref.current = async () => {
+    if (invitee_editing && invitee_inline_edit) {
+      await submit_invitee_edit();
+    }
+    if (booking_info_editing && booking_inline_edit) {
+      await submit_booking_info_edit();
+    }
+  };
+
+  useEffect(() => {
+    if (!inlineSaveSignal) return;
+    void save_all_inline_edits_ref.current();
+  }, [inlineSaveSignal]);
 
   useEffect(() => {
     if (booking_info_editing) return;

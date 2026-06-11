@@ -160,6 +160,12 @@ async function wait_for_print_documents(doc: Document): Promise<void> {
   );
 }
 
+type workspace_contact_preview = {
+  email: string | null;
+  phone: string | null;
+  address: string | null;
+};
+
 interface ApiResponse {
   booking: BookingPreviewData;
   booking_id: string;
@@ -171,6 +177,7 @@ interface ApiResponse {
   workspace_slug: string | null;
   workspace_name: string | null;
   workspace_logo_url: string | null;
+  workspace_contact?: workspace_contact_preview | null;
 }
 
 function resolvePhysicalAddress(
@@ -247,6 +254,7 @@ export default function BookingPreviewPage() {
         workspace_name: json.workspace_name ?? null,
         workspace_slug: json.workspace_slug ?? null,
         workspace_logo_url: json.workspace_logo_url ?? null,
+        workspace_contact: json.workspace_contact ?? null,
         booking_id: json.booking_id ?? '',
       });
     } catch {
@@ -342,6 +350,7 @@ export default function BookingPreviewPage() {
         department={department}
         serviceProvider={serviceProvider}
         workspaceOwner={workspaceOwner}
+        workspace_contact={data.workspace_contact ?? null}
         services={services}
         intakeFormSettings={intakeForm}
         intakeFormRaw={intakeFormSettings}
@@ -392,6 +401,7 @@ function BookingPreviewContent({
   department,
   serviceProvider,
   workspaceOwner,
+  workspace_contact,
   services,
   intakeFormSettings,
   intakeFormRaw,
@@ -408,6 +418,7 @@ function BookingPreviewContent({
   department: Department | null;
   serviceProvider: ServiceProvider | null;
   workspaceOwner: ServiceProvider | null;
+  workspace_contact: workspace_contact_preview | null;
   services: Service[];
   intakeFormSettings: NormalizedIntakeForm | null;
   intakeFormRaw: Record<string, unknown> | null;
@@ -568,9 +579,14 @@ function BookingPreviewContent({
         ? 'Confirmed and ready for your visit'
         : `Status: ${statusLabel}`;
 
-  const workspaceEmail = workspaceOwner?.email?.trim() || '—';
+  const workspaceBusinessAddress =
+    workspace_contact?.address?.trim() || physicalAddress || null;
+  const workspaceEmail =
+    workspace_contact?.email?.trim() || workspaceOwner?.email?.trim() || '—';
   const workspacePhone =
-    get_service_provider_display_phone(null, workspaceOwner, '') || '—';
+    workspace_contact?.phone?.trim() ||
+    get_service_provider_display_phone(null, workspaceOwner, '') ||
+    '—';
 
   const setFlashMessage = (message: string) => {
     setNoticeMessage(message);
@@ -692,7 +708,9 @@ ${printableNode.outerHTML}
     const details = encodeURIComponent(
       `Reference: ${appointmentRefDisplay}\n${workspaceTitle}\n${departmentFieldValue !== '—' ? `Department: ${departmentFieldValue}\n` : ''}`
     );
-    const location = encodeURIComponent(physicalAddress || workspaceTitle || '');
+    const location = encodeURIComponent(
+      workspaceBusinessAddress || physicalAddress || workspaceTitle || ''
+    );
     let calendarUrl = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${title}&details=${details}&location=${location}`;
     if (booking.start_at && booking.end_at) {
       const s = to_google_calendar_utc(booking.start_at);
@@ -715,12 +733,14 @@ ${printableNode.outerHTML}
   };
 
   const handleGetDirections = () => {
-    const query = encodeURIComponent(physicalAddress || '');
+    const query = encodeURIComponent(
+      workspaceBusinessAddress || physicalAddress || ''
+    );
     if (!query) return;
     window.open(`https://www.google.com/maps/search/?api=1&query=${query}`, '_blank');
   };
 
-  const canDirections = Boolean(physicalAddress);
+  const canDirections = Boolean(workspaceBusinessAddress || physicalAddress);
 
   return (
     <>
@@ -1032,8 +1052,10 @@ ${booking_preview_supplement_css()}
                         Verified
                       </span>
                     </div>
-                    {physicalAddress ? (
-                      <p className="mt-2 text-sm font-medium text-blue-700">{physicalAddress}</p>
+                    {workspaceBusinessAddress ? (
+                      <p className="mt-2 text-sm font-medium text-blue-700">
+                        {workspaceBusinessAddress}
+                      </p>
                     ) : null}
                     <p className="mt-3 text-sm leading-relaxed text-slate-600">
                       Thank you for booking with{' '}
@@ -1044,11 +1066,11 @@ ${booking_preview_supplement_css()}
                     </p>
                   </div>
 
-                  {physicalAddress && (
+                  {workspaceBusinessAddress && (
                     <InfoMini
                       icon={<PreviewIcon name="map" className="h-4 w-4" />}
                       label="Address"
-                      value={physicalAddress}
+                      value={workspaceBusinessAddress}
                     />
                   )}
                   <InfoMini

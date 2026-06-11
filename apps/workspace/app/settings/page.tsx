@@ -65,8 +65,14 @@ type snapshot = {
   timezone: string;
   logoFileName: string;
   logoUrl: string | null;
+  tagline: string;
   businessEmail: string;
   businessPhone: string;
+  address: string;
+  city: string;
+  addressState: string;
+  zipcode: string;
+  country: string;
   dateFormat: string;
   timeFormat: string;
   language: string;
@@ -105,6 +111,7 @@ export default function SettingsPage() {
   const [logoFileName, setLogoFileName] = useState("No file selected");
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
   const [logoPath, setLogoPath] = useState<string | null>(null);
+  const [tagline, setTagline] = useState("");
   const [isUploadingLogo, setIsUploadingLogo] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -116,6 +123,11 @@ export default function SettingsPage() {
 
   const [businessEmail, setBusinessEmail] = useState("");
   const [businessPhone, setBusinessPhone] = useState("");
+  const [address, setAddress] = useState("");
+  const [city, setCity] = useState("");
+  const [addressState, setAddressState] = useState("");
+  const [zipcode, setZipcode] = useState("");
+  const [country, setCountry] = useState("");
   const [dateFormat, setDateFormat] = useState<string>(DATE_FORMAT_OPTIONS[0]);
   const [timeFormat, setTimeFormat] = useState<string>(TIME_FORMAT_OPTIONS[0]);
   const [language, setLanguage] = useState<string>(LANGUAGE_OPTIONS[0]);
@@ -155,8 +167,14 @@ export default function SettingsPage() {
     setTimezone(s.timezone);
     setLogoFileName(s.logoFileName);
     setLogoUrl(s.logoUrl);
+    setTagline(s.tagline);
     setBusinessEmail(s.businessEmail);
     setBusinessPhone(s.businessPhone);
+    setAddress(s.address);
+    setCity(s.city);
+    setAddressState(s.addressState);
+    setZipcode(s.zipcode);
+    setCountry(s.country);
     setDateFormat(s.dateFormat);
     setTimeFormat(s.timeFormat);
     setLanguage(s.language);
@@ -181,8 +199,14 @@ export default function SettingsPage() {
       timezone: "",
       logoFileName: "No file selected",
       logoUrl: null,
+      tagline: "",
       businessEmail: "",
       businessPhone: "",
+      address: "",
+      city: "",
+      addressState: "",
+      zipcode: "",
+      country: "",
       dateFormat: DATE_FORMAT_OPTIONS[0],
       timeFormat: TIME_FORMAT_OPTIONS[0],
       language: LANGUAGE_OPTIONS[0],
@@ -254,11 +278,29 @@ export default function SettingsPage() {
           snap.timezone =
             typeof general.timezone === "string" ? general.timezone : "";
 
+          if (typeof general.tagline === "string") {
+            snap.tagline = general.tagline;
+          }
           if (typeof general.business_email === "string") {
             snap.businessEmail = general.business_email;
           }
           if (typeof general.business_phone === "string") {
             snap.businessPhone = general.business_phone;
+          }
+          if (typeof general.address === "string") {
+            snap.address = general.address;
+          }
+          if (typeof general.city === "string") {
+            snap.city = general.city;
+          }
+          if (typeof general.state === "string") {
+            snap.addressState = general.state;
+          }
+          if (typeof general.zipcode === "string") {
+            snap.zipcode = general.zipcode;
+          }
+          if (typeof general.country === "string") {
+            snap.country = general.country;
           }
           if (
             typeof general.date_format === "string" &&
@@ -473,8 +515,14 @@ export default function SettingsPage() {
             timezone,
             logoFileName,
             logoUrl,
+            tagline,
             businessEmail,
             businessPhone,
+            address,
+            city,
+            addressState,
+            zipcode,
+            country,
             dateFormat,
             timeFormat,
             language,
@@ -518,8 +566,14 @@ export default function SettingsPage() {
           primaryColor,
           accentColor,
           timezone: timezone.trim() || undefined,
+          tagline: tagline.trim() || undefined,
           business_email: businessEmail.trim() || undefined,
           business_phone: businessPhone.trim() || undefined,
+          address: address.trim() || undefined,
+          city: city.trim() || undefined,
+          state: addressState.trim() || undefined,
+          zipcode: zipcode.trim() || undefined,
+          country: country.trim() || undefined,
           date_format: dateFormat,
           time_format: timeFormat,
           default_language: language,
@@ -569,8 +623,14 @@ export default function SettingsPage() {
         timezone,
         logoFileName,
         logoUrl,
+        tagline,
         businessEmail,
         businessPhone,
+        address,
+        city,
+        addressState,
+        zipcode,
+        country,
         dateFormat,
         timeFormat,
         language,
@@ -837,70 +897,78 @@ export default function SettingsPage() {
                         />
                       </label>
                     </div>
-                  </div>
-                </div>
 
-                <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-                  <div className="mb-5">
-                    <h2 className="flex items-center gap-2 text-lg font-bold text-slate-950">
-                      <SettingsIcon
-                        name="palette"
-                        className="h-5 w-5 text-indigo-600"
-                      />{" "}
-                      Brand Appearance
-                    </h2>
-                    <p className="mt-1 text-sm text-slate-500">
-                      Control the colors used on public booking pages and
-                      notifications.
-                    </p>
-                  </div>
+                    <label className="block">
+                      <span className="mb-2 block text-sm font-bold text-slate-700">
+                        Address
+                      </span>
+                      <input
+                        type="text"
+                        value={address}
+                        onChange={(e) => setAddress(e.target.value)}
+                        disabled={nonLinkFieldsDisabled}
+                        className="h-14 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-base font-medium outline-none transition focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:opacity-60"
+                        placeholder="Street address"
+                      />
+                    </label>
 
-                  <div className="space-y-5">
-                    <ColorRow
-                      label="Primary Color (Main brand color)"
-                      color={primaryColor}
-                      setColor={setPrimaryColor}
-                      disabled={nonLinkFieldsDisabled}
-                    />
-                    <ColorRow
-                      label="Accent Color (CTA / highlights)"
-                      color={accentColor}
-                      setColor={setAccentColor}
-                      disabled={nonLinkFieldsDisabled}
-                    />
+                    <div className="grid gap-5 md:grid-cols-2">
+                      <label className="block">
+                        <span className="mb-2 block text-sm font-bold text-slate-700">
+                          City
+                        </span>
+                        <input
+                          type="text"
+                          value={city}
+                          onChange={(e) => setCity(e.target.value)}
+                          disabled={nonLinkFieldsDisabled}
+                          className="h-14 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-base font-medium outline-none transition focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:opacity-60"
+                          placeholder="City"
+                        />
+                      </label>
+                      <label className="block">
+                        <span className="mb-2 block text-sm font-bold text-slate-700">
+                          State
+                        </span>
+                        <input
+                          type="text"
+                          value={addressState}
+                          onChange={(e) => setAddressState(e.target.value)}
+                          disabled={nonLinkFieldsDisabled}
+                          className="h-14 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-base font-medium outline-none transition focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:opacity-60"
+                          placeholder="State / Province"
+                        />
+                      </label>
+                    </div>
 
-                    <ToggleRow
-                      label="Use gradient background on booking page."
-                      value={useGradientBookingBg}
-                      setValue={setUseGradientBookingBg}
-                      disabled={nonLinkFieldsDisabled}
-                    />
-                    <ToggleRow
-                      label="Enable rounded UI style (modern look)."
-                      value={roundedUiStyle}
-                      setValue={setRoundedUiStyle}
-                      disabled={nonLinkFieldsDisabled}
-                    />
-                  </div>
-
-                  <div className="mt-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4">
-                    <p className="text-xs font-semibold text-slate-600">
-                      Recommended for MVP:
-                    </p>
-                    <ul className="mt-2 space-y-1 text-xs text-slate-500">
-                      <li>Primary + Accent colors (keep simple)</li>
-                      <li>Light UI (avoid dark mode in MVP)</li>
-                      <li>Minimal branding for faster load and consistency</li>
-                    </ul>
-                    <p className="mt-3 text-xs font-semibold text-slate-600">
-                      Avoid in MVP:
-                    </p>
-                    <ul className="mt-2 space-y-1 text-xs text-slate-500">
-                      <li>Full theme builder (too complex)</li>
-                      <li>Font customization</li>
-                      <li>Advanced layout control</li>
-                      <li>Per-page branding overrides</li>
-                    </ul>
+                    <div className="grid gap-5 md:grid-cols-2">
+                      <label className="block">
+                        <span className="mb-2 block text-sm font-bold text-slate-700">
+                          Zipcode
+                        </span>
+                        <input
+                          type="text"
+                          value={zipcode}
+                          onChange={(e) => setZipcode(e.target.value)}
+                          disabled={nonLinkFieldsDisabled}
+                          className="h-14 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-base font-medium outline-none transition focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:opacity-60"
+                          placeholder="Zip / Postal code"
+                        />
+                      </label>
+                      <label className="block">
+                        <span className="mb-2 block text-sm font-bold text-slate-700">
+                          Country
+                        </span>
+                        <input
+                          type="text"
+                          value={country}
+                          onChange={(e) => setCountry(e.target.value)}
+                          disabled={nonLinkFieldsDisabled}
+                          className="h-14 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-base font-medium outline-none transition focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:opacity-60"
+                          placeholder="Country"
+                        />
+                      </label>
+                    </div>
                   </div>
                 </div>
 
@@ -911,34 +979,14 @@ export default function SettingsPage() {
                         name="globe"
                         className="h-5 w-5 text-indigo-600"
                       />{" "}
-                      Timezone &amp; Logo
+                      Logo &amp; Tagline
                     </h2>
                     <p className="mt-1 text-sm text-slate-500">
-                      Used for booking times in sidebar, emails, reminders, and
-                      API responses.
+                      Used for booking public preview URL and provider preview URL.
                     </p>
                   </div>
 
                   <div className="grid gap-5">
-                    <label className="block">
-                      <span className="mb-2 block text-sm font-bold text-slate-700">
-                        Timezone
-                      </span>
-                      <select
-                        value={timezone}
-                        onChange={(e) => setTimezone(e.target.value)}
-                        disabled={nonLinkFieldsDisabled}
-                        className="h-14 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-base font-medium outline-none transition focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        <option value="">Use visitor&apos;s timezone</option>
-                        {TIMEZONE_OPTIONS.map((option) => (
-                          <option key={option} value={option}>
-                            {option}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-
                     <div>
                       <span className="mb-2 block text-sm font-bold text-slate-700">
                         Logo
@@ -993,6 +1041,24 @@ export default function SettingsPage() {
                         </div>
                       </div>
                     </div>
+
+                    <label className="block">
+                      <span className="mb-2 block text-sm font-bold text-slate-700">
+                        Tagline
+                      </span>
+                      <input
+                        type="text"
+                        value={tagline}
+                        onChange={(e) => setTagline(e.target.value)}
+                        disabled={nonLinkFieldsDisabled}
+                        className="h-14 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-base font-medium outline-none transition focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:opacity-60"
+                        placeholder="A short line shown on your booking pages"
+                        maxLength={120}
+                      />
+                      <p className="mt-2 text-xs text-slate-500">
+                        Brief description of your business (max 120 characters).
+                      </p>
+                    </label>
                   </div>
                 </div>
 
@@ -1007,10 +1073,28 @@ export default function SettingsPage() {
                     </h2>
                     <p className="mt-1 text-sm text-slate-500">
                       MVP-ready defaults for date, time, language, and currency
-                      display.
+                      display. Used for booking times in sidebar, emails, reminders, and API responses.
                     </p>
                   </div>
                   <div className="grid gap-5 md:grid-cols-2">
+                    <label className="block">
+                      <span className="mb-2 block text-sm font-bold text-slate-700">
+                        Timezone
+                      </span>
+                      <select
+                        value={timezone}
+                        onChange={(e) => setTimezone(e.target.value)}
+                        disabled={nonLinkFieldsDisabled}
+                        className="h-14 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-base font-medium outline-none transition focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        <option value="">Use visitor&apos;s timezone</option>
+                        {TIMEZONE_OPTIONS.map((option) => (
+                          <option key={option} value={option}>
+                            {option}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
                     <SelectField
                       label="Date Format"
                       value={dateFormat}
@@ -1087,6 +1171,76 @@ export default function SettingsPage() {
                       setValue={setWhatsappReminder}
                       disabled={nonLinkFieldsDisabled}
                     />
+                  </div>
+                </div>
+
+                <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                  <div className="mb-5 flex items-start justify-between gap-4">
+                    <div>
+                      <h2 className="flex items-center gap-2 text-lg font-bold text-slate-950">
+                        <SettingsIcon
+                          name="palette"
+                          className="h-5 w-5 text-indigo-600"
+                        />{" "}
+                        Brand Appearance
+                      </h2>
+                      <p className="mt-1 text-sm text-slate-500">
+                        Control the colors used on public booking pages and
+                        notifications.
+                      </p>
+                    </div>
+                    <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-gradient-to-r from-amber-500 to-orange-500 px-4 py-2 text-sm font-bold uppercase tracking-wide text-white shadow-lg shadow-amber-300/60 ring-2 ring-amber-400/50 ring-offset-2">
+                      <SettingsIcon name="sparkles" className="h-4 w-4" />
+                      Coming Soon!
+                    </span>
+                  </div>
+
+                  <div className="space-y-5">
+                    <ColorRow
+                      label="Primary Color (Main brand color)"
+                      color={primaryColor}
+                      setColor={setPrimaryColor}
+                      disabled={nonLinkFieldsDisabled}
+                    />
+                    <ColorRow
+                      label="Accent Color (CTA / highlights)"
+                      color={accentColor}
+                      setColor={setAccentColor}
+                      disabled={nonLinkFieldsDisabled}
+                    />
+
+                    <ToggleRow
+                      label="Use gradient background on booking page."
+                      value={useGradientBookingBg}
+                      setValue={setUseGradientBookingBg}
+                      disabled={nonLinkFieldsDisabled}
+                    />
+                    <ToggleRow
+                      label="Enable rounded UI style (modern look)."
+                      value={roundedUiStyle}
+                      setValue={setRoundedUiStyle}
+                      disabled={nonLinkFieldsDisabled}
+                    />
+                  </div>
+
+                  <div className="mt-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4">
+                    <p className="text-xs font-semibold text-slate-600">
+                      Recommended for MVP:
+                    </p>
+                    <ul className="mt-2 space-y-1 text-xs text-slate-500">
+                      <li>Primary + Accent colors (keep simple)</li>
+                      <li>Light UI (avoid dark mode in MVP)</li>
+                      <li>Minimal branding for faster load and consistency</li>
+                    </ul>
+                    <p className="mt-3 text-xs font-semibold text-slate-600">
+                      Avoid in MVP:
+                    </p>
+                    <ul className="mt-2 space-y-1 text-xs text-slate-500">
+                      <li>Full theme builder (too complex)</li>
+                      <li>Font customization</li>
+                      <li>Advanced layout control</li>
+                      <li>Per-page branding overrides</li>
+                    </ul>
                   </div>
                 </div>
               </div>

@@ -47,6 +47,10 @@ export function BookingDetailsWithActions({
   workspace_owner,
   workspace_owner_user_id,
   onBookingUpdated,
+  inlineEditSignal = 0,
+  inlineSaveSignal = 0,
+  onInlineEditStateChange,
+  onInlineSavePendingChange,
 }: {
   booking: Booking;
   intakeFormSettings: NormalizedIntakeForm | null;
@@ -56,6 +60,10 @@ export function BookingDetailsWithActions({
   workspace_owner?: service_provider_display_source | null;
   workspace_owner_user_id?: string | null;
   onBookingUpdated: (booking: Booking) => void;
+  inlineEditSignal?: number;
+  inlineSaveSignal?: number;
+  onInlineEditStateChange?: (editing: boolean) => void;
+  onInlineSavePendingChange?: (pending: boolean) => void;
 }) {
   const router = useRouter();
   const { settings } = useWorkspaceSettings();
@@ -502,6 +510,10 @@ export function BookingDetailsWithActions({
         quickActionFeedback={quick_action_feedback}
         onDeleteBooking={() => set_delete_confirm_open(true)}
         onGoogleMeetSynced={onBookingUpdated}
+        inlineEditSignal={inlineEditSignal}
+        inlineSaveSignal={inlineSaveSignal}
+        onInlineEditStateChange={onInlineEditStateChange}
+        onInlineSavePendingChange={onInlineSavePendingChange}
       />
 
       {reminder_open && (

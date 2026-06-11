@@ -32,6 +32,7 @@ import { Pagination } from "@app/ui";
 import { BookingTableSkeleton } from "./BookingTableSkeleton";
 import { AlertModal } from "@/src/components/ui/AlertModal";
 import { ConfirmModal } from "@/src/components/ui/ConfirmModal";
+import { BOOKINGS_LIST_REFRESH_EVENT } from "@/src/constants/booking";
 
 interface BookingListProps {
   bookings?: Booking[];
@@ -184,6 +185,35 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
   useEffect(() => {
     fetchWorkspaceBookingStats();
   }, [fetchWorkspaceBookingStats]);
+
+  useEffect(() => {
+    const refreshList = () => {
+      setCurrentPage(1);
+      void fetchBookings(
+        1,
+        debouncedFilter,
+        debouncedDate,
+        debouncedStatus,
+        debouncedEventType,
+        effectiveProviderFilter,
+        debouncedSort
+      );
+      void fetchWorkspaceBookingStats();
+    };
+
+    window.addEventListener(BOOKINGS_LIST_REFRESH_EVENT, refreshList);
+    return () => window.removeEventListener(BOOKINGS_LIST_REFRESH_EVENT, refreshList);
+  }, [
+    currentPage,
+    debouncedFilter,
+    debouncedDate,
+    debouncedStatus,
+    debouncedEventType,
+    effectiveProviderFilter,
+    debouncedSort,
+    fetchBookings,
+    fetchWorkspaceBookingStats,
+  ]);
 
   // When filters change, reset to page 1
   useEffect(() => {

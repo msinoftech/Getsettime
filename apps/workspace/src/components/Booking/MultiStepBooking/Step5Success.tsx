@@ -16,6 +16,7 @@ interface Step5SuccessProps {
   providerTimezone?: string | null;
   previewUrl?: string | null;
   isReschedule?: boolean;
+  onDone?: () => void;
 }
 
 function fmtDay(d: Date) {
@@ -31,6 +32,7 @@ export function Step5Success({
   providerTimezone,
   previewUrl,
   isReschedule,
+  onDone,
 }: Step5SuccessProps) {
   const [copied, setCopied] = useState(false);
 
@@ -128,6 +130,16 @@ export function Step5Success({
             </div>
           </div>
         )}
+
+        {onDone ? (
+          <button
+            type="button"
+            onClick={onDone}
+            className="mt-8 rounded-xl bg-indigo-600 px-6 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700"
+          >
+            Done
+          </button>
+        ) : null}
 
         <div className="flex justify-center gap-2 mt-8">
           {SUCCESS_CONFETTI_COLORS.map((color, i) => (

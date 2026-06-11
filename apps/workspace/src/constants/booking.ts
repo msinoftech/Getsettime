@@ -5,6 +5,9 @@ export const DEFAULT_PRIMARY_COLOR = '#9333EA';
 export const DEFAULT_ACCENT_COLOR = '#3B82F6';
 export const SUCCESS_CONFETTI_COLORS = ['#9333EA', '#3B82F6', '#10B981', '#F59E0B'] as const;
 
+/** Dispatched after a booking is created so list views can refetch. */
+export const BOOKINGS_LIST_REFRESH_EVENT = 'bookings-list-refresh';
+
 // Event types sort order (minutes): 15, 30, 45, then 60+
 export const EVENT_TYPE_DURATION_SORT_ORDER = [15, 30, 45, 60] as const;
 

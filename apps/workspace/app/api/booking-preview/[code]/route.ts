@@ -6,6 +6,7 @@ import {
   merge_meet_into_booking_location,
   resolve_meeting_join_url_from_booking,
 } from '@/src/utils/google_meet';
+import { resolve_workspace_contact_from_general } from '@/src/utils/workspace_contact';
 
 export async function GET(
   _req: NextRequest,
@@ -52,6 +53,7 @@ export async function GET(
           eventId: gcalId,
         });
         if (meetLink?.trim()) {
+          const previousLocation = booking.location;
           const nextLoc = merge_meet_into_booking_location(
             booking.location as Record<string, unknown> | null,
             meetLink.trim()
@@ -63,6 +65,38 @@ export async function GET(
             .eq('public_code', code);
           if (!patchErr) {
             booking.location = nextLoc;
+            try {
+              const { notify_meet_link_if_first_stored } = await import(
+                '@/lib/meet-link-notification'
+              );
+              const meetNotify = await notify_meet_link_if_first_stored({
+                supabase,
+                booking: {
+                  id: String(booking.id),
+                  workspace_id: workspaceId,
+                  invitee_name: booking.invitee_name,
+                  invitee_email: booking.invitee_email,
+                  service_provider_id: booking.service_provider_id,
+                  department_id: booking.department_id,
+                  event_type_id: booking.event_type_id,
+                  start_at: booking.start_at,
+                  end_at: booking.end_at,
+                  metadata: (booking.metadata as Record<string, unknown> | null) ?? null,
+                  customer_timezone: booking.customer_timezone,
+                  provider_timezone: booking.provider_timezone,
+                  event_types: booking.event_types,
+                },
+                previousLocation,
+                newLocation: nextLoc,
+                meetingUrl: meetLink.trim(),
+                alsoSendGoogleCalendarInvites: true,
+              });
+              if (meetNotify.errors.length > 0) {
+                console.warn('GetSetTime Meet notification:', meetNotify.errors);
+              }
+            } catch (meetNotifyErr) {
+              console.warn('GetSetTime Meet notification failed (non-blocking):', meetNotifyErr);
+            }
           }
         }
       }
@@ -167,6 +201,13 @@ export async function GET(
     const bookingRecordId = booking.id;
     const { id: _id, workspace_id: _wid, host_user_id: _huid, ...safeBooking } = booking;
 
+    const settings = (configResult.data?.settings ?? {}) as Record<string, unknown>;
+    const general =
+      settings.general && typeof settings.general === 'object'
+        ? (settings.general as Record<string, unknown>)
+        : {};
+    const workspace_contact = resolve_workspace_contact_from_general(general);
+
     return NextResponse.json({
       booking: safeBooking,
       booking_id: String(bookingRecordId),
@@ -175,10 +216,14 @@ export async function GET(
       workspaceOwner,
       services: servicesResult.data ?? [],
       intakeFormSettings: (() => {
-        const settings = (configResult.data?.settings ?? {}) as Record<string, unknown>;
         const intake = settings.intake_form;
         return intake && typeof intake === 'object' ? intake : null;
       })(),
+      workspace_contact: {
+        email: workspace_contact.business_email,
+        phone: workspace_contact.business_phone,
+        address: workspace_contact.formatted_address,
+      },
       workspace_slug: workspaceResult.data?.slug ?? null,
       workspace_name:
         workspaceResult.data && typeof workspaceResult.data.name === 'string'

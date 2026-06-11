@@ -13,7 +13,11 @@ import type {
   MultiStepBookingFormProps,
   ServiceProvider,
 } from '../../types/bookingForm';
-import { DEFAULT_ACCENT_COLOR, DEFAULT_PRIMARY_COLOR } from '../../constants/booking';
+import {
+  BOOKINGS_LIST_REFRESH_EVENT,
+  DEFAULT_ACCENT_COLOR,
+  DEFAULT_PRIMARY_COLOR,
+} from '../../constants/booking';
 import { sortEventTypesByDuration } from '../../utils/bookingFormUtils';
 import { isServicesEnabled } from '../../utils/intakeForm';
 import {
@@ -51,6 +55,7 @@ import { ProgressIndicator } from './MultiStepBooking/ProgressIndicator';
 import { Step1DepartmentProvider } from './MultiStepBooking/Step1DepartmentProvider';
 import { Step2ServiceSelection } from './MultiStepBooking/Step2ServiceSelection';
 import { Step4IntakeForm } from './MultiStepBooking/Step4IntakeForm';
+import { Step5Success } from './MultiStepBooking/Step5Success';
 import { useAuth } from '@/src/providers/AuthProvider';
 
 const Step3DateTime = lazy(() =>
@@ -90,6 +95,7 @@ const MultiStepBookingForm = ({
   const [file, setFile] = useState<File | null>(null);
   const [fileError, setFileError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [showCalendar, setShowCalendar] = useState(false);
@@ -302,7 +308,7 @@ const MultiStepBookingForm = ({
   const step_nav_context = useMemo(
     (): booking_step_nav_context => ({
       step,
-      totalSteps: 4,
+      totalSteps: 5,
       departmentsCount: departments.length,
       showProviderPicker,
       hasSelectedDepartment: !!selectedDepartment,
@@ -311,6 +317,7 @@ const MultiStepBookingForm = ({
       loadingEventTypes,
       hasSelectedDate: !!selectedDate,
       hasSelectedTime: !!selectedTime,
+      isSuccessScreen: step === 5,
     }),
     [
       step,
@@ -636,8 +643,10 @@ const MultiStepBookingForm = ({
       if (!res.ok) {
         throw new Error(result.error || 'Failed to create booking');
       }
+      if (result.preview_url) setPreviewUrl(result.preview_url);
+      setStep(5);
+      window.dispatchEvent(new Event(BOOKINGS_LIST_REFRESH_EVENT));
       window.dispatchEvent(new Event('bookings-viewed-update'));
-      onSave();
     } catch (err) {
       setError((err as Error).message || 'An error occurred');
     } finally {
@@ -719,7 +728,7 @@ const MultiStepBookingForm = ({
               </div>
             )}
             <ProgressIndicator
-              step={step}
+              step={step > 4 ? 4 : step}
               totalSteps={4}
               onStepClick={handle_step_click}
               canClickStep={can_click_booking_step}
@@ -861,6 +870,18 @@ const MultiStepBookingForm = ({
                       ? user.user_metadata.country
                       : null
                   }
+                />
+              )}
+              {step === 5 && (
+                <Step5Success
+                  selectedType={selectedType}
+                  selectedDate={selectedDate}
+                  selectedTime={selectedTime}
+                  selectedStartUtc={selectedStartUtc}
+                  customerTimezone={viewerTimezone}
+                  providerTimezone={providerTimezone}
+                  previewUrl={previewUrl}
+                  onDone={embedded ? onSave : undefined}
                 />
               )}
             </div>

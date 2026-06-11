@@ -28,10 +28,18 @@ export type AvailabilitySettings = {
 export type GeneralSettings = {
   accountName?: string | null;
   logoUrl?: string | null;
+  tagline?: string | null;
   primaryColor?: string | null;
   accentColor?: string | null;
   /** IANA timezone (e.g. Asia/Kolkata) for booking display; fallback to browser if unset */
   timezone?: string | null;
+  business_email?: string | null;
+  business_phone?: string | null;
+  address?: string | null;
+  city?: string | null;
+  state?: string | null;
+  zipcode?: string | null;
+  country?: string | null;
 };
 
 /** ipapi.co/json snapshot saved once at workspace registration. */
