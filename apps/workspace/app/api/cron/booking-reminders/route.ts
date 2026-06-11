@@ -9,6 +9,7 @@ import { is_whatsapp_user_enabled } from '@/lib/workspace-notification-flags';
 import { resolveNotificationsForServiceProvider } from '@/src/utils/providerSettingsResolution';
 import { resolve_meeting_join_url_from_booking } from '@/src/utils/google_meet';
 import { emailTimezoneFields } from '@/lib/booking-timezone-api';
+import { formatNotificationDateTimeInTimezone } from '@/lib/date-timezone';
 
 const BATCH_WINDOW_MINUTES = 15;
 const SMS_REMINDER_MINUTES = 60;
@@ -45,20 +46,6 @@ function isAuthorized(req: NextRequest): boolean {
   if (authHeader === `Bearer ${cronSecret}`) return true;
   const customHeader = req.headers.get('x-cron-secret');
   return customHeader === cronSecret;
-}
-
-function formatBookingTime(startAt: string, timezone?: string | null): string {
-  const opts: Intl.DateTimeFormatOptions = {
-    weekday: 'short',
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    timeZoneName: 'short',
-    ...(timezone?.trim() && { timeZone: timezone.trim() }),
-  };
-  return new Date(startAt).toLocaleString('en-US', opts);
 }
 
 function resolveContact(booking: Record<string, unknown>): {
@@ -301,7 +288,7 @@ async function process1hSmsReminders(
     const eventTitle = resolveEventTitle(booking as Record<string, unknown>);
     const customerTz =
       (booking as { customer_timezone?: string | null }).customer_timezone ?? null;
-    const when = formatBookingTime(booking.start_at!, customerTz);
+    const when = formatNotificationDateTimeInTimezone(booking.start_at!, customerTz);
     const meetUrlSms = resolve_meeting_join_url_from_booking(
       (booking as Record<string, unknown>).location,
       booking.metadata
@@ -396,7 +383,7 @@ async function process1hWhatsAppReminders(
     const eventTitle = resolveEventTitle(booking as Record<string, unknown>);
     const customerTz =
       (booking as { customer_timezone?: string | null }).customer_timezone ?? null;
-    const when = formatBookingTime(booking.start_at!, customerTz);
+    const when = formatNotificationDateTimeInTimezone(booking.start_at!, customerTz);
     const meetUrlWa = resolve_meeting_join_url_from_booking(
       (booking as Record<string, unknown>).location,
       booking.metadata

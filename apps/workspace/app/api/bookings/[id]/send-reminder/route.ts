@@ -16,7 +16,7 @@ import {
 import { appendActivityLog } from '@/lib/activity-log';
 import { resolve_meeting_join_url_from_booking } from '@/src/utils/google_meet';
 import { emailTimezoneFields, readBookingTimezonesFromRow, whatsapp_timezone_payload } from '@/lib/booking-timezone-api';
-import { formatFullDateTimeInTimezone } from '@/lib/date-timezone';
+import { formatNotificationDateTimeInTimezone } from '@/lib/date-timezone';
 
 type Channel = 'email' | 'whatsapp';
 
@@ -261,11 +261,7 @@ export async function POST(
 
     const customerTzWa =
       (booking as { customer_timezone?: string | null }).customer_timezone?.trim() || null;
-    const when = startT
-      ? customerTzWa
-        ? formatFullDateTimeInTimezone(startT, customerTzWa)
-        : new Date(startT).toLocaleString(undefined)
-      : '';
+    const when = startT ? formatNotificationDateTimeInTimezone(startT, customerTzWa) : '';
 
     message = eventTitle.includes('appointment')
       ? `Reminder: your appointment is scheduled for ${when}. See you soon!`
