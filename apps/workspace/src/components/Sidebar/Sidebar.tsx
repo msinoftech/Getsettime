@@ -267,7 +267,7 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
         </div>
       </div>
       
-      <div className="relative px-3 mb-3">
+      {/* <div className="relative px-3 mb-3">
         <div className="w-full border-t border-gray-200 p-4 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow-lg">
           <div className="flex items-center">
             <div className="h-10 w-10 rounded-full bg-blue-500 flex items-center justify-center text-white overflow-hidden">
@@ -289,7 +289,7 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
             </div>
           </div>
         </div>
-      </div>
+      </div> */}
     
     </aside>
   );

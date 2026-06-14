@@ -52,6 +52,7 @@ import {
   can_navigate_to_booking_step,
   type booking_step_nav_context,
 } from '@/src/utils/booking_step_navigation';
+import { resolve_provider_scoped_service_gate } from '@/src/utils/provider_scoped_service_gate';
 
 const Step3DateTime = lazy(() =>
   import('./MultiStepBooking/Step3DateTime').then((m) => ({ default: m.Step3DateTime }))
@@ -136,6 +137,7 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
     loadingServices,
     providerScopedCatalogServices,
     loadingProviderScopedCatalog,
+    providerScopedCatalogSettled,
     workspaceOwnerUserId,
     showProviderPicker,
     effectiveProviderId,
@@ -193,6 +195,27 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
     );
   }, [selectedDepartment, serviceProviders, serviceProviderId]);
 
+  const providerCatalogContextReady = !!selectedDepartment && !!effectiveProviderId;
+  const serviceGate = useMemo(
+    () =>
+      resolve_provider_scoped_service_gate(
+        providerScopedCatalogServices,
+        loadingProviderScopedCatalog,
+        providerCatalogContextReady,
+        providerScopedCatalogSettled
+      ),
+    [
+      providerScopedCatalogServices,
+      loadingProviderScopedCatalog,
+      providerCatalogContextReady,
+      providerScopedCatalogSettled,
+    ]
+  );
+
+  const handleAutoSelectSingleService = useCallback((id: string) => {
+    setSelectedServiceIds((prev) => (prev.length === 1 && prev[0] === id ? prev : [id]));
+  }, []);
+
   useAutoAdvanceStep1({
     enabled: !isRescheduleMode,
     step,
@@ -206,6 +229,11 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
     serviceProviders,
     onClearOptionalServices: () => setSelectedServiceIds([]),
     advanceToNextStep: () => setStep(2),
+    loadingProviderScopedCatalog,
+    providerScopedCatalogServices,
+    providerCatalogContextReady,
+    providerScopedCatalogSettled,
+    onAutoSelectSingleService: handleAutoSelectSingleService,
   });
 
   const sortedEventTypes = getSortedFilteredEventTypes(eventTypes, {
@@ -369,6 +397,7 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
   const hasPreselectedEventType = Boolean(
     (eventTypeSlug || targetDuration !== null) && selectedType && sortedEventTypes.length === 1
   );
+  const canSkipToStep3 = hasPreselectedEventType && serviceGate.canAutoAdvancePastStep1;
 
   useEffect(() => {
     if ((eventTypeSlug || targetDuration !== null) && sortedEventTypes.length === 1 && !selectedType) {
@@ -379,13 +408,13 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
   useEffect(() => {
     if (isRescheduleMode) return;
     if (!loadingDepartments && departments.length === 0 && step === 1) {
-      setStep(hasPreselectedEventType ? 3 : 2);
+      setStep(canSkipToStep3 ? 3 : 2);
     }
-  }, [loadingDepartments, departments.length, step, hasPreselectedEventType, isRescheduleMode]);
+  }, [loadingDepartments, departments.length, step, canSkipToStep3, isRescheduleMode]);
 
   useEffect(() => {
-    if (hasPreselectedEventType && step === 2) setStep(3);
-  }, [hasPreselectedEventType, step]);
+    if (canSkipToStep3 && step === 2) setStep(3);
+  }, [canSkipToStep3, step]);
 
   useEffect(() => {
     if (selectedType) {
@@ -458,6 +487,15 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
       );
     }
   }, [intakeForm, services, providerScopedCatalogServices]);
+
+  useEffect(() => {
+    if (!serviceGate.soleServiceId || loadingProviderScopedCatalog) return;
+    setSelectedServiceIds((prev) =>
+      prev.length === 1 && prev[0] === serviceGate.soleServiceId
+        ? prev
+        : [serviceGate.soleServiceId!]
+    );
+  }, [serviceGate.soleServiceId, loadingProviderScopedCatalog]);
 
   // Reschedule mode: fetch original booking and extract event_type_id
   useEffect(() => {
@@ -835,7 +873,7 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
                     setSelectedServiceIds([]);
                   }}
                   onSelectProvider={setSelectedProvider}
-                  onContinue={() => setStep(2)}
+                  onContinue={() => setStep(hasPreselectedEventType ? 3 : 2)}
                 />
               )}
               {step === 2 && (

@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
-import type { Department, ServiceProvider } from '@/src/types/bookingForm';
+import type { Department, Service, ServiceProvider } from '@/src/types/bookingForm';
+import { resolve_provider_scoped_service_gate } from '@/src/utils/provider_scoped_service_gate';
 
 type UseAutoAdvanceStep1Params = {
   enabled: boolean;
@@ -14,11 +15,17 @@ type UseAutoAdvanceStep1Params = {
   serviceProviders: ServiceProvider[];
   onClearOptionalServices?: () => void;
   advanceToNextStep: () => void;
+  loadingProviderScopedCatalog?: boolean;
+  providerScopedCatalogServices?: Service[];
+  providerCatalogContextReady?: boolean;
+  providerScopedCatalogSettled?: boolean;
+  onAutoSelectSingleService?: (id: string) => void;
 };
 
 /**
  * When exactly one bookable department exists and step 1 only needs one provider
  * (or no provider picker), auto-select both and advance to the next step once.
+ * Waits for provider-scoped catalog load; blocks auto-advance when multiple services exist.
  */
 export function useAutoAdvanceStep1({
   enabled,
@@ -33,8 +40,24 @@ export function useAutoAdvanceStep1({
   serviceProviders,
   onClearOptionalServices,
   advanceToNextStep,
+  loadingProviderScopedCatalog = false,
+  providerScopedCatalogServices = [],
+  providerCatalogContextReady = false,
+  providerScopedCatalogSettled = false,
+  onAutoSelectSingleService,
 }: UseAutoAdvanceStep1Params) {
   const advancedRef = useRef(false);
+  const lastDeptIdRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (departments.length !== 1 || selectedDepartment?.id !== departments[0]?.id) {
+      advancedRef.current = false;
+    }
+    if (selectedDepartment?.id !== lastDeptIdRef.current) {
+      advancedRef.current = false;
+      lastDeptIdRef.current = selectedDepartment?.id ?? null;
+    }
+  }, [departments, selectedDepartment?.id]);
 
   useEffect(() => {
     if (!enabled || loadingDepartments || step !== 1 || advancedRef.current) return;
@@ -65,6 +88,20 @@ export function useAutoAdvanceStep1({
 
     if (!ready) return;
 
+    const serviceGate = resolve_provider_scoped_service_gate(
+      providerScopedCatalogServices,
+      loadingProviderScopedCatalog,
+      providerCatalogContextReady,
+      providerScopedCatalogSettled
+    );
+
+    if (providerCatalogContextReady && !serviceGate.catalogReady) return;
+    if (!serviceGate.canAutoAdvancePastStep1) return;
+
+    if (serviceGate.soleServiceId) {
+      onAutoSelectSingleService?.(serviceGate.soleServiceId);
+    }
+
     advancedRef.current = true;
     advanceToNextStep();
   }, [
@@ -80,5 +117,10 @@ export function useAutoAdvanceStep1({
     setSelectedProvider,
     onClearOptionalServices,
     advanceToNextStep,
+    loadingProviderScopedCatalog,
+    providerScopedCatalogServices,
+    providerCatalogContextReady,
+    providerScopedCatalogSettled,
+    onAutoSelectSingleService,
   ]);
 }

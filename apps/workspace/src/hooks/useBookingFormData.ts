@@ -68,6 +68,7 @@ export function useBookingFormData({
   const [loadingServices, setLoadingServices] = useState(false);
   const [providerScopedCatalogServices, setProviderScopedCatalogServices] = useState<Service[]>([]);
   const [loadingProviderScopedCatalog, setLoadingProviderScopedCatalog] = useState(false);
+  const [providerScopedCatalogSettled, setProviderScopedCatalogSettled] = useState(false);
   const [workspaceName, setWorkspaceName] = useState<string>('Get Set Time');
   const [workspaceLogoUrl, setWorkspaceLogoUrl] = useState<string | null>(null);
   const [providerMeetingOptions, setProviderMeetingOptions] = useState<
@@ -408,11 +409,16 @@ export function useBookingFormData({
   useEffect(() => {
     if (!selectedDepartment || !effectiveProviderId) {
       setProviderScopedCatalogServices([]);
+      setProviderScopedCatalogSettled(false);
+      setLoadingProviderScopedCatalog(false);
       return;
     }
 
+    setProviderScopedCatalogServices([]);
+    setProviderScopedCatalogSettled(false);
+    setLoadingProviderScopedCatalog(true);
+
     const fetchScoped = async () => {
-      setLoadingProviderScopedCatalog(true);
       try {
         const { supabase } = await import('@/lib/supabaseClient');
         const {
@@ -447,6 +453,7 @@ export function useBookingFormData({
         setProviderScopedCatalogServices(scoped);
       } finally {
         setLoadingProviderScopedCatalog(false);
+        setProviderScopedCatalogSettled(true);
       }
     };
     fetchScoped();
@@ -472,6 +479,7 @@ export function useBookingFormData({
     loadingServices,
     providerScopedCatalogServices,
     loadingProviderScopedCatalog,
+    providerScopedCatalogSettled,
     workspaceOwnerUserId,
     showProviderPicker,
     workspaceName,

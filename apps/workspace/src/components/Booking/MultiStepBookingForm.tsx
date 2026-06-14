@@ -19,6 +19,7 @@ import {
   DEFAULT_PRIMARY_COLOR,
 } from '../../constants/booking';
 import { sortEventTypesByDuration } from '../../utils/bookingFormUtils';
+import { resolve_provider_scoped_service_gate } from '../../utils/provider_scoped_service_gate';
 import { isServicesEnabled } from '../../utils/intakeForm';
 import {
   default_booking_meeting_option_key,
@@ -136,6 +137,7 @@ const MultiStepBookingForm = ({
     loadingServices,
     providerScopedCatalogServices,
     loadingProviderScopedCatalog,
+    providerScopedCatalogSettled,
     workspaceOwnerUserId,
     showProviderPicker,
     workspaceName,
@@ -200,6 +202,27 @@ const MultiStepBookingForm = ({
     );
   }, [selectedDepartment, serviceProviders]);
 
+  const providerCatalogContextReady = !!selectedDepartment && !!effectiveProviderId;
+  const serviceGate = useMemo(
+    () =>
+      resolve_provider_scoped_service_gate(
+        providerScopedCatalogServices,
+        loadingProviderScopedCatalog,
+        providerCatalogContextReady,
+        providerScopedCatalogSettled
+      ),
+    [
+      providerScopedCatalogServices,
+      loadingProviderScopedCatalog,
+      providerCatalogContextReady,
+      providerScopedCatalogSettled,
+    ]
+  );
+
+  const handleAutoSelectSingleService = useCallback((id: string) => {
+    setSelectedServiceIds((prev) => (prev.length === 1 && prev[0] === id ? prev : [id]));
+  }, []);
+
   useAutoAdvanceStep1({
     enabled: true,
     step,
@@ -213,6 +236,11 @@ const MultiStepBookingForm = ({
     serviceProviders,
     onClearOptionalServices: () => setSelectedServiceIds([]),
     advanceToNextStep: () => setStep(2),
+    loadingProviderScopedCatalog,
+    providerScopedCatalogServices,
+    providerCatalogContextReady,
+    providerScopedCatalogSettled,
+    onAutoSelectSingleService: handleAutoSelectSingleService,
   });
 
   const sortedEventTypes = useMemo(() => sortEventTypesByDuration(eventTypes), [eventTypes]);
@@ -447,6 +475,15 @@ const MultiStepBookingForm = ({
       );
     }
   }, [intakeForm, services, providerScopedCatalogServices]);
+
+  useEffect(() => {
+    if (!serviceGate.soleServiceId || loadingProviderScopedCatalog) return;
+    setSelectedServiceIds((prev) =>
+      prev.length === 1 && prev[0] === serviceGate.soleServiceId
+        ? prev
+        : [serviceGate.soleServiceId!]
+    );
+  }, [serviceGate.soleServiceId, loadingProviderScopedCatalog]);
 
   const ALLOWED_FILE_TYPES = ['application/pdf', 'image/png', 'image/jpeg', 'image/heic', 'image/heif'];
   const MAX_FILE_SIZE = 2 * 1024 * 1024;

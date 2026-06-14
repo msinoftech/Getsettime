@@ -83,6 +83,7 @@ export function useEmbedBookingFormData({
   const [loadingServices, setLoadingServices] = useState(false);
   const [providerScopedCatalogServices, setProviderScopedCatalogServices] = useState<Service[]>([]);
   const [loadingProviderScopedCatalog, setLoadingProviderScopedCatalog] = useState(false);
+  const [providerScopedCatalogSettled, setProviderScopedCatalogSettled] = useState(false);
   const [settingsIntakeForm, setSettingsIntakeForm] = useState<IntakeFormSettings | undefined>(undefined);
   const [meetingOptionsSettings, setMeetingOptionsSettings] = useState<
     meeting_options_settings | undefined
@@ -398,11 +399,16 @@ export function useEmbedBookingFormData({
   useEffect(() => {
     if (!selectedDepartment || !effectiveProviderId) {
       setProviderScopedCatalogServices([]);
+      setProviderScopedCatalogSettled(false);
+      setLoadingProviderScopedCatalog(false);
       return;
     }
 
+    setProviderScopedCatalogServices([]);
+    setProviderScopedCatalogSettled(false);
+    setLoadingProviderScopedCatalog(true);
+
     const fetchScoped = async () => {
-      setLoadingProviderScopedCatalog(true);
       try {
         const params = new URLSearchParams({
           workspace_id: workspace.id,
@@ -413,9 +419,12 @@ export function useEmbedBookingFormData({
         if (res.ok) {
           const data: { services?: Service[] } = await res.json();
           setProviderScopedCatalogServices(data.services || []);
+        } else {
+          setProviderScopedCatalogServices([]);
         }
       } finally {
         setLoadingProviderScopedCatalog(false);
+        setProviderScopedCatalogSettled(true);
       }
     };
     fetchScoped();
@@ -436,6 +445,7 @@ export function useEmbedBookingFormData({
     loadingServices,
     providerScopedCatalogServices,
     loadingProviderScopedCatalog,
+    providerScopedCatalogSettled,
     workspaceOwnerUserId,
     showProviderPicker,
     effectiveProviderId,
