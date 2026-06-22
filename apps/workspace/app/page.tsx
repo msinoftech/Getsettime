@@ -1,64 +1,69 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import Link from "next/link";
 import { useAuth } from "@/src/providers/AuthProvider";
 import { useCreateBookingModal } from "@/src/providers/CreateBookingModalProvider";
+import { useWorkspaceSettings } from "@/src/hooks/useWorkspaceSettings";
 import { useDashboardCounts } from "@/src/hooks/useDashboardCounts";
 import { useDashboardBookings } from "@/src/hooks/useDashboardBookings";
-import DashboardCalendar from "@/src/components/Dashboard/DashboardCalendar";
+import { useAvailableSlots } from "@/src/hooks/useAvailableSlots";
+import type { AvailabilitySettings as BookingAvailabilitySettings } from "@/src/types/bookingForm";
 import DashboardFab from "@/src/components/Dashboard/DashboardFab";
 import DashboardHeader from "@/src/components/Dashboard/DashboardHeader";
-import DashboardHero from "@/src/components/Dashboard/DashboardHero";
-import DashboardSideCards from "@/src/components/Dashboard/DashboardSideCards";
+import DashboardFilterBar, {
+  type DashboardRange,
+} from "@/src/components/Dashboard/DashboardFilterBar";
 import DashboardStatCards from "@/src/components/Dashboard/DashboardStatCards";
+import WorkspaceOverviewCard from "@/src/components/Dashboard/WorkspaceOverviewCard";
+import UpcomingAppointmentsList from "@/src/components/Dashboard/UpcomingAppointmentsList";
+import PlanUsageCard from "@/src/components/Dashboard/PlanUsageCard";
 import RecentActivityFeed from "@/src/components/Dashboard/RecentActivityFeed";
-import SmartInsightsPanel from "@/src/components/Dashboard/SmartInsightsPanel";
-import TodayTimeline from "@/src/components/Dashboard/TodayTimeline";
-import WeeklyPerformanceChart from "@/src/components/Dashboard/WeeklyPerformanceChart";
+import { PublicBookingPreviewCard } from "@/src/components/Dashboard/PublicBookingPreviewCard";
+import CopyPublicLinkButton from "@/src/components/Dashboard/CopyPublicLinkButton";
 import DashboardIcon from "@/src/components/Dashboard/DashboardIcon";
 import { DashboardUpgradeModal } from "@/src/components/Subscription/DashboardUpgradeModal";
 import { useSubscription } from "@/src/hooks/useSubscription";
-import type { Booking } from "@/src/types/booking";
+import {
+  is_whatsapp_admin_enabled,
+  is_whatsapp_user_enabled,
+} from "@/lib/workspace-notification-flags";
 
-function reminder_fraction_today(bookings: Booking[]): { display: string; secondary: string } {
-  const eligible = bookings.filter((b) => {
-    const s = String(b.status ?? "").toLowerCase();
-    return s !== "cancelled" && s !== "deleted" && s !== "no-show";
-  });
-  if (eligible.length === 0) {
-    return { display: "—", secondary: "No active bookings today" };
-  }
-  const sent = eligible.filter(
-    (b) =>
-      b.sms_reminder_sent_at != null ||
-      b.email_reminder_sent_at != null ||
-      b.whatsapp_reminder_sent_at != null,
-  ).length;
-  const pct = Math.round((sent / eligible.length) * 100);
-  return {
-    display: `${pct}%`,
-    secondary: `${sent}/${eligible.length} with a reminder logged`,
-  };
-}
+const BOOKINGS_LABEL: Record<DashboardRange, string> = {
+  today: "Today's Bookings",
+  week: "This Week's Bookings",
+  month: "This Month's Bookings",
+};
+
+const AVAILABLE_SLOTS_HINT: Record<DashboardRange, string> = {
+  today: "Open slots today",
+  week: "Open slots next 7 days",
+  month: "Open slots rest of month",
+};
+
+const UPCOMING_HINT: Record<DashboardRange, string> = {
+  today: "Active later today",
+  week: "Active this week",
+  month: "Active this month",
+};
+
+const NO_SHOWS_HINT: Record<DashboardRange, string> = {
+  today: "Missed today",
+  week: "Missed this week",
+  month: "Missed this month",
+};
 
 const Dashboard: React.FC = () => {
   const { open: open_create_booking } = useCreateBookingModal();
   const { user } = useAuth();
-  const {
-    counts,
-    loading,
-    weekDayLabels,
-    bookingsByDay,
-    bookingsByStatus,
-  } = useDashboardCounts(user);
+  const { settings, availability, general } = useWorkspaceSettings();
+  const { loading, bookingsByStatus, bookingsTotal, bookingsByDay, trends } =
+    useDashboardCounts(user);
 
-  const [view_date, set_view_date] = useState(() => {
+  const [range, set_range] = useState<DashboardRange>("today");
+  const [view_date] = useState(() => {
     const t = new Date();
     return new Date(t.getFullYear(), t.getMonth(), 1);
   });
-
-  const [selected_date, set_selected_date] = useState<Date>(() => new Date());
   const [dashboard_refresh_key, set_dashboard_refresh_key] = useState(0);
   const [show_upgrade_modal, set_show_upgrade_modal] = useState(false);
 
@@ -74,8 +79,8 @@ const Dashboard: React.FC = () => {
   const {
     today_bookings,
     today_loading,
-    next_appointment,
-    next_loading,
+    week_bookings,
+    week_loading,
     month_bookings,
     month_loading,
   } = useDashboardBookings(user, view_date, dashboard_refresh_key);
@@ -86,117 +91,213 @@ const Dashboard: React.FC = () => {
   const user_name =
     user?.user_metadata?.name || user?.email?.split("@")[0] || "User";
 
-  const team_display =
-    counts.teamMembers == null ? "—" : String(counts.teamMembers);
+  const week_total = useMemo(
+    () => bookingsByDay.reduce((sum, value) => sum + value, 0),
+    [bookingsByDay],
+  );
 
-  const { display: reminders_display, secondary: reminders_secondary } = useMemo(
-    () => reminder_fraction_today(today_bookings),
+  const bookings_count =
+    range === "today"
+      ? today_bookings.length
+      : range === "week"
+        ? week_total
+        : month_bookings.length;
+
+  // `bookingsByDay` is a rolling 7-day window ending today, so index 6 = today, 5 = yesterday.
+  const bookings_trend = useMemo(() => {
+    if (range !== "today" || bookingsByDay.length < 7) return undefined;
+    const today_count = bookingsByDay[6] ?? 0;
+    const yesterday_count = bookingsByDay[5] ?? 0;
+    if (today_count === yesterday_count) return undefined;
+    if (yesterday_count === 0) {
+      return { direction: "up" as const, percent: 100 };
+    }
+    const pct = Math.round(
+      ((today_count - yesterday_count) / yesterday_count) * 100,
+    );
+    if (pct === 0) return undefined;
+    return {
+      direction: pct > 0 ? ("up" as const) : ("down" as const),
+      percent: Math.abs(pct),
+    };
+  }, [range, bookingsByDay]);
+
+  const range_bookings =
+    range === "today"
+      ? today_bookings
+      : range === "week"
+        ? week_bookings
+        : month_bookings;
+
+  const no_shows_count = useMemo(
+    () =>
+      range_bookings.filter(
+        (b) => String(b.status ?? "").toLowerCase() === "no-show",
+      ).length,
+    [range_bookings],
+  );
+
+  // Upcoming = active (pending/confirmed) bookings still in the future, within range.
+  const upcoming_count = useMemo(() => {
+    const now = Date.now();
+    return range_bookings.filter((b) => {
+      const status = String(b.status ?? "").toLowerCase();
+      const active = status === "" || status === "pending" || status === "confirmed";
+      const future = b.start_at ? new Date(b.start_at).getTime() > now : false;
+      return active && future;
+    }).length;
+  }, [range_bookings]);
+
+  const { count: available_slots_count, loading: available_slots_loading } =
+    useAvailableSlots(
+      user,
+      range,
+      availability as unknown as BookingAvailabilitySettings | null,
+      general.timezone ?? null,
+    );
+
+  const available_slots_display = available_slots_loading
+    ? "…"
+    : available_slots_count == null
+      ? "—"
+      : available_slots_count.toLocaleString();
+
+  const confirmed_today = useMemo(
+    () =>
+      today_bookings.filter(
+        (b) => String(b.status ?? "").toLowerCase() === "confirmed",
+      ).length,
     [today_bookings],
   );
 
-  const cancelled_no_show_total = useMemo(() => {
-    const c = bookingsByStatus["cancelled"] ?? 0;
-    const n = bookingsByStatus["no-show"] ?? 0;
-    return c + n;
-  }, [bookingsByStatus]);
+  const confirmed_today_secondary = today_bookings.length
+    ? `${Math.round((confirmed_today / today_bookings.length) * 100)}% of today's bookings`
+    : "No bookings today";
+
+  const completion_rate_display = useMemo(() => {
+    const completed = bookingsByStatus["completed"] ?? 0;
+    if (bookingsTotal <= 0) return "—";
+    return `${Math.round((completed / bookingsTotal) * 100)}%`;
+  }, [bookingsByStatus, bookingsTotal]);
+
+  // Week-over-week change in completion rate (percentage points).
+  const completion_trend = useMemo(() => {
+    const { completion_this_week: cur, completion_prev_week: prev } = trends;
+    if (cur.total === 0 || prev.total === 0) return undefined;
+    const this_rate = (cur.completed / cur.total) * 100;
+    const prev_rate = (prev.completed / prev.total) * 100;
+    const diff = Math.round(this_rate - prev_rate);
+    if (diff === 0) return undefined;
+    return {
+      direction: diff > 0 ? ("up" as const) : ("down" as const),
+      percent: Math.abs(diff),
+      label: "vs last week",
+    };
+  }, [trends]);
+
+  // Month-over-month change in total bookings.
+  const total_bookings_trend = useMemo(() => {
+    const { bookings_this_month: cur, bookings_prev_month: prev } = trends;
+    if (prev === 0) {
+      if (cur > 0) {
+        return { direction: "up" as const, percent: 100, label: "vs last month" };
+      }
+      return undefined;
+    }
+    const pct = Math.round(((cur - prev) / prev) * 100);
+    if (pct === 0) return undefined;
+    return {
+      direction: pct > 0 ? ("up" as const) : ("down" as const),
+      percent: Math.abs(pct),
+      label: "vs last month",
+    };
+  }, [trends]);
+
+  const whatsapp_active =
+    is_whatsapp_admin_enabled(settings.notifications) ||
+    is_whatsapp_user_enabled(settings.notifications);
+  const email_active = settings.notifications?.["email-reminder"] === true;
+
+  const range_loading =
+    range === "today"
+      ? today_loading
+      : range === "week"
+        ? week_loading
+        : month_loading;
+
+  const stat_loading = loading || range_loading;
 
   return (
     <div className="space-y-6 pb-28 text-slate-900">
       <DashboardHeader
         user_name={user_name}
+        subtitle="Here's what's happening with your workspace today."
         actions={
           <>
             <button
               type="button"
-              aria-label="Notifications"
-              className="inline-flex h-[58px] w-[58px] items-center justify-center rounded-2xl border border-slate-200 bg-white text-amber-400 shadow-[0_6px_20px_rgba(15,23,42,0.06)] transition hover:bg-slate-50"
+              onClick={open_create_booking}
+              className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
             >
-              {/* <DashboardIcon name="ring" size={18} /> */}
-              🔔
+              <DashboardIcon name="plus" size={17} className="text-indigo-600" />
+              Create Booking
             </button>
-            <Link
-              href="/billings"
-              aria-label="Billing settings"
-              className="inline-flex h-[58px] w-[58px] items-center justify-center rounded-2xl border border-slate-200 bg-white text-violet-300 shadow-[0_6px_20px_rgba(15,23,42,0.06)] transition hover:bg-slate-50"
-            >
-              <DashboardIcon name="settings" size={18} />
-            </Link>
+            <CopyPublicLinkButton />
             <button
               type="button"
               onClick={() => set_show_upgrade_modal(true)}
-              className="inline-flex h-[58px] items-center gap-2.5 rounded-[22px] bg-gradient-to-b from-amber-400 to-amber-500 px-8 text-lg font-black text-amber-950 shadow-[0_10px_24px_rgba(245,158,11,0.35)] transition hover:from-amber-300 hover:to-amber-400"
+              className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-indigo-700"
             >
-              <span className="inline-flex h-8 w-8 items-center justify-center" aria-hidden>
-                <svg
-                  viewBox="0 0 24 24"
-                  className="h-8 w-8"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2.8"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <path d="M3 17.8 10 10.8l2.7 2.7 5.3-5.3" />
-                  <path d="M15.6 8.2H20v4.4" />
-                </svg>
-              </span>
+              <DashboardIcon name="trend" size={17} />
               Upgrade Plan
             </button>
           </>
         }
       />
 
-      <DashboardHero
-        next_booking={next_appointment}
-        next_loading={next_loading}
-        onCreateBooking={open_create_booking}
-        free_plan_usage_loading={subscription_loading}
-        free_plan_usage={
-          !subscription_loading && subscription_data?.plan?.slug === "free"
-            ? {
-                used: subscription_data.usage.bookings_this_month,
-                limit: subscription_data.usage.booking_limit,
-              }
-            : null
-        }
-      />
+      <DashboardFilterBar range={range} on_range_change={set_range} />
 
       <DashboardStatCards
-        loading={loading}
-        total_bookings={counts.bookings}
-        team_members_display={team_display}
-        reminders_display={reminders_display}
-        reminders_secondary={reminders_secondary}
+        loading={stat_loading}
+        bookings_label={BOOKINGS_LABEL[range]}
+        bookings_count={bookings_count}
+        bookings_trend={bookings_trend}
+        upcoming_count={upcoming_count}
+        upcoming_hint={UPCOMING_HINT[range]}
+        available_slots_display={available_slots_display}
+        available_slots_hint={AVAILABLE_SLOTS_HINT[range]}
+        no_shows_count={no_shows_count}
+        no_shows_hint={NO_SHOWS_HINT[range]}
       />
 
-      <section className="grid gap-6 xl:grid-cols-[1.12fr_0.88fr]">
+      <section className="grid gap-6 xl:grid-cols-[1.4fr_0.85fr]">
         <div className="space-y-6">
-          <TodayTimeline bookings={today_bookings} loading={today_loading} />
-          <WeeklyPerformanceChart
+          <WorkspaceOverviewCard
             loading={loading}
-            week_day_labels={weekDayLabels}
-            bookings_by_day={bookingsByDay}
+            confirmed_today={confirmed_today}
+            confirmed_today_secondary={confirmed_today_secondary}
+            completion_rate_display={completion_rate_display}
+            completion_trend={completion_trend}
+            total_bookings={bookingsTotal}
+            total_bookings_trend={total_bookings_trend}
+            whatsapp_active={whatsapp_active}
+            email_active={email_active}
           />
-          <div className="grid gap-6 lg:grid-cols-2">
-            <RecentActivityFeed />
-            <SmartInsightsPanel
-              bookings_by_status={bookingsByStatus}
-              week_day_labels={weekDayLabels}
-              bookings_by_day={bookingsByDay}
-            />
-          </div>
+          <UpcomingAppointmentsList
+            bookings={range_bookings}
+            loading={range_loading}
+          />
         </div>
 
         <div className="space-y-6">
-          <DashboardCalendar
-            view_date={view_date}
-            selected_date={selected_date}
-            on_view_date_month_first={set_view_date}
-            on_select_date={set_selected_date}
-            month_bookings={month_bookings}
-            month_loading={month_loading}
+          <PublicBookingPreviewCard />
+          <PlanUsageCard
+            loading={subscription_loading}
+            used={subscription_data?.usage.bookings_this_month ?? 0}
+            limit={subscription_data?.usage.booking_limit ?? 250}
+            onUpgrade={() => set_show_upgrade_modal(true)}
           />
-          <DashboardSideCards missed_or_cancelled_count={cancelled_no_show_total} />
+          <RecentActivityFeed />
         </div>
       </section>
 

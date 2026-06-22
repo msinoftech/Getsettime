@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { findOrCreateContact } from '@/lib/contact-linking';
 import { resolveBookingTimezonesForInsert } from '@/lib/booking-timezone-api';
+import { resolve_booking_service_provider_name_snapshot } from '@/lib/booking_service_provider_phone';
 
 export async function POST(req: NextRequest) {
   try {
@@ -97,12 +98,28 @@ export async function POST(req: NextRequest) {
 
     const publicCode = crypto.randomUUID();
 
+    const emergencyServiceProviderId =
+      service_provider_id != null ? String(service_provider_id).trim() || null : null;
+    const adminClient = serviceKey
+      ? createClient(supabaseUrl, serviceKey, {
+          auth: { autoRefreshToken: false, persistSession: false },
+        })
+      : null;
+    const serviceProviderNameSnapshot =
+      await resolve_booking_service_provider_name_snapshot(
+        supabase,
+        adminClient,
+        workspaceId,
+        emergencyServiceProviderId
+      );
+
     const { data, error } = await supabase
       .from('bookings')
       .insert({
         workspace_id: workspaceId,
         event_type_id: event_type_id != null ? String(event_type_id).trim() || null : null,
-        service_provider_id: service_provider_id != null ? String(service_provider_id).trim() || null : null,
+        service_provider_id: emergencyServiceProviderId,
+        service_provider_name: serviceProviderNameSnapshot,
         department_id: department_id != null ? String(department_id).trim() || null : null,
         host_user_id: hostUserId,
         invitee_name: invitee_name.trim(),

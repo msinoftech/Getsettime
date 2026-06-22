@@ -16,4 +16,12 @@ export type dashboard_summary = {
   /** null when caller is not workspace_admin or manager */
   team_members_count: number | null;
   services: dashboard_summary_service_row[];
+  /** Completed/total bookings for the current week window (for completion-rate trend) */
+  completion_this_week: { completed: number; total: number };
+  /** Completed/total bookings for the previous week window */
+  completion_prev_week: { completed: number; total: number };
+  /** Non-deleted bookings count for the current calendar month */
+  bookings_this_month: number;
+  /** Non-deleted bookings count for the previous calendar month */
+  bookings_prev_month: number;
 };

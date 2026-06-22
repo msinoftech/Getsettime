@@ -3,6 +3,7 @@ import { createSupabaseServerClient } from '@app/db';
 import { appendActivityLog } from '@/lib/activity-log';
 import {
   admin_whatsapp_phones_for_booking,
+  notification_provider_name,
   resolve_provider_notification_contact,
 } from '@/lib/booking_service_provider_phone';
 import { post_booking_whatsapp_notification } from '@/lib/post_booking_whatsapp_notification';
@@ -29,7 +30,7 @@ export async function POST(
 
     const { data: booking, error: fetchError } = await supabase
       .from('bookings')
-      .select('id, workspace_id, status, invitee_name, invitee_email, invitee_phone, start_at, end_at, event_type_id, service_provider_id, department_id, metadata, customer_timezone, provider_timezone')
+      .select('id, workspace_id, status, invitee_name, invitee_email, invitee_phone, start_at, end_at, event_type_id, service_provider_id, service_provider_name, department_id, metadata, customer_timezone, provider_timezone')
       .eq('public_code', code)
       .single();
 
@@ -63,7 +64,7 @@ export async function POST(
 
     // Resolve notification context (best-effort)
     let providerEmail: string | undefined;
-    let providerName: string | undefined;
+    let providerName: string | undefined = notification_provider_name(booking);
     let departmentName: string | undefined;
     let eventTypeName = 'Appointment';
     let durationMinutes = 30;
@@ -105,7 +106,7 @@ export async function POST(
         booking.service_provider_id || null
       );
       providerEmail = resolved.email;
-      providerName = resolved.provider_name;
+      providerName = notification_provider_name(booking, resolved);
     } catch { /* non-blocking */ }
 
     // Send cancellation emails
@@ -189,6 +190,7 @@ export async function POST(
           arrive_early_min: arriveEarlyMin,
           arrive_early_max: arriveEarlyMax,
           booking_reference: workspaceSlug,
+          booking_id: booking.id ? String(booking.id) : undefined,
           cancelled_by: booking.invitee_name,
           send_to_user: false,
           send_to_admin: true,

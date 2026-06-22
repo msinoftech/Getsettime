@@ -29,6 +29,22 @@ type FetchState =
   | { status: 'error'; message: string }
   | { status: 'not_found' };
 
+/**
+ * Unresolved Meta WhatsApp template placeholder ("{{1}}") as it arrives in the
+ * route param — usually URL-encoded (`%7B%7B1%7D%7D`), occasionally decoded.
+ * Happens when the template URL-button base is misconfigured with a literal {{n}}.
+ */
+const BOOKING_ID_PLACEHOLDER = '%7B%7B1%7D%7D';
+const DECODED_PLACEHOLDER_PATTERN = /\{\{\s*\d+\s*\}\}/g;
+
+/** Remove any encoded/decoded template placeholder from the raw id segment. */
+function strip_booking_id_placeholder(rawId: string): string {
+  return rawId
+    .replaceAll(BOOKING_ID_PLACEHOLDER, '')
+    .replace(DECODED_PLACEHOLDER_PATTERN, '')
+    .trim();
+}
+
 export default function BookingDetailsPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
@@ -61,6 +77,19 @@ export default function BookingDetailsPage() {
 
   const load_booking = useCallback(async () => {
     if (!bookingId) {
+      set_fetch_state({ status: 'not_found' });
+      return;
+    }
+    /**
+     * Recover from a malformed link produced by a misconfigured WhatsApp template
+     * URL button, e.g. "/bookings/%7B%7B1%7D%7D311" → redirect to "/bookings/311".
+     */
+    const cleanId = strip_booking_id_placeholder(bookingId);
+    if (cleanId !== bookingId) {
+      if (cleanId) {
+        router.replace(`/bookings/${cleanId}`);
+        return;
+      }
       set_fetch_state({ status: 'not_found' });
       return;
     }
@@ -104,7 +133,7 @@ export default function BookingDetailsPage() {
         message: 'An unexpected error occurred while loading the booking.',
       });
     }
-  }, [bookingId]);
+  }, [bookingId, router]);
 
   useEffect(() => {
     void load_booking();

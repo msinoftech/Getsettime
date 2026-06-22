@@ -18,7 +18,7 @@ import {
   getEventTypeDurationInner,
 } from '@/src/utils/booking';
 import {
-  get_service_provider_display_name,
+  booking_service_provider_display_name,
   get_service_provider_display_phone,
 } from '@/src/utils/service_provider_display';
 import { resolve_workspace_logo_src } from '@/src/utils/workspace_logo';
@@ -484,7 +484,8 @@ function BookingPreviewContent({
   const departmentName = has_department
     ? capitalize_booking_display_label(department?.name?.trim() ?? '')
     : '';
-  const providerDisplayName = get_service_provider_display_name(
+  const providerDisplayName = booking_service_provider_display_name(
+    booking,
     serviceProvider,
     workspaceOwner
   );

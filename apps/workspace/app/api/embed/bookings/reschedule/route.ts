@@ -10,6 +10,7 @@ import {
 import { appendActivityLog } from '@/lib/activity-log';
 import {
   admin_whatsapp_phones_for_booking,
+  notification_provider_name,
   resolve_provider_notification_contact,
 } from '@/lib/booking_service_provider_phone';
 import { post_booking_whatsapp_notification } from '@/lib/post_booking_whatsapp_notification';
@@ -67,7 +68,7 @@ export async function POST(req: NextRequest) {
     const { data: booking, error: fetchError } = await supabase
       .from('bookings')
       .select(
-        'id, workspace_id, status, invitee_name, invitee_email, invitee_phone, start_at, end_at, event_type_id, service_provider_id, department_id, metadata, location, public_code'
+        'id, workspace_id, status, invitee_name, invitee_email, invitee_phone, start_at, end_at, event_type_id, service_provider_id, service_provider_name, department_id, metadata, location, public_code'
       )
       .eq('public_code', public_code)
       .single();
@@ -245,7 +246,7 @@ export async function POST(req: NextRequest) {
 
     // --- Notifications ---
     let providerEmail: string | undefined;
-    let providerName: string | undefined;
+    let providerName: string | undefined = notification_provider_name(booking);
     let departmentName: string | undefined;
     let eventTypeName = 'Appointment';
     let durationMinutes = effectiveDurationMinutes;
@@ -286,7 +287,7 @@ export async function POST(req: NextRequest) {
         booking.service_provider_id || null
       );
       providerEmail = resolved.email;
-      providerName = resolved.provider_name;
+      providerName = notification_provider_name(booking, resolved);
     } catch { /* non-blocking */ }
 
     try {
@@ -368,13 +369,15 @@ export async function POST(req: NextRequest) {
           message,
           service: eventTypeName,
           ...(departmentName?.trim() ? { department: departmentName.trim() } : {}),
-          ...(providerName?.trim() ? { provider: providerName.trim() } : {}),
+          ...(providerName?.trim() ? {           provider: providerName.trim() } : {}),
           start: start_at,
           end: resolvedEndAt,
+          previous_start: previousStartAt || undefined,
           note: noteStr,
           arrive_early_min: arriveEarlyMin,
           arrive_early_max: arriveEarlyMax,
           booking_reference: String(booking.public_code || booking.id || ''),
+          booking_id: booking.id ? String(booking.id) : undefined,
           send_to_user: false,
           send_to_admin: true,
           admin_phone: admin_whatsapp_phones,

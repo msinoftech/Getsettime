@@ -61,3 +61,27 @@ export function get_service_provider_display_phone(
   }
   return resolved;
 }
+
+/**
+ * Display name for a booking's provider, preferring the stored snapshot
+ * (`service_provider_name`) so historical bookings keep their original name even
+ * if the provider is renamed or removed. Falls back to a live lookup, then 'N/A'.
+ */
+export function booking_service_provider_display_name(
+  booking: {
+    service_provider_id: string | null;
+    service_provider_name?: string | null;
+  },
+  live_provider?: ServiceProvider | null,
+  workspace_owner?: service_provider_display_source | null
+): string {
+  const snapshot = booking.service_provider_name?.trim();
+  if (snapshot) return capitalize_booking_display_label(snapshot);
+
+  const has_provider =
+    booking.service_provider_id != null && booking.service_provider_id !== '';
+  return get_service_provider_display_name(
+    has_provider ? live_provider ?? null : null,
+    has_provider ? undefined : workspace_owner
+  );
+}

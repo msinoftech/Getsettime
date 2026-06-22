@@ -1,36 +1,30 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 
 export default function DashboardHeader({
   user_name,
+  subtitle,
   actions,
 }: {
   user_name: string;
+  subtitle?: string;
   actions?: ReactNode;
 }) {
-  const [time, setTime] = useState(() => new Date());
-
-  useEffect(() => {
-    const interval = window.setInterval(() => setTime(new Date()), 1000);
-    return () => window.clearInterval(interval);
-  }, []);
-
   return (
-    <header className="flex flex-wrap items-end justify-between gap-4 pb-2 md:flex-nowrap">
+    <header className="flex flex-wrap items-start justify-between gap-4 md:flex-nowrap">
       <div className="min-w-0">
-        <p className="text-sm font-bold text-indigo-600">
-          Live · {time.toLocaleTimeString()}
-        </p>
-        <h2 className="truncate text-2xl font-black tracking-tight text-slate-900 md:text-4xl">
+        <h2 className="truncate text-2xl font-bold tracking-tight text-slate-900 md:text-3xl">
           Welcome back, {user_name}{" "}
-          <span className="animate-wave inline-block text-2xl" aria-hidden>
+          <span className="animate-wave inline-block" aria-hidden>
             👋
           </span>
         </h2>
+        {subtitle ? (
+          <p className="mt-1 text-sm font-medium text-slate-500">{subtitle}</p>
+        ) : null}
       </div>
-      {actions ? <div className="flex items-center gap-2 self-end">{actions}</div> : null}
+      {actions ? <div className="flex items-center gap-2.5">{actions}</div> : null}
     </header>
   );
 }

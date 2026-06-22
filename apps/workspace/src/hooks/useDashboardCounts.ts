@@ -26,6 +26,20 @@ const INITIAL_COUNTS: DashboardCounts = {
   servicesRows: [],
 };
 
+export type DashboardTrends = {
+  bookings_this_month: number;
+  bookings_prev_month: number;
+  completion_this_week: { completed: number; total: number };
+  completion_prev_week: { completed: number; total: number };
+};
+
+const EMPTY_TRENDS: DashboardTrends = {
+  bookings_this_month: 0,
+  bookings_prev_month: 0,
+  completion_this_week: { completed: 0, total: 0 },
+  completion_prev_week: { completed: 0, total: 0 },
+};
+
 export function useDashboardCounts(user: { id?: string } | null) {
   const [state, setState] = useState<{
     counts: DashboardCounts;
@@ -34,6 +48,7 @@ export function useDashboardCounts(user: { id?: string } | null) {
     bookingsByDay: number[];
     bookingsByStatus: Record<string, number>;
     bookingsTotal: number;
+    trends: DashboardTrends;
   }>({
     counts: INITIAL_COUNTS,
     loading: true,
@@ -41,6 +56,7 @@ export function useDashboardCounts(user: { id?: string } | null) {
     bookingsByDay: [0, 0, 0, 0, 0, 0, 0],
     bookingsByStatus: {},
     bookingsTotal: 0,
+    trends: EMPTY_TRENDS,
   });
 
   const userId = user?.id ?? null;
@@ -64,6 +80,7 @@ export function useDashboardCounts(user: { id?: string } | null) {
         bookingsByDay: [0, 0, 0, 0, 0, 0, 0],
         bookingsByStatus: {},
         bookingsTotal: 0,
+        trends: EMPTY_TRENDS,
       });
       return;
     }
@@ -86,6 +103,7 @@ export function useDashboardCounts(user: { id?: string } | null) {
               bookingsByDay: [0, 0, 0, 0, 0, 0, 0],
               bookingsByStatus: {},
               bookingsTotal: 0,
+              trends: EMPTY_TRENDS,
             });
           }
           return;
@@ -108,6 +126,7 @@ export function useDashboardCounts(user: { id?: string } | null) {
             bookingsByDay: [0, 0, 0, 0, 0, 0, 0],
             bookingsByStatus: {},
             bookingsTotal: 0,
+            trends: EMPTY_TRENDS,
           });
           return;
         }
@@ -135,6 +154,18 @@ export function useDashboardCounts(user: { id?: string } | null) {
           bookingsByDay: data.bookings_by_day ?? [0, 0, 0, 0, 0, 0, 0],
           bookingsByStatus: data.bookings_by_status ?? {},
           bookingsTotal: data.bookings_total,
+          trends: {
+            bookings_this_month: data.bookings_this_month ?? 0,
+            bookings_prev_month: data.bookings_prev_month ?? 0,
+            completion_this_week: data.completion_this_week ?? {
+              completed: 0,
+              total: 0,
+            },
+            completion_prev_week: data.completion_prev_week ?? {
+              completed: 0,
+              total: 0,
+            },
+          },
         });
       } catch (error) {
         if ((error as Error).name === 'AbortError') return;
@@ -147,6 +178,7 @@ export function useDashboardCounts(user: { id?: string } | null) {
             bookingsByDay: [0, 0, 0, 0, 0, 0, 0],
             bookingsByStatus: {},
             bookingsTotal: 0,
+            trends: EMPTY_TRENDS,
           });
         }
       }
@@ -163,5 +195,6 @@ export function useDashboardCounts(user: { id?: string } | null) {
     bookingsByDay: state.bookingsByDay,
     bookingsByStatus: state.bookingsByStatus,
     bookingsTotal: state.bookingsTotal,
+    trends: state.trends,
   };
 }

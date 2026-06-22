@@ -433,10 +433,12 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
             booking.event_types?.duration_minutes ?? null,
           status: booking.status || "Pending",
           service_provider_id: booking.service_provider_id,
-          service_provider_name: getServiceProviderName(
-            booking.service_provider_id,
-            serviceProviders
-          ),
+          service_provider_name:
+            booking.service_provider_name?.trim() ||
+            getServiceProviderName(
+              booking.service_provider_id,
+              serviceProviders
+            ),
           created_at: booking.created_at
             ? `${formatDate(booking.created_at)} ${formatTime(booking.created_at)}`
             : "N/A",

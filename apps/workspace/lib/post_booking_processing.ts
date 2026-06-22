@@ -3,6 +3,7 @@ import { appendActivityLog } from '@/lib/activity-log';
 import { formatDualTimeBlock, whatsapp_timezone_payload } from '@/lib/booking-timezone-api';
 import {
   admin_whatsapp_phones_for_booking,
+  notification_provider_name,
   resolve_provider_notification_contact,
   sole_workspace_department_display_name,
 } from '@/lib/booking_service_provider_phone';
@@ -23,6 +24,7 @@ export type post_booking_row = {
   invitee_name?: string;
   invitee_email?: string | null;
   service_provider_id?: string | null;
+  service_provider_name?: string | null;
   department_id?: string | null;
   event_type_id?: string | null;
   start_at?: string;
@@ -111,7 +113,7 @@ export async function run_post_booking_processing(
   const notifyDb = notifyAdminClient ?? supabase;
 
   let providerEmail: string | undefined;
-  let providerName: string | undefined;
+  let providerName: string | undefined = notification_provider_name(params.booking);
   let departmentName: string | undefined;
   let eventTypeName = 'Appointment';
   let arriveEarlyMin = 10;
@@ -170,7 +172,7 @@ export async function run_post_booking_processing(
         service_provider_id || null
       );
       providerEmail = resolved.email;
-      providerName = resolved.provider_name;
+      providerName = notification_provider_name(params.booking, resolved);
     }
   } catch (providerErr) {
     console.error('Error resolving provider details:', providerErr);
@@ -259,6 +261,7 @@ export async function run_post_booking_processing(
                 invitee_name: data.invitee_name,
                 invitee_email: data.invitee_email,
                 service_provider_id: data.service_provider_id,
+                service_provider_name: data.service_provider_name,
                 department_id: data.department_id,
                 event_type_id: data.event_type_id,
                 start_at: data.start_at ?? start_at,
@@ -391,6 +394,7 @@ export async function run_post_booking_processing(
         arrive_early_min: arriveEarlyMin,
         arrive_early_max: arriveEarlyMax,
         booking_reference: data?.public_code || data?.id || '',
+        booking_id: data?.id ? String(data.id) : undefined,
         send_to_user: whatsapp_user && whatsapp_opt_in,
         send_to_admin: whatsapp_admin,
         admin_phone: admin_whatsapp_phones,

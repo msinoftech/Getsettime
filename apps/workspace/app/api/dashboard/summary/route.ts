@@ -113,8 +113,51 @@ export async function GET(req: NextRequest) {
       .from('bookings')
       .select('*', { count: 'exact', head: true })
       .eq('workspace_id', workspaceId)
-      .neq('status', 'deleted')
-      .gt('start_at', nowIso);
+      .gt('start_at', nowIso)
+      .or('status.in.(pending,confirmed),status.is.null');
+
+    // --- Trend comparison windows ---
+    // This week = the 7-day window described by week_days; previous week = the 7 days before it.
+    const weekStartIso = `${weekDays[0]}T00:00:00.000Z`;
+    const weekEndIso = `${next_utc_yyyy_mm_dd(weekDays[6])}T00:00:00.000Z`;
+    const prevWeekStartDate = new Date(weekStartIso);
+    prevWeekStartDate.setUTCDate(prevWeekStartDate.getUTCDate() - 7);
+    const prevWeekStartIso = prevWeekStartDate.toISOString();
+    const prevWeekEndIso = weekStartIso;
+
+    // This/previous calendar month (UTC).
+    const nowDate = new Date();
+    const monthStartIso = new Date(
+      Date.UTC(nowDate.getUTCFullYear(), nowDate.getUTCMonth(), 1)
+    ).toISOString();
+    const nextMonthStartIso = new Date(
+      Date.UTC(nowDate.getUTCFullYear(), nowDate.getUTCMonth() + 1, 1)
+    ).toISOString();
+    const prevMonthStartIso = new Date(
+      Date.UTC(nowDate.getUTCFullYear(), nowDate.getUTCMonth() - 1, 1)
+    ).toISOString();
+
+    const countInWindow = (
+      startIso: string,
+      endIso: string,
+      onlyCompleted: boolean
+    ) => {
+      let q = supabase
+        .from('bookings')
+        .select('*', { count: 'exact', head: true })
+        .eq('workspace_id', workspaceId)
+        .gte('start_at', startIso)
+        .lt('start_at', endIso);
+      q = onlyCompleted ? q.eq('status', 'completed') : q.neq('status', 'deleted');
+      return q;
+    };
+
+    const totalThisWeekPromise = countInWindow(weekStartIso, weekEndIso, false);
+    const completedThisWeekPromise = countInWindow(weekStartIso, weekEndIso, true);
+    const totalPrevWeekPromise = countInWindow(prevWeekStartIso, prevWeekEndIso, false);
+    const completedPrevWeekPromise = countInWindow(prevWeekStartIso, prevWeekEndIso, true);
+    const bookingsThisMonthPromise = countInWindow(monthStartIso, nextMonthStartIso, false);
+    const bookingsPrevMonthPromise = countInWindow(prevMonthStartIso, monthStartIso, false);
 
     const servicesPromise = supabase
       .from('services')
@@ -150,6 +193,12 @@ export async function GET(req: NextRequest) {
       upcomingResult,
       servicesResult,
       teamMembersResult,
+      totalThisWeekResult,
+      completedThisWeekResult,
+      totalPrevWeekResult,
+      completedPrevWeekResult,
+      bookingsThisMonthResult,
+      bookingsPrevMonthResult,
     ] = await Promise.all([
       Promise.all(dayCountPromises),
       Promise.all(statusCountPromises),
@@ -159,6 +208,12 @@ export async function GET(req: NextRequest) {
       upcomingPromise,
       servicesPromise,
       teamCountPromise,
+      totalThisWeekPromise,
+      completedThisWeekPromise,
+      totalPrevWeekPromise,
+      completedPrevWeekPromise,
+      bookingsThisMonthPromise,
+      bookingsPrevMonthPromise,
     ]);
 
     if (teamMembersResult.kind === 'fail') {
@@ -237,6 +292,16 @@ export async function GET(req: NextRequest) {
       bookings_by_status,
       team_members_count,
       services,
+      completion_this_week: {
+        completed: completedThisWeekResult.count ?? 0,
+        total: totalThisWeekResult.count ?? 0,
+      },
+      completion_prev_week: {
+        completed: completedPrevWeekResult.count ?? 0,
+        total: totalPrevWeekResult.count ?? 0,
+      },
+      bookings_this_month: bookingsThisMonthResult.count ?? 0,
+      bookings_prev_month: bookingsPrevMonthResult.count ?? 0,
     });
   } catch (err: unknown) {
     const error = err as Error;

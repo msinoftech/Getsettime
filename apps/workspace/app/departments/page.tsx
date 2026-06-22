@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import {
   LuCheck as Check,
   LuPlus as Plus,
@@ -77,6 +77,144 @@ const SOLE_SP_DEPARTMENT_CHIP_STYLES = [
 const INACTIVE_OUTLINE_BADGE =
   "rounded-full border border-red-200 bg-red-50 text-red-600";
 
+type DoctorRow = {
+  id: string;
+  name: string;
+  role: string;
+  inactive: boolean;
+  assignedDepartmentIds: number[];
+};
+
+type DoctorCardProps = {
+  doctor: DoctorRow;
+  assigned: boolean;
+  departments: Department[];
+  selectedDepartmentId: number | null;
+  selectedDepartmentInactive: boolean;
+  actionPending: boolean;
+  getDepartmentName: (id: number) => string;
+  getDepartmentStatus: (id: number) => DepartmentStatus;
+  onAssign: (doctor: DoctorRow) => void;
+  onUnassign: (doctor: DoctorRow) => void;
+};
+
+function DoctorCard({
+  doctor,
+  assigned,
+  departments,
+  selectedDepartmentId,
+  selectedDepartmentInactive,
+  actionPending,
+  getDepartmentName,
+  getDepartmentStatus,
+  onAssign,
+  onUnassign,
+}: DoctorCardProps) {
+  const visibleAssignedDepartmentIds = doctor.assignedDepartmentIds.filter(
+    (depId) => departments.some((d) => d.id === depId)
+  );
+
+  const handleAssign = (e: MouseEvent<HTMLButtonElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (actionPending || selectedDepartmentInactive) return;
+    onAssign(doctor);
+  };
+
+  const handleUnassign = (e: MouseEvent<HTMLButtonElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (actionPending) return;
+    onUnassign(doctor);
+  };
+
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition hover:shadow-md">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex min-w-0 flex-1 items-start gap-3">
+          <div
+            className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl ${
+              assigned
+                ? "bg-indigo-50 text-indigo-600"
+                : "bg-emerald-50 text-emerald-600"
+            }`}
+          >
+            <Stethoscope className="h-5 w-5" />
+          </div>
+
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="truncate text-sm font-semibold text-slate-900">
+                {doctor.name}
+              </p>
+              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600">
+                {doctor.role}
+              </span>
+              {doctor.inactive && (
+                <span
+                  className={`${INACTIVE_OUTLINE_BADGE} px-2 py-0.5 text-[11px] font-semibold`}
+                >
+                  Inactive
+                </span>
+              )}
+            </div>
+
+            <div className="mt-3 flex flex-wrap gap-2">
+              {visibleAssignedDepartmentIds.length > 0 ? (
+                visibleAssignedDepartmentIds.map((depId) => {
+                  const departmentStatus = getDepartmentStatus(depId);
+                  const isInactiveDepartment = departmentStatus === "inactive";
+
+                  return (
+                    <span
+                      key={depId}
+                      className={`px-2.5 py-1 text-[11px] font-medium ${
+                        isInactiveDepartment
+                          ? INACTIVE_OUTLINE_BADGE
+                          : depId === selectedDepartmentId
+                            ? "rounded-full bg-indigo-100 text-indigo-700"
+                            : "rounded-full border border-slate-200 bg-slate-50 text-slate-600"
+                      }`}
+                    >
+                      {getDepartmentName(depId)}
+                      {isInactiveDepartment ? " • Inactive" : ""}
+                    </span>
+                  );
+                })
+              ) : (
+                <span className="rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-medium text-amber-700">
+                  No department assigned
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {assigned ? (
+          <button
+            type="button"
+            onClick={handleUnassign}
+            disabled={actionPending}
+            className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-600 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {actionPending ? "Removing…" : "Remove"}
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={handleAssign}
+            disabled={actionPending || selectedDepartmentInactive}
+            className="inline-flex items-center gap-1 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            {actionPending ? "Assigning…" : "Assign"}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function DepartmentsPage() {
   const { user, loading: authLoading } = useAuth();
   const { data: serviceProviders, loading: spLoading } = useServiceProviders();
@@ -118,6 +256,10 @@ export default function DepartmentsPage() {
 
   const [initialLoading, setInitialLoading] = useState(true);
   const [busyAction, setBusyAction] = useState(false);
+  const [pendingDoctorActionId, setPendingDoctorActionId] = useState<string | null>(
+    null
+  );
+  const doctorAssignmentInFlightRef = useRef<Set<string>>(new Set());
 
   const [alertMessage, setAlertMessage] = useState<string | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
@@ -232,14 +374,6 @@ export default function DepartmentsPage() {
     });
     return map;
   }, [deptIdsByProvider]);
-
-  type DoctorRow = {
-    id: string;
-    name: string;
-    role: string;
-    inactive: boolean;
-    assignedDepartmentIds: number[];
-  };
 
   const doctors = useMemo<DoctorRow[]>(() => {
     return serviceProviders.map((sp) => ({
@@ -692,165 +826,87 @@ export default function DepartmentsPage() {
     }
   };
 
-  const assignDoctor = async (doctor: DoctorRow) => {
-    if (!selectedDepartment || selectedDepartment.status === "inactive") return;
-    if (doctor.assignedDepartmentIds.includes(selectedDepartment.id)) return;
+  const assignDoctor = useCallback(
+    async (doctor: DoctorRow) => {
+      const departmentId = selectedDepartmentId;
+      if (!departmentId) return;
 
-    setBusyAction(true);
-    try {
-      const token = await getAuthToken();
-      if (!token) {
-        setAlertMessage("Not authenticated");
-        return;
-      }
-      const res = await fetch("/api/user-departments", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          user_id: doctor.id,
-          department_id: selectedDepartment.id,
-        }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => null);
-        setAlertMessage(err?.error || `Request failed (${res.status})`);
-        return;
-      }
-      await refetchUserDepartments();
-    } finally {
-      setBusyAction(false);
-    }
-  };
+      const department = departments.find((d) => d.id === departmentId);
+      if (!department || department.status === "inactive") return;
+      if (doctor.assignedDepartmentIds.includes(departmentId)) return;
 
-  const unassignDoctor = async (doctor: DoctorRow) => {
-    if (!selectedDepartment) return;
-    setBusyAction(true);
-    try {
-      const token = await getAuthToken();
-      if (!token) {
-        setAlertMessage("Not authenticated");
-        return;
-      }
-      const res = await fetch(
-        `/api/user-departments?user_id=${encodeURIComponent(doctor.id)}&department_id=${selectedDepartment.id}`,
-        {
-          method: "DELETE",
-          headers: { Authorization: `Bearer ${token}` },
+      const flightKey = `assign:${doctor.id}:${departmentId}`;
+      if (doctorAssignmentInFlightRef.current.has(flightKey)) return;
+      doctorAssignmentInFlightRef.current.add(flightKey);
+      setPendingDoctorActionId(doctor.id);
+
+      try {
+        const token = await getAuthToken();
+        if (!token) {
+          setAlertMessage("Not authenticated");
+          return;
         }
-      );
-      if (!res.ok) {
-        const err = await res.json().catch(() => null);
-        setAlertMessage(err?.error || `Request failed (${res.status})`);
-        return;
+        const res = await fetch("/api/user-departments", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            user_id: doctor.id,
+            department_id: departmentId,
+          }),
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => null);
+          setAlertMessage(err?.error || `Request failed (${res.status})`);
+          return;
+        }
+        await refetchUserDepartments();
+      } finally {
+        doctorAssignmentInFlightRef.current.delete(flightKey);
+        setPendingDoctorActionId(null);
       }
-      await refetchUserDepartments();
-    } finally {
-      setBusyAction(false);
-    }
-  };
+    },
+    [selectedDepartmentId, departments, getAuthToken, refetchUserDepartments]
+  );
 
-  const DoctorCard = ({
-    doctor,
-    assigned,
-  }: {
-    doctor: DoctorRow;
-    assigned: boolean;
-  }) => {
-    const visibleAssignedDepartmentIds = doctor.assignedDepartmentIds.filter(
-      (depId) => departments.some((d) => d.id === depId)
-    );
+  const unassignDoctor = useCallback(
+    async (doctor: DoctorRow) => {
+      const departmentId = selectedDepartmentId;
+      if (!departmentId) return;
 
-    return (
-      <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex min-w-0 flex-1 items-start gap-3">
-            <div
-              className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl ${
-                assigned
-                  ? "bg-indigo-50 text-indigo-600"
-                  : "bg-emerald-50 text-emerald-600"
-              }`}
-            >
-              <Stethoscope className="h-5 w-5" />
-            </div>
+      const flightKey = `unassign:${doctor.id}:${departmentId}`;
+      if (doctorAssignmentInFlightRef.current.has(flightKey)) return;
+      doctorAssignmentInFlightRef.current.add(flightKey);
+      setPendingDoctorActionId(doctor.id);
 
-            <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-center gap-2">
-                <p className="truncate text-sm font-semibold text-slate-900">
-                  {doctor.name}
-                </p>
-                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600">
-                  {doctor.role}
-                </span>
-                {doctor.inactive && (
-                  <span
-                    className={`${INACTIVE_OUTLINE_BADGE} px-2 py-0.5 text-[11px] font-semibold`}
-                  >
-                    Inactive
-                  </span>
-                )}
-              </div>
-
-              <div className="mt-3 flex flex-wrap gap-2">
-                {visibleAssignedDepartmentIds.length > 0 ? (
-                  visibleAssignedDepartmentIds.map((depId) => {
-                    const departmentStatus = getDepartmentStatus(depId);
-                    const isInactiveDepartment = departmentStatus === "inactive";
-
-                    return (
-                      <span
-                        key={depId}
-                        className={`px-2.5 py-1 text-[11px] font-medium ${
-                          isInactiveDepartment
-                            ? INACTIVE_OUTLINE_BADGE
-                            : depId === selectedDepartmentId
-                              ? "rounded-full bg-indigo-100 text-indigo-700"
-                              : "rounded-full border border-slate-200 bg-slate-50 text-slate-600"
-                        }`}
-                      >
-                        {getDepartmentName(depId)}
-                        {isInactiveDepartment ? " • Inactive" : ""}
-                      </span>
-                    );
-                  })
-                ) : (
-                  <span className="rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-medium text-amber-700">
-                    No department assigned
-                  </span>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {assigned ? (
-            <button
-              type="button"
-              onClick={() => unassignDoctor(doctor)}
-              disabled={busyAction}
-              className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-600 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              Remove
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={() => assignDoctor(doctor)}
-              disabled={
-                busyAction || selectedDepartment?.status === "inactive"
-              }
-              className="inline-flex items-center gap-1 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-300"
-            >
-              <Plus className="h-3.5 w-3.5" />
-              Assign
-            </button>
-          )}
-        </div>
-      </div>
-    );
-  };
+      try {
+        const token = await getAuthToken();
+        if (!token) {
+          setAlertMessage("Not authenticated");
+          return;
+        }
+        const res = await fetch(
+          `/api/user-departments?user_id=${encodeURIComponent(doctor.id)}&department_id=${departmentId}`,
+          {
+            method: "DELETE",
+            headers: { Authorization: `Bearer ${token}` },
+          }
+        );
+        if (!res.ok) {
+          const err = await res.json().catch(() => null);
+          setAlertMessage(err?.error || `Request failed (${res.status})`);
+          return;
+        }
+        await refetchUserDepartments();
+      } finally {
+        doctorAssignmentInFlightRef.current.delete(flightKey);
+        setPendingDoctorActionId(null);
+      }
+    },
+    [selectedDepartmentId, getAuthToken, refetchUserDepartments]
+  );
 
   if (initialLoading || spLoading || authLoading) {
     return <DepartmentSkeleton />;
@@ -1518,6 +1574,16 @@ export default function DepartmentsPage() {
                           key={doctor.id}
                           doctor={doctor}
                           assigned={true}
+                          departments={departments}
+                          selectedDepartmentId={selectedDepartmentId}
+                          selectedDepartmentInactive={
+                            selectedDepartment?.status === "inactive"
+                          }
+                          actionPending={pendingDoctorActionId === doctor.id}
+                          getDepartmentName={getDepartmentName}
+                          getDepartmentStatus={getDepartmentStatus}
+                          onAssign={assignDoctor}
+                          onUnassign={unassignDoctor}
                         />
                       ))
                     )}
@@ -1557,6 +1623,16 @@ export default function DepartmentsPage() {
                           key={doctor.id}
                           doctor={doctor}
                           assigned={false}
+                          departments={departments}
+                          selectedDepartmentId={selectedDepartmentId}
+                          selectedDepartmentInactive={
+                            selectedDepartment?.status === "inactive"
+                          }
+                          actionPending={pendingDoctorActionId === doctor.id}
+                          getDepartmentName={getDepartmentName}
+                          getDepartmentStatus={getDepartmentStatus}
+                          onAssign={assignDoctor}
+                          onUnassign={unassignDoctor}
                         />
                       ))
                     )}

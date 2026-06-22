@@ -196,6 +196,7 @@ export async function POST(
           invitee_name: updated.invitee_name,
           invitee_email: updated.invitee_email,
           service_provider_id: updated.service_provider_id,
+          service_provider_name: updated.service_provider_name,
           department_id: updated.department_id,
           event_type_id: updated.event_type_id,
           start_at: updated.start_at,

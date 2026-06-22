@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { TIMEZONE_OPTIONS } from "@/src/constants/timezone";
 import { ROLE_MANAGER, ROLE_SERVICE_PROVIDER, ROLE_STAFF, ROLE_WORKSPACE_ADMIN } from "@/src/constants/roles";
+import { CURRENCY_OPTIONS } from "@/src/constants/currency";
 import { useAuth } from "@/src/providers/AuthProvider";
 import { useWorkspaceSettings } from "@/src/hooks/useWorkspaceSettings";
 import { WorkspaceBrandLogo } from "@/src/components/molecules/WorkspaceBrandLogo";
@@ -26,7 +27,6 @@ type settings_icon_name =
 const DATE_FORMAT_OPTIONS = ["DD MMM YYYY", "MM/DD/YYYY", "YYYY-MM-DD"] as const;
 const TIME_FORMAT_OPTIONS = ["12-hour", "24-hour"] as const;
 const LANGUAGE_OPTIONS = ["English", "Hindi", "Spanish", "French"] as const;
-const CURRENCY_OPTIONS = ["INR", "USD", "EUR", "GBP", "CAD"] as const;
 
 function get_public_booking_host(): string {
   const raw = process.env.NEXT_PUBLIC_APP_URL?.trim();

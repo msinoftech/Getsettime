@@ -2,74 +2,136 @@
 
 import DashboardIcon, { type DashboardIconName } from "./DashboardIcon";
 
+export type StatTrend = { direction: "up" | "down"; percent: number };
+
 type DashboardStatCardsProps = {
   loading: boolean;
-  total_bookings: number;
-  team_members_display: string;
-  reminders_display: string;
-  reminders_secondary: string;
+  bookings_label: string;
+  bookings_count: number;
+  bookings_trend?: StatTrend;
+  upcoming_count: number;
+  upcoming_hint?: string;
+  available_slots_display: string;
+  available_slots_hint?: string;
+  no_shows_count: number;
+  no_shows_hint?: string;
 };
 
-const STATS: readonly {
+type StatCardConfig = {
   label: string;
   icon: DashboardIconName;
   hint: string;
-  bg: string;
-  accent: string;
-  pill: string;
-}[] = [
+  icon_bg: string;
+  icon_color: string;
+};
+
+const STAT_CARDS: readonly StatCardConfig[] = [
   {
-    label: "Total Bookings",
+    label: "Today's Bookings",
     icon: "calendar",
-    hint: "All time workspace total",
-    bg: "from-sky-50 to-blue-50",
-    accent: "from-sky-500 to-blue-600",
-    pill: "Total",
+    hint: "Scheduled for today",
+    icon_bg: "bg-indigo-50",
+    icon_color: "text-indigo-600",
   },
   {
-    label: "Today Revenue",
-    icon: "credit",
+    label: "Upcoming Appointments",
+    icon: "calendarDays",
+    hint: "Across all future dates",
+    icon_bg: "bg-sky-50",
+    icon_color: "text-sky-600",
+  },
+  {
+    label: "Available Slots",
+    icon: "clock",
     hint: "Coming soon",
-    bg: "from-emerald-50 to-teal-50",
-    accent: "from-emerald-500 to-teal-600",
-    pill: "Soon",
+    icon_bg: "bg-emerald-50",
+    icon_color: "text-emerald-600",
   },
   {
-    label: "Team Active",
-    icon: "users",
-    hint: "Team members in workspace",
-    bg: "from-violet-50 to-indigo-50",
-    accent: "from-violet-500 to-indigo-600",
-    pill: "Roster",
-  },
-  {
-    label: "Reminders Sent",
-    icon: "message",
-    hint: "Today bookings with reminder sent",
-    bg: "from-orange-50 to-rose-50",
-    accent: "from-orange-500 to-rose-500",
-    pill: "Today",
+    label: "No-shows",
+    icon: "user",
+    hint: "All-time workspace total",
+    icon_bg: "bg-rose-50",
+    icon_color: "text-rose-600",
   },
 ];
 
+function TrendLine({ trend, hint }: { trend?: StatTrend; hint: string }) {
+  if (!trend) {
+    return <p className="mt-1.5 text-xs font-medium text-slate-400">{hint}</p>;
+  }
+  const is_up = trend.direction === "up";
+  return (
+    <p className="mt-1.5 flex items-center gap-1 text-xs font-medium">
+      <span
+        className={`inline-flex items-center gap-0.5 font-bold ${
+          is_up ? "text-emerald-600" : "text-rose-500"
+        }`}
+      >
+        <svg
+          className="h-3.5 w-3.5"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={2.5}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden
+        >
+          {is_up ? (
+            <>
+              <path d="M12 19V5" />
+              <path d="m5 12 7-7 7 7" />
+            </>
+          ) : (
+            <>
+              <path d="M12 5v14" />
+              <path d="m19 12-7 7-7-7" />
+            </>
+          )}
+        </svg>
+        {trend.percent}%
+      </span>
+      <span className="text-slate-400">vs yesterday</span>
+    </p>
+  );
+}
+
 export default function DashboardStatCards({
   loading,
-  total_bookings,
-  team_members_display,
-  reminders_display,
-  reminders_secondary,
+  bookings_label,
+  bookings_count,
+  bookings_trend,
+  upcoming_count,
+  upcoming_hint,
+  available_slots_display,
+  available_slots_hint,
+  no_shows_count,
+  no_shows_hint,
 }: DashboardStatCardsProps) {
-  const values = [
-    loading ? "…" : String(total_bookings),
-    "—",
-    loading ? "…" : team_members_display,
-    loading ? "…" : reminders_display,
+  const labels = [
+    bookings_label,
+    STAT_CARDS[1].label,
+    STAT_CARDS[2].label,
+    STAT_CARDS[3].label,
   ];
-  const secondaries = [
-    STATS[0].hint,
-    STATS[1].hint,
-    STATS[2].hint,
-    reminders_secondary || STATS[3].hint,
+  const hints = [
+    STAT_CARDS[0].hint,
+    upcoming_hint ?? STAT_CARDS[1].hint,
+    available_slots_hint ?? STAT_CARDS[2].hint,
+    no_shows_hint ?? STAT_CARDS[3].hint,
+  ];
+  const values = [
+    loading ? "…" : String(bookings_count),
+    loading ? "…" : String(upcoming_count),
+    loading ? "…" : available_slots_display,
+    loading ? "…" : String(no_shows_count),
+  ];
+  const trends: (StatTrend | undefined)[] = [
+    loading ? undefined : bookings_trend,
+    undefined,
+    undefined,
+    undefined,
   ];
 
   return (
@@ -77,26 +139,27 @@ export default function DashboardStatCards({
       aria-label="dashboard-metrics"
       className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"
     >
-      {STATS.map((stat, index) => (
+      {STAT_CARDS.map((stat, index) => (
         <article
           key={stat.label}
-          className={`group rounded-[28px] border border-white bg-gradient-to-br ${stat.bg} p-5 shadow-lg shadow-slate-200/70 transition duration-300 hover:-translate-y-1 hover:shadow-xl`}
+          className="rounded-2xl border border-slate-200 bg-white px-5 py-3 shadow-sm transition duration-300 hover:shadow-md"
         >
-          <div className="mb-5 flex items-center justify-between">
+          <div className="flex items-center gap-4">
             <div
-              className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br ${stat.accent} p-3 text-white shadow-lg`}
+              className={`flex h-17 w-17 shrink-0 items-center justify-center rounded-2xl ${stat.icon_bg} ${stat.icon_color}`}
             >
-              <DashboardIcon name={stat.icon} size={22} />
+              <DashboardIcon name={stat.icon} size={35} />
             </div>
-            <span className="rounded-full bg-white/80 px-3 py-1 text-xs font-black text-emerald-600">
-              {stat.pill}
-            </span>
+            <div className="min-w-0">
+              <p className="truncate text-sm font-medium text-slate-500">
+                {labels[index]}
+              </p>
+              <h3 className="text-3xl font-bold leading-tight tracking-tight text-slate-900">
+                {values[index]}
+              </h3>
+              <TrendLine trend={trends[index]} hint={hints[index]} />
+            </div>
           </div>
-          <p className="text-sm font-bold text-slate-500">{stat.label}</p>
-          <h3 className="mt-1 text-3xl font-black tracking-tight text-slate-900">
-            {values[index]}
-          </h3>
-          <p className="mt-2 text-sm font-semibold text-slate-500">{secondaries[index]}</p>
         </article>
       ))}
     </section>

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { toDateKey } from '@/src/components/Calendar/calendar_utils';
+import { get_dashboard_week_days } from '@/src/utils/dashboard_week';
 import type { Booking } from '@/src/types/booking';
 import type { dashboard_bookings_state } from '@/src/types/dashboard_bookings_state';
 
@@ -27,6 +28,8 @@ export function useDashboardBookings(
     today_loading: true,
     next_appointment: null,
     next_loading: true,
+    week_bookings: [],
+    week_loading: true,
     month_bookings: [],
     month_loading: true,
   });
@@ -40,6 +43,8 @@ export function useDashboardBookings(
         today_loading: false,
         next_appointment: null,
         next_loading: false,
+        week_bookings: [],
+        week_loading: false,
         month_bookings: [],
         month_loading: false,
       });
@@ -53,6 +58,7 @@ export function useDashboardBookings(
         ...prev,
         today_loading: true,
         next_loading: true,
+        week_loading: true,
         month_loading: true,
       }));
 
@@ -69,6 +75,8 @@ export function useDashboardBookings(
               today_loading: false,
               next_appointment: null,
               next_loading: false,
+              week_bookings: [],
+              week_loading: false,
               month_bookings: [],
               month_loading: false,
             });
@@ -79,6 +87,12 @@ export function useDashboardBookings(
         const auth_header = { Authorization: `Bearer ${session.access_token}` };
         const today_key = toDateKey(new Date());
 
+        const week_days = get_dashboard_week_days();
+        const week_params = new URLSearchParams({
+          start_date: week_days[0].dateString,
+          end_date: week_days[week_days.length - 1].dateString,
+        });
+
         const start_of_month = new Date(view_date.getFullYear(), view_date.getMonth(), 1);
         const end_of_month = new Date(view_date.getFullYear(), view_date.getMonth() + 1, 0);
         const range_params = new URLSearchParams({
@@ -86,12 +100,16 @@ export function useDashboardBookings(
           end_date: toDateKey(end_of_month),
         });
 
-        const [today_res, next_res, month_res] = await Promise.all([
+        const [today_res, next_res, week_res, month_res] = await Promise.all([
           fetch(
             `/api/bookings?date=${today_key}&limit=150`,
             { headers: auth_header, signal: ac.signal },
           ),
           fetch('/api/bookings?sort=upcoming&limit=1', {
+            headers: auth_header,
+            signal: ac.signal,
+          }),
+          fetch(`/api/bookings?${week_params.toString()}&limit=500`, {
             headers: auth_header,
             signal: ac.signal,
           }),
@@ -109,6 +127,9 @@ export function useDashboardBookings(
         const next_json = next_res.ok
           ? ((await next_res.json()) as BookingsApiResponse)
           : { data: [] };
+        const week_json = week_res.ok
+          ? ((await week_res.json()) as BookingsApiResponse)
+          : { data: [] };
         const month_json = month_res.ok
           ? ((await month_res.json()) as BookingsApiResponse)
           : { data: [] };
@@ -124,6 +145,8 @@ export function useDashboardBookings(
           today_loading: false,
           next_appointment: next_first,
           next_loading: false,
+          week_bookings: week_json.data ?? [],
+          week_loading: false,
           month_bookings: month_json.data ?? [],
           month_loading: false,
         });
@@ -136,6 +159,8 @@ export function useDashboardBookings(
             today_loading: false,
             next_appointment: null,
             next_loading: false,
+            week_bookings: [],
+            week_loading: false,
             month_bookings: [],
             month_loading: false,
           });

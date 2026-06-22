@@ -11,10 +11,12 @@ export type post_booking_whatsapp_notification_payload = {
   provider?: string;
   start?: string;
   end?: string;
+  previous_start?: string;
   note?: string;
   arrive_early_min?: number;
   arrive_early_max?: number;
   booking_reference?: string;
+  booking_id?: string;
   cancelled_by?: string;
   customer_timezone?: string;
   provider_timezone?: string;
@@ -49,6 +51,9 @@ export async function post_booking_whatsapp_notification(
   if (payload.provider !== undefined) body.provider = payload.provider;
   if (payload.start !== undefined) body.start = payload.start;
   if (payload.end !== undefined) body.end = payload.end;
+  if (payload.previous_start !== undefined) {
+    body.previous_start = payload.previous_start;
+  }
   if (payload.note !== undefined) body.note = payload.note;
   if (payload.arrive_early_min !== undefined) {
     body.arrive_early_min = payload.arrive_early_min;
@@ -58,6 +63,9 @@ export async function post_booking_whatsapp_notification(
   }
   if (payload.booking_reference !== undefined) {
     body.booking_reference = payload.booking_reference;
+  }
+  if (payload.booking_id !== undefined) {
+    body.booking_id = payload.booking_id;
   }
   if (payload.cancelled_by !== undefined) {
     body.cancelled_by = payload.cancelled_by;

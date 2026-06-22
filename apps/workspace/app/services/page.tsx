@@ -18,6 +18,7 @@ import { supabase } from "@/lib/supabaseClient";
 import { AlertModal } from "@/src/components/ui/AlertModal";
 import { ConfirmModal } from "@/src/components/ui/ConfirmModal";
 import { ServiceSkeleton } from "@/src/components/ui/ServiceSkeleton";
+import { currencySymbol } from "@/src/constants/currency";
 import { useServiceProviders, useUserDepartments } from "@/src/hooks/useBookingLookups";
 import { useAuth } from "@/src/providers/AuthProvider";
 import type { ServiceProvider } from "@/src/types/booking-entities";
@@ -99,9 +100,12 @@ function providerInitials(name: string): string {
   return (a + b).toUpperCase() || parts[0].slice(0, 2).toUpperCase();
 }
 
-function formatCurrency(value: number | null | undefined): string {
+function formatCurrency(
+  value: number | null | undefined,
+  symbol: string
+): string {
   if (value == null) return "—";
-  return `$${value.toFixed(2)}`;
+  return `${symbol}${value.toFixed(2)}`;
 }
 
 function parsePriceInput(raw: string): number | null {
@@ -155,6 +159,9 @@ export default function ServicesPage() {
   const [serviceToDelete, setServiceToDelete] = useState<Service | null>(null);
   const [alertMessage, setAlertMessage] = useState<string | null>(null);
 
+  const [currency, setCurrency] = useState<string>("USD");
+  const currencySign = currencySymbol(currency);
+
   const getAuthToken = useCallback(async () => {
     const {
       data: { session },
@@ -183,6 +190,22 @@ export default function ServicesPage() {
     const data = await response.json();
     return (data.services ?? []) as Service[];
   }, [getAuthToken]);
+
+  const fetchCurrency = useCallback(async () => {
+    const token = await getAuthToken();
+    if (!token) return;
+    const response = await fetch("/api/settings", {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!response.ok) return;
+    const data = await response.json();
+    const value = data?.settings?.general?.currency;
+    if (typeof value === "string" && value) setCurrency(value);
+  }, [getAuthToken]);
+
+  useEffect(() => {
+    fetchCurrency();
+  }, [fetchCurrency]);
 
   const loadAll = useCallback(
     async (opts?: { silent?: boolean; selectId?: number | null }) => {
@@ -967,7 +990,7 @@ export default function ServicesPage() {
                           </span>
                           {service.price != null && (
                             <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-medium text-slate-600 whitespace-nowrap">
-                              {formatCurrency(service.price)}
+                              {formatCurrency(service.price, currencySign)}
                             </span>
                           )}
                           <span
@@ -1304,7 +1327,7 @@ export default function ServicesPage() {
                   </label>
                   <div className="relative">
                     <span className="absolute left-4 top-1/2 -translate-y-1/2 text-sm font-medium text-slate-500">
-                      $
+                      {currencySign}
                     </span>
                     <input
                       type="number"
@@ -1412,7 +1435,7 @@ export default function ServicesPage() {
                   </label>
                   <div className="relative">
                     <span className="absolute left-4 top-1/2 -translate-y-1/2 text-sm font-medium text-slate-500">
-                      $
+                      {currencySign}
                     </span>
                     <input
                       type="number"
@@ -1506,7 +1529,7 @@ export default function ServicesPage() {
                               {service.name}
                             </p>
                             <p className="mt-1 text-xs text-slate-500">
-                              {service.duration} min • {formatCurrency(service.price)}
+                              {service.duration} min • {formatCurrency(service.price, currencySign)}
                             </p>
                           </td>
                           <td className="border-b border-slate-200 px-4 py-4 align-top">

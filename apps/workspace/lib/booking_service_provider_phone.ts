@@ -243,3 +243,75 @@ export async function resolve_provider_notification_contact(
 
   return { email, provider_name };
 }
+
+function display_name_from_user(u: {
+  email?: string | null;
+  user_metadata?: Record<string, unknown> | null;
+}): string | null {
+  const meta = u.user_metadata ?? undefined;
+  const fullName =
+    typeof meta?.full_name === 'string' ? meta.full_name.trim() : '';
+  const name = typeof meta?.name === 'string' ? meta.name.trim() : '';
+  const email = u.email?.trim() ?? '';
+  return fullName || name || email || null;
+}
+
+/**
+ * Resolves the display name to snapshot onto `bookings.service_provider_name` at
+ * creation (or reassignment). Falls back to the workspace owner when no provider is set,
+ * mirroring the UI fallback. Returns null only when nothing can be resolved.
+ */
+export async function resolve_booking_service_provider_name_snapshot(
+  supabase: SupabaseClient,
+  adminClient: SupabaseClient | null,
+  workspace_id: string | number,
+  service_provider_id: string | null | undefined
+): Promise<string | null> {
+  if (service_provider_id && adminClient) {
+    try {
+      const { data: providerData, error } =
+        await adminClient.auth.admin.getUserById(service_provider_id);
+      const u = providerData?.user;
+      if (!error && u) {
+        const resolved = display_name_from_user(u);
+        if (resolved) return resolved;
+      }
+    } catch {
+      // fall through to owner
+    }
+  }
+
+  const { data: workspaceRow } = await supabase
+    .from('workspaces')
+    .select('user_id')
+    .eq('id', workspace_id)
+    .maybeSingle();
+
+  const owner_user_id = workspaceRow?.user_id as string | null | undefined;
+  if (owner_user_id && adminClient) {
+    try {
+      const { data: ownerData, error: ownerErr } =
+        await adminClient.auth.admin.getUserById(owner_user_id);
+      const u = ownerData?.user;
+      if (!ownerErr && u) {
+        const resolved = display_name_from_user(u);
+        if (resolved) return resolved;
+      }
+    } catch {
+      // noop
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Notification display name: prefer the stored booking snapshot when present,
+ * otherwise fall back to the live-resolved provider name (legacy rows).
+ */
+export function notification_provider_name(
+  booking: { service_provider_name?: string | null },
+  resolved?: { provider_name?: string }
+): string | undefined {
+  return booking.service_provider_name?.trim() || resolved?.provider_name;
+}

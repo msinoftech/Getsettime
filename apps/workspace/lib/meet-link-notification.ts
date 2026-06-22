@@ -1,6 +1,7 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { emailTimezoneFields } from '@/lib/booking-timezone-api';
 import {
+  notification_provider_name,
   resolve_provider_notification_contact,
   sole_workspace_department_display_name,
 } from '@/lib/booking_service_provider_phone';
@@ -15,6 +16,7 @@ export type meet_link_notification_booking = {
   invitee_name?: string | null;
   invitee_email?: string | null;
   service_provider_id?: string | null;
+  service_provider_name?: string | null;
   department_id?: string | null;
   event_type_id?: string | null;
   start_at: string;
@@ -121,7 +123,7 @@ async function build_meet_link_email_data(
   }
 
   let providerEmail: string | undefined;
-  let providerName: string | undefined;
+  let providerName: string | undefined = notification_provider_name(booking);
   if (adminClient) {
     try {
       const resolved = await resolve_provider_notification_contact(
@@ -131,7 +133,7 @@ async function build_meet_link_email_data(
         booking.service_provider_id || null
       );
       providerEmail = resolved.email;
-      providerName = resolved.provider_name;
+      providerName = notification_provider_name(booking, resolved);
     } catch (err) {
       console.warn('meet-link-notification: provider contact resolution failed:', err);
     }

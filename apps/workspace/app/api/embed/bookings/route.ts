@@ -10,6 +10,7 @@ import {
   resolveValidationTimezone,
 } from '@/lib/booking-timezone-api';
 import { run_post_booking_processing } from '@/lib/post_booking_processing';
+import { resolve_booking_service_provider_name_snapshot } from '@/lib/booking_service_provider_phone';
 import {
   list_bookable_meeting_option_keys,
 } from '@/src/utils/meeting_options';
@@ -535,6 +536,14 @@ export async function POST(req: NextRequest) {
       locationForInsert = { meeting_option: mo };
     }
 
+    const serviceProviderNameSnapshot =
+      await resolve_booking_service_provider_name_snapshot(
+        supabase,
+        supabase,
+        workspace_id,
+        service_provider_id || null
+      );
+
     // Create booking with embed source
     let { data, error } = await supabase
       .from('bookings')
@@ -542,6 +551,7 @@ export async function POST(req: NextRequest) {
         workspace_id,
         event_type_id: event_type_id || null,
         service_provider_id: service_provider_id || null,
+        service_provider_name: serviceProviderNameSnapshot,
         department_id: department_id || null,
         host_user_id: null,
         invitee_name: invitee_name.trim(),

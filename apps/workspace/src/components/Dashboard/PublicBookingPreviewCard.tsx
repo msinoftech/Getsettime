@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/lib/supabaseClient';
+import DashboardIcon from '@/src/components/Dashboard/DashboardIcon';
 import { useWorkspaceSettings } from '@/src/hooks/useWorkspaceSettings';
 import { build_service_provider_public_booking_url, build_workspace_public_booking_url } from '@/src/utils/public_booking_link';
 import { ROLE_SERVICE_PROVIDER } from '@/src/constants/roles';
@@ -124,25 +125,32 @@ export function PublicBookingPreviewCard() {
   };
 
   return (
-    <div className="rounded-[26px] border border-white/25 bg-white/15 p-5 shadow-xl backdrop-blur-xl">
+    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
       <div className="flex items-center justify-between">
-        <p className="font-black text-white">Public Booking Preview</p>
-        <span className="rounded-full bg-emerald-300 px-3 py-1 text-xs font-black text-emerald-950">
+        <h3 className="text-lg font-bold text-slate-900">Live Booking Page Preview</h3>
+        <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-700">
           {booking_url ? 'Live' : 'Setup'}
         </span>
       </div>
 
-      <div className="mt-5 rounded-3xl bg-white p-5 text-slate-900 shadow-lg">
-        <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-indigo-600 text-lg font-black text-white">
-          {initial}
+      <div className="mt-4 rounded-2xl border border-slate-100 bg-slate-50/60 p-5 text-slate-900">
+        <div className="flex items-center gap-3">
+          <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-indigo-600 text-lg font-bold text-white">
+            {initial}
+          </div>
+          <div className="min-w-0">
+            <h4 className="truncate text-base font-bold text-slate-900">
+              {workspace_title}
+            </h4>
+            <p className="text-sm text-slate-500">{duration_label}</p>
+          </div>
         </div>
-        <h3 className="mt-4 text-lg font-black">
-          {`${workspace_title}`}
-        </h3>
-        <p className="mt-1 text-sm text-slate-500">{duration_label}</p>
-        <div className="mt-4 grid grid-cols-3 gap-2 text-center text-xs font-bold text-slate-600">
+        <div className="mt-4 grid grid-cols-3 gap-2 text-center text-xs font-semibold text-slate-600">
           {preview_slots.map((slot) => (
-            <span key={slot} className="rounded-xl bg-slate-100 py-2">
+            <span
+              key={slot}
+              className="rounded-xl border border-slate-200 bg-white py-2"
+            >
               {slot}
             </span>
           ))}
@@ -151,9 +159,18 @@ export function PublicBookingPreviewCard() {
           type="button"
           onClick={open_public_page}
           disabled={!booking_url}
-          className="mt-4 w-full rounded-2xl bg-indigo-600 py-3 text-sm font-black text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+          className="mt-4 w-full rounded-xl bg-indigo-600 py-2.5 text-sm font-bold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
         >
           Book Appointment
+        </button>
+        <button
+          type="button"
+          onClick={open_public_page}
+          disabled={!booking_url}
+          className="mt-3 flex w-full items-center justify-center gap-1.5 text-sm font-semibold text-indigo-600 transition hover:text-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <DashboardIcon name="externalLink" size={16} />
+          Open booking page
         </button>
       </div>
     </div>

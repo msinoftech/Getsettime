@@ -18,6 +18,7 @@ export type Booking = {
   payment_id: string | null;
   metadata: Record<string, unknown> | null;
   service_provider_id: string | null;
+  service_provider_name: string | null;
   department_id: string | null;
   sms_reminder_sent_at: string | null;
   sms_reminder_skipped_at: string | null;

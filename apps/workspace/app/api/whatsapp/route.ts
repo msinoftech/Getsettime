@@ -6,6 +6,10 @@ import {
   formatBookingNotificationDateTime,
   notification_timezone_for_role,
 } from "@/lib/booking-timezone-api";
+import {
+  formatDateOnlyInTimezone,
+  formatTimeOnlyInTimezone,
+} from "@/lib/date-timezone";
 
 function normalize_admin_phones(admin_phone: unknown): string[] {
   if (admin_phone == null) return [];
@@ -32,7 +36,7 @@ type notification_kind = "booking" | "reminder" | "cancel" | "reschedule";
 const USER_TEMPLATE_NAMES: Record<notification_kind, string> = {
   booking: "booking_confirmation",
   reminder: "whatsapp_reminder",
-  cancel: "appointment_cancelled", // old: appointment_cancelled, New: appointment_cancelled_to_user
+  cancel: "appointment_cancelled_to_user", // old: appointment_cancelled, New: appointment_cancelled_to_user
   reschedule: "appointment_rescheduled",
 };
 
@@ -40,8 +44,8 @@ const USER_TEMPLATE_NAMES: Record<notification_kind, string> = {
 const ADMIN_TEMPLATE_NAMES: Record<notification_kind, string> = {
   booking: "booking_received",
   reminder: "whatsapp_reminder",
-  cancel: "appointment_cancelled", // old: appointment_cancelled, New: appointment_cancelled_to_admin
-  reschedule: "appointment_rescheduled", // old: appointment_rescheduled, New: appointment_rescheduled_to_admin
+  cancel: "appointment_cancelled_to_admin", // old: appointment_cancelled, New: appointment_cancelled_to_admin
+  reschedule: "appointment_rescheduled_to_admin", // old: appointment_rescheduled, New: appointment_rescheduled_to_admin
 };
 
 /** Per-kind template language codes (all default to "en"; override per-kind if needed). */
@@ -66,9 +70,8 @@ export async function POST(req: Request) {
       start,
       end,
       note,
-      arrive_early_min,
-      arrive_early_max,
       booking_reference,
+      booking_id,
       // Optional flags to control which WhatsApp messages are sent.
       // Default to true for backward compatibility with existing callers.
       send_to_user = true,
@@ -78,6 +81,9 @@ export async function POST(req: Request) {
       notification_kind = "booking",
       cancelled_by,
     } = body;
+
+    const previous_start =
+      typeof body.previous_start === "string" ? body.previous_start : null;
 
     const validKinds: notification_kind[] = ["booking", "reminder", "cancel", "reschedule"];
     const whatsapp_flow_kind: notification_kind = validKinds.includes(
@@ -189,10 +195,28 @@ export async function POST(req: Request) {
     const adminFormattedStart = formatDateTimeForTemplate(start, "provider");
     const adminFormattedEnd = formatDateTimeForTemplate(end, "provider");
 
+    const providerTz = notification_timezone_for_role("provider", timezoneFields);
+    const formatDatePart = (value: unknown) => {
+      if (!value) return "Not provided";
+      return providerTz
+        ? formatDateOnlyInTimezone(String(value), providerTz)
+        : formatBookingNotificationDateTime(String(value), null);
+    };
+    const formatTimePart = (value: unknown) => {
+      if (!value) return "Not provided";
+      return providerTz
+        ? formatTimeOnlyInTimezone(String(value), providerTz)
+        : String(value);
+    };
+
     const safeService = text_or_empty(service);
     const safeDepartment = text_or_empty(department);
     const safeProvider = text_or_empty(provider);
     const safeNote = text_or_empty(note);
+
+    // Admin notifications are addressed to the service provider, so the greeting
+    // name in admin templates uses the provider's (first) name, not the client's.
+    const providerFirstName = safeProvider.split(" ")[0] || safeProvider;
 
     const safeCancelledBy = text_or_empty(cancelled_by) || "N/A";
 
@@ -208,8 +232,6 @@ export async function POST(req: Request) {
         userFormattedStart,
         userFormattedEnd,
         safeNote || "N/A",
-        String(arrive_early_min ?? 10),
-        String(arrive_early_max ?? 15),
       ],
       reminder: [
         firstName || "N/A",
@@ -218,7 +240,6 @@ export async function POST(req: Request) {
         safeDepartment || "N/A",
         userFormattedStart,
         userFormattedEnd,
-        String(arrive_early_min ?? 10),
       ],
       cancel: [
         firstName || "N/A",
@@ -235,7 +256,6 @@ export async function POST(req: Request) {
         safeDepartment || "N/A",
         userFormattedStart,
         userFormattedEnd,
-        String(arrive_early_min ?? 10),
       ],
     };
 
@@ -252,30 +272,37 @@ export async function POST(req: Request) {
         safeNote || "N/A",
       ],
       reminder: [
-        firstName || "N/A",
+        providerFirstName || "N/A",
         safeService || "N/A",
         safeProvider || "N/A",
         safeDepartment || "N/A",
         adminFormattedStart,
         adminFormattedEnd,
-        String(arrive_early_min ?? 10),
       ],
       cancel: [
-        firstName || "N/A",
+        providerFirstName || "N/A",
+        fullName || "N/A",
+        String(phone) || "N/A",
+        email ? String(email) : "Not provided",
         safeService || "N/A",
         safeProvider || "N/A",
+        safeDepartment || "N/A",
         adminFormattedStart,
         adminFormattedEnd,
         safeCancelledBy,
       ],
       reschedule: [
-        firstName || "N/A",
+        providerFirstName || "N/A",
+        fullName || "N/A",
+        String(phone) || "N/A",
+        email ? String(email) : "Not provided",
         safeService || "N/A",
         safeProvider || "N/A",
         safeDepartment || "N/A",
-        adminFormattedStart,
-        adminFormattedEnd,
-        String(arrive_early_min ?? 10),
+        formatDatePart(previous_start),
+        formatTimePart(previous_start),
+        formatDatePart(start),
+        formatTimePart(start),
       ],
     };
 
@@ -359,19 +386,19 @@ export async function POST(req: Request) {
         },
       ];
 
-      // if (booking_reference) {
-      //   adminTemplateComponents.push({
-      //     type: "button",
-      //     sub_type: "url",
-      //     index: "0",
-      //     parameters: [
-      //       {
-      //         type: "text",
-      //         text: String(booking_reference),
-      //       },
-      //     ],
-      //   });
-      // }
+      if (booking_id) {
+        adminTemplateComponents.push({
+          type: "button",
+          sub_type: "url",
+          index: "0",
+          parameters: [
+            {
+              type: "text",
+              text: String(booking_id),
+            },
+          ],
+        });
+      }
 
       try {
         const adminPromises = adminNumbers.map((adminPhone) =>

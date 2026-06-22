@@ -4,6 +4,7 @@ import { isValidPhone, toE164, sendSMS } from '@/lib/twilio-sms';
 import { sendReminderEmail, sendFollowUpEmail } from '@/lib/email-service';
 import { getServerAppOrigin } from '@/lib/request-site-origin';
 import { post_booking_whatsapp_notification } from '@/lib/post_booking_whatsapp_notification';
+import { notification_provider_name } from '@/lib/booking_service_provider_phone';
 import { readBookingTimezonesFromRow, whatsapp_timezone_payload } from '@/lib/booking-timezone-api';
 import { is_whatsapp_user_enabled } from '@/lib/workspace-notification-flags';
 import { resolveNotificationsForServiceProvider } from '@/src/utils/providerSettingsResolution';
@@ -329,7 +330,7 @@ async function process1hWhatsAppReminders(
   const { data: bookings, error } = await supabase
     .from('bookings')
     .select(
-      'id, public_code, workspace_id, invitee_name, invitee_phone, invitee_email, start_at, end_at, event_type_id, department_id, service_provider_id, metadata, location, contact_id, customer_timezone, provider_timezone, contacts(phone, email, name), event_types(title, buffer_before, buffer_after)',
+      'id, public_code, workspace_id, invitee_name, invitee_phone, invitee_email, start_at, end_at, event_type_id, department_id, service_provider_id, service_provider_name, metadata, location, contact_id, customer_timezone, provider_timezone, contacts(phone, email, name), event_types(title, buffer_before, buffer_after)',
     )
     .gte('start_at', windowStart.toISOString())
     .lte('start_at', windowEnd.toISOString())
@@ -424,8 +425,10 @@ async function process1hWhatsAppReminders(
         departmentName = dept?.name || undefined;
       }
 
-      let providerName: string | undefined;
-      if ((booking as Record<string, unknown>).service_provider_id) {
+      let providerName: string | undefined = notification_provider_name(
+        booking as { service_provider_name?: string | null }
+      );
+      if (!providerName && (booking as Record<string, unknown>).service_provider_id) {
         const { data: sp } = await supabase
           .from('service_providers')
           .select('name')

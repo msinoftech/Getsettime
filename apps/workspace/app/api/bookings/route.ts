@@ -14,6 +14,8 @@ import {
 import { appendActivityLog } from '@/lib/activity-log';
 import {
   admin_whatsapp_phones_for_booking,
+  notification_provider_name,
+  resolve_booking_service_provider_name_snapshot,
   resolve_provider_notification_contact,
   sole_workspace_department_display_name,
 } from '@/lib/booking_service_provider_phone';
@@ -656,12 +658,21 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    const serviceProviderNameSnapshot =
+      await resolve_booking_service_provider_name_snapshot(
+        supabase,
+        getServiceRoleClient(),
+        workspaceId,
+        bookingServiceProviderId
+      );
+
     let { data, error } = await supabase
       .from('bookings')
       .insert({
         workspace_id: workspaceId,
         event_type_id: event_type_id || null,
         service_provider_id: service_provider_id || null,
+        service_provider_name: serviceProviderNameSnapshot,
         department_id: department_id || null,
         host_user_id: hostUserId,
         invitee_name: invitee_name.trim(),
@@ -832,7 +843,20 @@ export async function PATCH(req: NextRequest) {
 
     const updateData: Record<string, unknown> = {};
     if (event_type_id !== undefined) updateData.event_type_id = event_type_id || null;
-    if (service_provider_id !== undefined) updateData.service_provider_id = service_provider_id || null;
+    if (service_provider_id !== undefined) {
+      const nextProviderId = service_provider_id || null;
+      updateData.service_provider_id = nextProviderId;
+      const prevProviderId = existingRow.service_provider_id || null;
+      if (nextProviderId !== prevProviderId) {
+        updateData.service_provider_name =
+          await resolve_booking_service_provider_name_snapshot(
+            supabase,
+            getPatchServiceRoleClient(),
+            workspaceId,
+            nextProviderId
+          );
+      }
+    }
     if (department_id !== undefined) updateData.department_id = department_id || null;
     if (invitee_name !== undefined) updateData.invitee_name = invitee_name?.trim() || null;
     if (invitee_email !== undefined) updateData.invitee_email = invitee_email?.trim() || null;
@@ -1169,7 +1193,7 @@ export async function PATCH(req: NextRequest) {
             data.service_provider_id || null
           );
           providerEmail = resolved.email;
-          providerName = resolved.provider_name;
+          providerName = notification_provider_name(data, resolved);
         } else {
           console.warn(
             'Service role key not configured, cannot fetch provider details for reschedule notifications'
@@ -1289,10 +1313,12 @@ export async function PATCH(req: NextRequest) {
               ...(providerName?.trim() ? { provider: providerName.trim() } : {}),
               start: newStart!,
               end: newEnd!,
+              previous_start: prevStart,
               note: notesFromMetaRes,
               arrive_early_min: arriveEarlyMin,
               arrive_early_max: arriveEarlyMax,
               booking_reference: String(data.public_code || data.id || ''),
+              booking_id: data?.id ? String(data.id) : undefined,
               send_to_user:
                 reschedule_whatsapp_user && Boolean(inviteePhoneTrimmed),
               send_to_admin:
@@ -1391,7 +1417,7 @@ export async function PATCH(req: NextRequest) {
             data.service_provider_id || null
           );
           providerEmail = resolved.email;
-          providerName = resolved.provider_name;
+          providerName = notification_provider_name(data, resolved);
         } else {
           console.warn(
             'Service role key not configured, cannot fetch provider details for status notifications'
@@ -1549,6 +1575,7 @@ export async function PATCH(req: NextRequest) {
               arrive_early_min: arriveEarlyMin,
               arrive_early_max: arriveEarlyMax,
               booking_reference: workspaceSlug,
+              booking_id: data?.id ? String(data.id) : undefined,
               cancelled_by: providerName?.trim() || 'Admin',
               send_to_user:
                 whatsapp_user && Boolean(inviteePhoneStatus),

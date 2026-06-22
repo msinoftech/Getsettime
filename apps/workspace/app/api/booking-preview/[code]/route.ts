@@ -77,6 +77,7 @@ export async function GET(
                   invitee_name: booking.invitee_name,
                   invitee_email: booking.invitee_email,
                   service_provider_id: booking.service_provider_id,
+                  service_provider_name: booking.service_provider_name,
                   department_id: booking.department_id,
                   event_type_id: booking.event_type_id,
                   start_at: booking.start_at,

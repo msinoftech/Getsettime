@@ -4,6 +4,7 @@ import { sendReminderEmail } from '@/lib/email-service';
 import { getPublicSiteOrigin } from '@/lib/request-site-origin';
 import {
   admin_whatsapp_phones_for_booking,
+  notification_provider_name,
   resolve_provider_notification_contact,
   sole_workspace_department_display_name,
 } from '@/lib/booking_service_provider_phone';
@@ -71,7 +72,7 @@ export async function POST(
     const { data: booking, error: bookingError } = await supabase
       .from('bookings')
       .select(
-        'id,workspace_id,public_code,invitee_name,invitee_email,invitee_phone,service_provider_id,department_id,event_type_id,metadata,location,start_at,end_at,status,contact_id,customer_timezone,provider_timezone,contacts(name,phone,email),event_types(title,buffer_before,buffer_after)'
+        'id,workspace_id,public_code,invitee_name,invitee_email,invitee_phone,service_provider_id,service_provider_name,department_id,event_type_id,metadata,location,start_at,end_at,status,contact_id,customer_timezone,provider_timezone,contacts(name,phone,email),event_types(title,buffer_before,buffer_after)'
       )
       .eq('id', booking_id)
       .eq('workspace_id', workspaceId)
@@ -152,8 +153,10 @@ export async function POST(
       }
     }
 
-    let providerName: string | undefined;
-    if (serviceClient) {
+    let providerName: string | undefined = notification_provider_name(
+      booking as { service_provider_name?: string | null }
+    );
+    if (!providerName && serviceClient) {
       const resolved = await resolve_provider_notification_contact(
         serviceClient,
         serviceClient,
@@ -314,6 +317,7 @@ export async function POST(
       arrive_early_min: arriveEarlyMin,
       arrive_early_max: arriveEarlyMax,
       booking_reference: bookingRef,
+      booking_id: String(booking_id),
       send_to_user: user_ok && Boolean(inviteeEffective.trim()),
       send_to_admin: admin_ok,
       ...(admin_ok && admin_phones.length ? { admin_phone: admin_phones } : {}),

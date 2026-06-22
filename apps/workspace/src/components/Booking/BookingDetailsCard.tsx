@@ -24,6 +24,7 @@ import {
   getEventTypeDurationInner,
 } from '@/src/utils/booking';
 import {
+  booking_service_provider_display_name,
   get_service_provider_display_name,
   get_service_provider_display_phone,
   type service_provider_display_source,
@@ -607,16 +608,17 @@ export function BookingDetailsCard({
   const has_service_provider_id =
     booking.service_provider_id != null &&
     booking.service_provider_id !== '';
-  const service_provider_display = has_service_provider_id
-    ? capitalize_booking_display_label(
-        getServiceProviderName(booking.service_provider_id, serviceProviders)
-      )
-    : get_service_provider_display_name(null, workspace_owner ?? undefined);
 
   const assigned_service_provider = has_service_provider_id
     ? serviceProviders.find((sp) => sp.id === booking.service_provider_id) ??
       null
     : null;
+
+  const service_provider_display = booking_service_provider_display_name(
+    booking,
+    assigned_service_provider,
+    workspace_owner ?? undefined
+  );
   const host_contact_phone = has_service_provider_id
     ? get_service_provider_display_phone(
         assigned_service_provider,

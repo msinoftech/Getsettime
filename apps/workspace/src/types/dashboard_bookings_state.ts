@@ -6,6 +6,8 @@ export type dashboard_bookings_state = {
   today_loading: boolean;
   next_appointment: Booking | null;
   next_loading: boolean;
+  week_bookings: Booking[];
+  week_loading: boolean;
   month_bookings: Booking[];
   month_loading: boolean;
 };
