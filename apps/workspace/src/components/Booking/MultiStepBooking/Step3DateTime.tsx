@@ -119,6 +119,17 @@ export function Step3DateTime({
     scrolledForDateRef.current = selectedDate ? selectedDate.toDateString() : null;
   }
 
+  // Auto-select today's date the first time Step 3 is opened with no existing
+  // selection, so available times show immediately. Existing selections (e.g.
+  // when navigating back/forth between steps) are preserved.
+  const autoSelectedTodayRef = useRef(false);
+  useEffect(() => {
+    if (autoSelectedTodayRef.current) return;
+    if (selectedDate != null) return;
+    autoSelectedTodayRef.current = true;
+    onSelectDate(normalizeDate(new Date()));
+  }, [selectedDate, onSelectDate]);
+
   const loadMoreDates = useCallback(() => {
     if (isLoadingMoreRef.current) return;
     isLoadingMoreRef.current = true;
@@ -436,7 +447,7 @@ export function Step3DateTime({
         <div className="relative z-0 w-full min-w-0 overflow-hidden">
           <div
             ref={scrollContainerRef}
-            className="flex flex-nowrap gap-2 sm:gap-3 overflow-x-auto overflow-y-hidden py-2 sm:pb-3 -mx-1 px-1 scroll-smooth [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar-track]:bg-gray-100 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-gray-300"
+            className="flex flex-nowrap gap-2 sm:gap-3 overflow-x-auto overflow-y-hidden py-2 sm:pb-3 -mx-1 px-1 scroll-smooth [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar-track]:bg-gray-100 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-gray-300 px-4"
           >
             {availableDays.map((d) => {
                 const isSelected = selectedDate?.toDateString() === d.toDateString();
