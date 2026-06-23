@@ -73,7 +73,7 @@ export function CreateBookingModalProvider({
   );
 }
 
-/** Mount as the last node inside authenticated `<main>` so the overlay clips to the shell (sidebar/topbar stay visible). */
+/** Viewport-anchored overlay positioned to the shell content area (below the 64px topbar, right of the 256px sidebar) so the modal stays contained and only its content scrolls. */
 export function CreateBookingModalHost() {
   const { isOpen, close } = useCreateBookingModal();
 
@@ -86,6 +86,24 @@ export function CreateBookingModalHost() {
     return () => window.removeEventListener("keydown", on_key);
   }, [isOpen, close]);
 
+  // Lock the real scrolling element (document) so the page behind cannot scroll
+  // while the modal is open, then restore it on close.
+  useEffect(() => {
+    if (!isOpen) return;
+    const scrolling_el = (document.scrollingElement ||
+      document.documentElement) as HTMLElement;
+    const previous_scroll_top = scrolling_el.scrollTop;
+    const previous_html_overflow = document.documentElement.style.overflow;
+    const previous_body_overflow = document.body.style.overflow;
+    document.documentElement.style.overflow = "hidden";
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.documentElement.style.overflow = previous_html_overflow;
+      document.body.style.overflow = previous_body_overflow;
+      scrolling_el.scrollTop = previous_scroll_top;
+    };
+  }, [isOpen]);
+
   const handle_save = useCallback(() => {
     close();
   }, [close]);
@@ -94,7 +112,7 @@ export function CreateBookingModalHost() {
 
   return (
     <div
-      className="absolute inset-0 z-50 flex items-start justify-center overflow-y-auto bg-white px-3 pb-6 pt-3 sm:px-6 sm:pb-8 sm:pt-4 lg:px-8 lg:pb-10"
+      className="fixed bottom-0 left-0 right-0 top-16 z-50 flex flex-col items-center overflow-hidden bg-white px-3 pb-6 pt-3 sm:px-6 sm:pb-8 sm:pt-4 lg:left-64 lg:px-8 lg:pb-10"
       role="presentation"
       onClick={(e) => {
         if (e.target === e.currentTarget) close();
@@ -105,7 +123,7 @@ export function CreateBookingModalHost() {
         role="dialog"
         aria-modal="true"
         aria-labelledby="admin-create-booking-dialog-title"
-        className="relative w-full max-w-7xl"
+        className="relative flex min-h-0 w-full max-w-7xl flex-1 flex-col"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-4 flex shrink-0 items-start justify-between gap-3 rounded-[20px] border border-slate-200/80 bg-white/95 px-4 py-4 shadow-lg backdrop-blur-sm sm:items-center sm:px-5">
@@ -129,12 +147,14 @@ export function CreateBookingModalHost() {
             Close
           </button>
         </div>
-        <MultiStepBookingForm
-          variant="embedded"
-          hide_embedded_toolbar
-          onSave={handle_save}
-          onCancel={close}
-        />
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+          <MultiStepBookingForm
+            variant="embedded"
+            hide_embedded_toolbar
+            onSave={handle_save}
+            onCancel={close}
+          />
+        </div>
       </div>
     </div>
   );

@@ -276,7 +276,6 @@ export async function POST(req: NextRequest) {
     }
 
     const supabase = createSupabaseServerClient();
-    const wsIdNum = typeof workspaceId === 'number' ? workspaceId : Number(workspaceId);
 
     const { data: existingConfig, error: fetchError } = await supabase
       .from('configurations')
@@ -287,28 +286,6 @@ export async function POST(req: NextRequest) {
     if (fetchError && fetchError.code !== 'PGRST116') {
       console.error('Error fetching existing settings:', fetchError);
       return NextResponse.json({ error: fetchError.message }, { status: 500 });
-    }
-
-    if (newSettings.notifications && typeof newSettings.notifications === 'object') {
-      const incoming = newSettings.notifications as Record<string, unknown>;
-      const existingSettingsPre = (existingConfig?.settings || {}) as Record<string, unknown>;
-      const existingNotif = (existingSettingsPre.notifications || {}) as Record<string, unknown>;
-
-      const enablingWhatsapp =
-        (incoming.whatsapp === true && existingNotif.whatsapp !== true) ||
-        (incoming['whatsapp-user'] === true && existingNotif['whatsapp-user'] !== true);
-
-      if (enablingWhatsapp) {
-        try {
-          const { assertPlanFeatureAllowed } = await import('@app/db/subscription');
-          await assertPlanFeatureAllowed(supabase, wsIdNum, 'whatsapp_automation');
-        } catch (planErr) {
-          const { planLimitErrorResponse } = await import('@/lib/plan-limit-response');
-          const planResp = planLimitErrorResponse(planErr);
-          if (planResp) return planResp;
-          throw planErr;
-        }
-      }
     }
 
     // Merge existing settings with new settings (new settings take precedence)

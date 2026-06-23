@@ -503,23 +503,6 @@ export function IntegrationsNotificationsView() {
     const target = flows.find((f) => f.id === id);
     if (!target) return;
 
-    const turningOn = !target.active;
-    const isWhatsapp =
-      target.settingsKey === "whatsapp" || target.settingsKey === "whatsapp-user";
-
-    if (
-      turningOn &&
-      isWhatsapp &&
-      subscription &&
-      !subscription.plan.whatsapp_automation
-    ) {
-      setUpgradeModalMessage(
-        "WhatsApp automation is available on paid plans. Upgrade to continue."
-      );
-      setUpgradeModalOpen(true);
-      return;
-    }
-
     const previousFlows = flows;
     const updatedFlows = flows.map((f) => (f.id === id ? { ...f, active: !f.active } : f));
     setFlows(updatedFlows);

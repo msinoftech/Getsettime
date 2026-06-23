@@ -1,8 +1,10 @@
 'use client';
 
-import React from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { Department, Service, ServiceProvider } from '@/src/types/bookingForm';
 import { BOOKING_BUTTON_LABELS, BOOKING_EMPTY_MESSAGES, BOOKING_LOADING_MESSAGES } from '@/src/constants/booking';
+
+type GuideTarget = 'provider' | 'services' | 'continue';
 
 interface Step1DepartmentProviderProps {
   departments: Department[];
@@ -42,6 +44,82 @@ export function Step1DepartmentProvider({
     !!selectedDepartment &&
     (!showProviderPicker || !!selectedProvider);
 
+  // --- UX-only navigation guidance (does not affect booking logic) ---
+  const providerSectionRef = useRef<HTMLDivElement | null>(null);
+  const servicesSectionRef = useRef<HTMLDivElement | null>(null);
+  const continueSectionRef = useRef<HTMLDivElement | null>(null);
+
+  // Only set after an explicit user interaction, so auto-selection on mount
+  // never triggers scrolling.
+  const [pendingGuide, setPendingGuide] = useState<GuideTarget | null>(null);
+
+  const hasServices = providerScopedCatalogServices.length > 0;
+
+  useEffect(() => {
+    if (!pendingGuide) return;
+
+    let target: GuideTarget = pendingGuide;
+
+    // Resolve the actual section to guide to, waiting while data loads so we
+    // never skip a section that is about to appear.
+    if (pendingGuide === 'provider') {
+      if (showProviderPicker) {
+        target = 'provider';
+      } else if (loadingProviderScopedCatalog) {
+        return;
+      } else {
+        target = hasServices ? 'services' : 'continue';
+      }
+    } else if (pendingGuide === 'services') {
+      if (loadingProviderScopedCatalog) return;
+      target = hasServices ? 'services' : 'continue';
+    }
+
+    const ref =
+      target === 'provider'
+        ? providerSectionRef
+        : target === 'services'
+          ? servicesSectionRef
+          : continueSectionRef;
+
+    const element = ref.current;
+    if (!element) return;
+
+    element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    setPendingGuide(null);
+  }, [
+    pendingGuide,
+    showProviderPicker,
+    loadingProviders,
+    loadingProviderScopedCatalog,
+    hasServices,
+    canContinue,
+  ]);
+
+  const handleSelectDepartment = useCallback(
+    (dept: Department) => {
+      onSelectDepartment(dept);
+      setPendingGuide('provider');
+    },
+    [onSelectDepartment],
+  );
+
+  const handleSelectProvider = useCallback(
+    (provider: ServiceProvider) => {
+      onSelectProvider(provider);
+      setPendingGuide('services');
+    },
+    [onSelectProvider],
+  );
+
+  const handleToggleOptionalService = useCallback(
+    (id: string) => {
+      onToggleOptionalService(id);
+      setPendingGuide('continue');
+    },
+    [onToggleOptionalService],
+  );
+
   return (
     <div className="space-y-4 sm:space-y-6 animate-fadeIn">
       <div className="text-center lg:text-left">
@@ -70,7 +148,7 @@ export function Step1DepartmentProvider({
                 <button
                   key={dept.id}
                   type="button"
-                  onClick={() => onSelectDepartment(dept)}
+                  onClick={() => handleSelectDepartment(dept)}
                   className={`group relative w-full text-left p-3 sm:p-4 rounded-xl border-2 transition-all duration-300 ${
                     isSelected
                       ? 'border-indigo-400 bg-gradient-to-br from-white to-indigo-50/30 shadow-lg'
@@ -101,7 +179,7 @@ export function Step1DepartmentProvider({
       </div>
 
       {selectedDepartment && showProviderPicker && (
-        <div>
+        <div ref={providerSectionRef} className="scroll-mt-6">
           <h3 className="text-sm font-bold text-gray-700 uppercase tracking-wide mb-3">2. Choose Provider</h3>
           {loadingProviders ? (
             <div className="text-center py-8">
@@ -122,7 +200,7 @@ export function Step1DepartmentProvider({
                   <button
                     key={provider.id}
                     type="button"
-                    onClick={() => onSelectProvider(provider)}
+                    onClick={() => handleSelectProvider(provider)}
                     className={`group relative w-full text-left p-3 sm:p-4 rounded-xl border-2 transition-all duration-300 ${
                       isSelected
                         ? 'border-teal-400 bg-gradient-to-br from-white to-teal-50/30 shadow-lg'
@@ -173,7 +251,7 @@ export function Step1DepartmentProvider({
       )}
 
       {selectedDepartment && providerScopedCatalogServices.length > 0 && (
-        <div>
+        <div ref={servicesSectionRef} className="scroll-mt-6">
           <h3 className="text-sm font-bold text-gray-700 uppercase tracking-wide mb-3">
             {showProviderPicker ? '3. ' : '2. '}
             Add services <span className="font-normal normal-case text-gray-500">(optional)</span>
@@ -188,7 +266,7 @@ export function Step1DepartmentProvider({
                   <button
                     key={s.id}
                     type="button"
-                    onClick={() => onToggleOptionalService(s.id)}
+                    onClick={() => handleToggleOptionalService(s.id)}
                     className={`inline-flex items-center gap-2 px-4 py-2 rounded-full border-2 transition-all text-sm font-semibold ${
                       selected
                         ? 'bg-indigo-600 text-white border-indigo-600 shadow-lg'
@@ -205,7 +283,7 @@ export function Step1DepartmentProvider({
       )}
 
       {canContinue && (
-        <div className="flex justify-end pt-4">
+        <div ref={continueSectionRef} className="flex justify-end pt-4 scroll-mt-6">
           <button
             type="button"
             onClick={onContinue}

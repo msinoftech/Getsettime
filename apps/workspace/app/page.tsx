@@ -20,6 +20,7 @@ import PlanUsageCard from "@/src/components/Dashboard/PlanUsageCard";
 import RecentActivityFeed from "@/src/components/Dashboard/RecentActivityFeed";
 import { PublicBookingPreviewCard } from "@/src/components/Dashboard/PublicBookingPreviewCard";
 import CopyPublicLinkButton from "@/src/components/Dashboard/CopyPublicLinkButton";
+import QrCodePublicLinkButton from "@/src/components/Dashboard/QrCodePublicLinkButton";
 import DashboardIcon from "@/src/components/Dashboard/DashboardIcon";
 import { DashboardUpgradeModal } from "@/src/components/Subscription/DashboardUpgradeModal";
 import { useSubscription } from "@/src/hooks/useSubscription";
@@ -90,6 +91,10 @@ const Dashboard: React.FC = () => {
 
   const user_name =
     user?.user_metadata?.name || user?.email?.split("@")[0] || "User";
+
+  // Show the upgrade CTA only once bookings usage reaches the plan warning
+  // threshold (80% of the free-plan limit). Unlimited/paid plans report false.
+  const show_upgrade_cta = subscription_data?.thresholds.booking_warning === true;
 
   const week_total = useMemo(
     () => bookingsByDay.reduce((sum, value) => sum + value, 0),
@@ -243,14 +248,17 @@ const Dashboard: React.FC = () => {
               Create Booking
             </button>
             <CopyPublicLinkButton />
-            <button
-              type="button"
-              onClick={() => set_show_upgrade_modal(true)}
-              className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-indigo-700"
-            >
-              <DashboardIcon name="trend" size={17} />
-              Upgrade Plan
-            </button>
+            <QrCodePublicLinkButton />
+            {show_upgrade_cta && (
+              <button
+                type="button"
+                onClick={() => set_show_upgrade_modal(true)}
+                className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-indigo-700"
+              >
+                <DashboardIcon name="trend" size={17} />
+                Upgrade Plan
+              </button>
+            )}
           </>
         }
       />
@@ -308,7 +316,7 @@ const Dashboard: React.FC = () => {
         bookingLimit={subscription_data?.usage.booking_limit ?? 250}
       />
 
-      <DashboardFab />
+      {/* <DashboardFab /> */}
     </div>
   );
 };

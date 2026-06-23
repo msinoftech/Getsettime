@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo, useCallback, lazy, Suspense } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef, lazy, Suspense } from 'react';
 import { useWorkspaceSettings } from '../../hooks/useWorkspaceSettings';
 import { useBookingFormData } from '../../hooks/useBookingFormData';
 import { useAutoAdvanceStep1 } from '../../hooks/useAutoAdvanceStep1';
@@ -78,6 +78,18 @@ const MultiStepBookingForm = ({
   const { general, settings, loading: loadingSettings } = useWorkspaceSettings();
   const { user } = useAuth();
   const [step, setStep] = useState(1);
+  const stepTopRef = useRef<HTMLDivElement | null>(null);
+  const hasMountedRef = useRef(false);
+
+  // Scroll the step content back to the top whenever the step changes (skip the
+  // initial render so opening the form doesn't trigger an unwanted scroll).
+  useEffect(() => {
+    if (!hasMountedRef.current) {
+      hasMountedRef.current = true;
+      return;
+    }
+    stepTopRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [step]);
   const [selectedDepartment, setSelectedDepartment] = useState<Department | null>(null);
   const [selectedProvider, setSelectedProvider] = useState<ServiceProvider | null>(null);
   const [selectedType, setSelectedType] = useState<EventType | null>(null);
@@ -752,7 +764,7 @@ const MultiStepBookingForm = ({
             customFieldValues={customFieldValues}
             meetingChoiceLabel={meetingChoiceLabel.trim() || undefined}
           />
-          <div className="p-4 sm:p-6 lg:p-8 xl:p-10 bg-white relative">
+          <div ref={stepTopRef} className="scroll-mt-4 p-4 sm:p-6 lg:p-8 xl:p-10 bg-white relative">
             {embedded && !hide_embedded_toolbar && (
               <div className="mb-4 flex justify-end lg:absolute lg:right-6 lg:top-6 lg:z-20 lg:mb-0">
                 <button

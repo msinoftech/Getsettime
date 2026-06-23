@@ -111,6 +111,13 @@ export function Step3DateTime({
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const selectedDateRef = useRef<HTMLButtonElement | null>(null);
   const isLoadingMoreRef = useRef(false);
+  const timeslotSectionRef = useRef<HTMLDivElement>(null);
+  // Tracks the date we've already auto-scrolled timeslots for. Initialized to
+  // any preselected date so we don't scroll on mount (e.g. reschedule flows).
+  const scrolledForDateRef = useRef<string | null | undefined>(undefined);
+  if (scrolledForDateRef.current === undefined) {
+    scrolledForDateRef.current = selectedDate ? selectedDate.toDateString() : null;
+  }
 
   const loadMoreDates = useCallback(() => {
     if (isLoadingMoreRef.current) return;
@@ -171,6 +178,18 @@ export function Step3DateTime({
       return () => clearTimeout(timer);
     }
   }, [selectedDate]);
+
+  // When a (newly selected) date's timeslots finish loading, scroll the
+  // available-times section into view across all booking forms.
+  useEffect(() => {
+    if (!selectedDate) return;
+    if (loadingAvailability || loadingBookings) return;
+    if (timeslots.length === 0) return;
+    const dateKey = selectedDate.toDateString();
+    if (scrolledForDateRef.current === dateKey) return;
+    scrolledForDateRef.current = dateKey;
+    timeslotSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [selectedDate, loadingAvailability, loadingBookings, timeslots.length]);
 
   const hasNewSelection = Boolean(selectedDate && selectedTime);
 
@@ -461,7 +480,7 @@ export function Step3DateTime({
         </div>
       </div>
 
-      <div>
+      <div ref={timeslotSectionRef} className="scroll-mt-4">
         {customerTimezone && onTimezoneChange ? (
           <TimezoneSelector
             customerTimezone={customerTimezone}

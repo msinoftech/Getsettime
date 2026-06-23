@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback, useMemo, lazy, Suspense } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from 'react';
 import type { Workspace } from '@app/db';
 import type { Department, EventType, IntakeValues, ServiceProvider, Timeslot } from '@/src/types/bookingForm';
 import { useEmbedBookingFormData } from '@/src/hooks/useEmbedBookingFormData';
@@ -79,6 +79,19 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
   const [previousStartAt, setPreviousStartAt] = useState<string | null>(null);
   const [previousEndAt, setPreviousEndAt] = useState<string | null>(null);
   const [step, setStep] = useState(1);
+  const stepTopRef = useRef<HTMLDivElement | null>(null);
+  const hasMountedRef = useRef(false);
+
+  // Scroll the step content back to the top whenever the step changes (skip the
+  // initial render so loading the form doesn't trigger an unwanted scroll).
+  useEffect(() => {
+    if (!hasMountedRef.current) {
+      hasMountedRef.current = true;
+      return;
+    }
+    stepTopRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [step]);
+
   const [selectedDepartment, setSelectedDepartment] = useState<Department | null>(null);
   const [selectedProvider, setSelectedProvider] = useState<ServiceProvider | null>(null);
   const [selectedType, setSelectedType] = useState<EventType | null>(null);
@@ -838,7 +851,7 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
             customFieldValues={customFieldValues}
             meetingChoiceLabel={meetingChoiceLabel.trim() || undefined}
           />
-          <div className="p-4 sm:p-6 lg:p-8 xl:p-10 bg-white relative">
+          <div ref={stepTopRef} className="scroll-mt-4 p-4 sm:p-6 lg:p-8 xl:p-10 bg-white relative">
             <ProgressIndicator
               step={step}
               onStepClick={handle_step_click}

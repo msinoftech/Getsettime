@@ -20,6 +20,7 @@ export type DashboardIconName =
   | "message"
   | "pieChart"
   | "plus"
+  | "qrCode"
   | "whatsapp"
   | "search"
   | "settings"
@@ -146,6 +147,17 @@ export default function DashboardIcon({
       <>
         <path d="M12 5v14" />
         <path d="M5 12h14" />
+      </>
+    ),
+    qrCode: (
+      <>
+        <rect x="3" y="3" width="7" height="7" rx="1" />
+        <rect x="14" y="3" width="7" height="7" rx="1" />
+        <rect x="3" y="14" width="7" height="7" rx="1" />
+        <path d="M14 14h3v3" />
+        <path d="M21 14v.01" />
+        <path d="M14 21h.01" />
+        <path d="M17 21h4v-4" />
       </>
     ),
     whatsapp: (

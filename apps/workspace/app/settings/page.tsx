@@ -22,7 +22,8 @@ type settings_icon_name =
   | "sparkles"
   | "link"
   | "building"
-  | "check";
+  | "check"
+  | "trash";
 
 const DATE_FORMAT_OPTIONS = ["DD MMM YYYY", "MM/DD/YYYY", "YYYY-MM-DD"] as const;
 const TIME_FORMAT_OPTIONS = ["12-hour", "24-hour"] as const;
@@ -430,6 +431,57 @@ export default function SettingsPage() {
           error instanceof Error
             ? error.message
             : "Failed to upload logo. Please try again.",
+      });
+      setTimeout(() => setSaveMessage(null), 4000);
+    } finally {
+      setIsUploadingLogo(false);
+    }
+  };
+
+  const handleLogoRemove = async () => {
+    if (!canEditAllSettings || !logoUrl) return;
+
+    setIsUploadingLogo(true);
+    setSaveMessage(null);
+
+    try {
+      const { supabase } = await import("@/lib/supabaseClient");
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      const token = session?.access_token;
+
+      const response = await fetch("/api/settings/logo", {
+        method: "DELETE",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+
+      if (!response.ok) {
+        const result = await response.json().catch(() => ({}));
+        throw new Error(result.error || "Failed to remove logo");
+      }
+
+      setLogoFileName("No file selected");
+      setLogoUrl(null);
+      setLogoPath(null);
+      if (snapshotRef.current) {
+        snapshotRef.current = {
+          ...snapshotRef.current,
+          logoFileName: "No file selected",
+          logoUrl: null,
+        };
+      }
+      setSaveMessage({ type: "success", text: "Logo removed successfully." });
+      setTimeout(() => setSaveMessage(null), 2500);
+      void refetchWorkspaceShell();
+    } catch (error) {
+      console.error("Error removing logo:", error);
+      setSaveMessage({
+        type: "error",
+        text:
+          error instanceof Error
+            ? error.message
+            : "Failed to remove logo. Please try again.",
       });
       setTimeout(() => setSaveMessage(null), 4000);
     } finally {
@@ -1039,6 +1091,17 @@ export default function SettingsPage() {
                             </span>
                           )}
                         </div>
+                        {logoUrl && canEditAllSettings && (
+                          <button
+                            type="button"
+                            onClick={handleLogoRemove}
+                            disabled={isUploadingLogo}
+                            className="ml-auto inline-flex h-9 shrink-0 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-600 transition hover:border-red-300 hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            <SettingsIcon name="trash" className="h-3.5 w-3.5" />
+                            Remove
+                          </button>
+                        )}
                       </div>
                     </div>
 
@@ -1551,6 +1614,15 @@ function SettingsIcon({
       <>
         <circle cx="12" cy="12" r="9" />
         <path d="m8 12 2.5 2.5L16 9" />
+      </>
+    ),
+    trash: (
+      <>
+        <path d="M3 6h18" />
+        <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+        <path d="M10 11v6" />
+        <path d="M14 11v6" />
       </>
     ),
   };

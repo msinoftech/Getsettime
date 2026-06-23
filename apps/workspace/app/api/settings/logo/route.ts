@@ -159,3 +159,57 @@ export async function POST(req: NextRequest) {
   }
 }
 
+export async function DELETE(req: NextRequest) {
+  try {
+    const user = await getUserFromRequest(req);
+    if (!user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const workspaceId = user.user_metadata?.workspace_id as string | null;
+    if (!workspaceId) {
+      return NextResponse.json({ error: 'Workspace ID not found' }, { status: 400 });
+    }
+
+    const userRole = user.user_metadata?.role as string | undefined;
+    if (userRole === ROLE_STAFF) {
+      return NextResponse.json(
+        { error: 'Staff cannot modify workspace settings' },
+        { status: 403 }
+      );
+    }
+    if (userRole === ROLE_SERVICE_PROVIDER) {
+      return NextResponse.json(
+        { error: 'Service providers cannot modify workspace settings' },
+        { status: 403 }
+      );
+    }
+    if (!MANAGE_ROLES.includes(userRole ?? '')) {
+      return NextResponse.json(
+        { error: 'You do not have permission to modify workspace settings' },
+        { status: 403 }
+      );
+    }
+
+    const supabaseServer = createSupabaseServerClient();
+
+    const { error: updateError } = await supabaseServer
+      .from('workspaces')
+      .update({ logo_url: null })
+      .eq('id', workspaceId);
+
+    if (updateError) {
+      return NextResponse.json({
+        error: updateError.message || 'Failed to remove logo',
+      }, { status: 500 });
+    }
+
+    return NextResponse.json({ success: true });
+  } catch (err: unknown) {
+    const error = err as Error;
+    return NextResponse.json({
+      error: error?.message || 'An unexpected error occurred while removing the logo',
+    }, { status: 500 });
+  }
+}
+
