@@ -242,7 +242,7 @@ export default function LoginForm() {
       }
 
       const userRole = user.user_metadata?.role;
-      const allowedRoles = ["workspace_admin", "customer", "manager", "service_provider"];
+      const allowedRoles = ["workspace_admin", "customer", "manager", "service_provider", "staff"];
       const isDeactivated = user.user_metadata?.deactivated === true;
 
       if (isDeactivated) {

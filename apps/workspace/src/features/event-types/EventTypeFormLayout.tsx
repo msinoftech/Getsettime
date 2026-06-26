@@ -82,7 +82,7 @@ function duration_preset_selected(
   return total_duration_minutes(hours, minutes_part) === preset;
 }
 
-function LocationTypesMultiSelect({
+export function LocationTypesMultiSelect({
   value,
   onChange,
 }: {
@@ -182,6 +182,7 @@ type EventTypeFormLayoutProps = {
   onChange: (next: event_type_form_state) => void;
   editingId: number | null;
   formError: string | null;
+  successMessage?: string | null;
   submitting: boolean;
   onSubmit: (e: React.FormEvent) => void;
   onCancel: () => void;
@@ -197,6 +198,7 @@ export function EventTypeFormLayout({
   onChange,
   editingId,
   formError,
+  successMessage = null,
   submitting,
   onSubmit,
   onCancel,
@@ -475,6 +477,15 @@ export function EventTypeFormLayout({
               {formError && (
                 <p id="event-type-form-error" className="mt-4 text-sm text-red-600" role="alert">
                   {formError}
+                </p>
+              )}
+
+              {successMessage && (
+                <p
+                  className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700"
+                  role="status"
+                >
+                  {successMessage}
                 </p>
               )}
 

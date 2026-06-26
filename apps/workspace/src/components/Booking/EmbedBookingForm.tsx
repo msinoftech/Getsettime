@@ -79,6 +79,9 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
   const [previousStartAt, setPreviousStartAt] = useState<string | null>(null);
   const [previousEndAt, setPreviousEndAt] = useState<string | null>(null);
   const [step, setStep] = useState(1);
+  // Once the user manually steps backward, stop auto-advancing/masking so they can
+  // review earlier steps (department, event type) even when each has a single option.
+  const [disableAutoAdvance, setDisableAutoAdvance] = useState(false);
   const stepTopRef = useRef<HTMLDivElement | null>(null);
   const hasMountedRef = useRef(false);
 
@@ -230,7 +233,7 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
   }, []);
 
   useAutoAdvanceStep1({
-    enabled: !isRescheduleMode,
+    enabled: !isRescheduleMode && !disableAutoAdvance,
     step,
     loadingDepartments,
     departments,
@@ -396,6 +399,7 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
   const handle_step_click = useCallback(
     (target: number) => {
       if (!can_navigate_to_booking_step(step_nav_context, target)) return;
+      if (target < step) setDisableAutoAdvance(true);
       if (step === 3 && target < 3) {
         setSelectedDate(null);
         setSelectedTime('');
@@ -407,27 +411,44 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
 
   const workspacePrimaryColor = generalSettings?.primaryColor ?? DEFAULT_PRIMARY_COLOR;
   const workspaceAccentColor = generalSettings?.accentColor ?? null;
-  const hasPreselectedEventType = Boolean(
-    (eventTypeSlug || targetDuration !== null) && selectedType && sortedEventTypes.length === 1
+  // The event type is auto-resolvable whenever exactly one bookable type remains,
+  // whether narrowed by a slug/duration link or simply the only type available.
+  const eventTypeAutoResolved = Boolean(
+    selectedType && sortedEventTypes.length === 1 && !loadingEventTypes
   );
-  const canSkipToStep3 = hasPreselectedEventType && serviceGate.canAutoAdvancePastStep1;
+  const canSkipToStep3 = eventTypeAutoResolved && serviceGate.canAutoAdvancePastStep1;
+
+  // Step 1 only needs the user when there is a genuine choice to make: multiple
+  // departments, multiple providers in the chosen department, or multiple services.
+  const step1RequiresUserInput =
+    departments.length > 1 ||
+    (!!selectedDepartment && showProviderPicker && serviceProviders.length > 1) ||
+    serviceGate.requiresManualSelection;
+
+  // While single-option levels are still resolving (or about to skip ahead), show a
+  // loader instead of flashing Step 1/2 so single-option links open straight on Step 3.
+  const autoAdvanceResolving =
+    !isRescheduleMode &&
+    !disableAutoAdvance &&
+    ((step === 1 && !step1RequiresUserInput) ||
+      (step === 2 && (loadingEventTypes || canSkipToStep3)));
 
   useEffect(() => {
-    if ((eventTypeSlug || targetDuration !== null) && sortedEventTypes.length === 1 && !selectedType) {
+    if (!loadingEventTypes && sortedEventTypes.length === 1 && !selectedType) {
       setSelectedType(sortedEventTypes[0]);
     }
-  }, [eventTypeSlug, targetDuration, sortedEventTypes, selectedType]);
+  }, [loadingEventTypes, sortedEventTypes, selectedType]);
 
   useEffect(() => {
-    if (isRescheduleMode) return;
+    if (isRescheduleMode || disableAutoAdvance) return;
     if (!loadingDepartments && departments.length === 0 && step === 1) {
       setStep(canSkipToStep3 ? 3 : 2);
     }
-  }, [loadingDepartments, departments.length, step, canSkipToStep3, isRescheduleMode]);
+  }, [loadingDepartments, departments.length, step, canSkipToStep3, isRescheduleMode, disableAutoAdvance]);
 
   useEffect(() => {
-    if (canSkipToStep3 && step === 2) setStep(3);
-  }, [canSkipToStep3, step]);
+    if (canSkipToStep3 && step === 2 && !disableAutoAdvance) setStep(3);
+  }, [canSkipToStep3, step, disableAutoAdvance]);
 
   useEffect(() => {
     if (selectedType) {
@@ -852,18 +873,21 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
             meetingChoiceLabel={meetingChoiceLabel.trim() || undefined}
           />
           <div ref={stepTopRef} className="scroll-mt-4 p-4 sm:p-6 lg:p-8 xl:p-10 bg-white relative">
-            <ProgressIndicator
-              step={step}
-              onStepClick={handle_step_click}
-              canClickStep={can_click_booking_step}
-            />
+            {!autoAdvanceResolving && (
+              <ProgressIndicator
+                step={step}
+                onStepClick={handle_step_click}
+                canClickStep={can_click_booking_step}
+              />
+            )}
             {error && (
               <div className="mb-6 p-4 bg-red-50 border border-red-200 text-red-700 rounded-xl text-sm">
                 {error}
               </div>
             )}
             <div className="relative">
-              {step === 1 && (
+              {autoAdvanceResolving && <StepFallback />}
+              {step === 1 && !autoAdvanceResolving && (
                 <Step1DepartmentProvider
                   departments={departments}
                   selectedDepartment={selectedDepartment}
@@ -886,10 +910,10 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
                     setSelectedServiceIds([]);
                   }}
                   onSelectProvider={setSelectedProvider}
-                  onContinue={() => setStep(hasPreselectedEventType ? 3 : 2)}
+                  onContinue={() => setStep(canSkipToStep3 ? 3 : 2)}
                 />
               )}
-              {step === 2 && (
+              {step === 2 && !autoAdvanceResolving && (
                 <Step2ServiceSelection
                   eventTypes={sortedEventTypes}
                   selectedType={selectedType}
@@ -898,7 +922,10 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
                   onBack={
                     isRescheduleMode || departments.length === 0
                       ? undefined
-                      : () => setStep(1)
+                      : () => {
+                          setDisableAutoAdvance(true);
+                          setStep(1);
+                        }
                   }
                   onContinue={() => setStep(3)}
                 />
@@ -941,6 +968,7 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
                     }
                     onSetCurrentMonth={(d) => setCurrentMonth(new Date(d.getFullYear(), d.getMonth(), 1))}
                     onBack={isRescheduleMode ? undefined : () => {
+                      setDisableAutoAdvance(true);
                       setStep(departments.length === 0 ? 2 : 1);
                       setSelectedDate(null);
                       setSelectedTime('');

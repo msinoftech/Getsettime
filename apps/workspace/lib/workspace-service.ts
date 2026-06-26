@@ -3,7 +3,7 @@ import { assignFreePlanToWorkspace } from '@app/db/subscription';
 import { getTimezoneForCountry } from '@app/location';
 import { ROLE_SERVICE_PROVIDER } from '@/src/constants/roles';
 import { resolveMeetingOptionsForServiceProvider } from '@/src/utils/providerSettingsResolution';
-import { workspace_meeting_options_to_location } from '@/src/utils/meeting_options';
+import { workspace_meeting_options_to_location_types } from '@/src/utils/meeting_options';
 import type { localization_settings } from '@/src/types/workspace';
 import type { IpapiJsonResponse } from '@/lib/ipapi-geo';
 
@@ -84,7 +84,7 @@ export function getDefaultConfigurationSettings(
       'email-reminder': true,
       'auto-confirm-booking': true,
       'post-meeting-follow-up': true,
-      'whatsapp': true,
+      'whatsapp': false,
       'whatsapp-user': true,
     },
   };
@@ -514,10 +514,12 @@ export async function syncServiceProviderEventTypeLocation(
     settings.meeting_options as Record<string, unknown> | undefined,
     providerId
   );
-  const location_type = workspace_meeting_options_to_location(meetingOptions);
-  if (!location_type) {
+  const location_types =
+    workspace_meeting_options_to_location_types(meetingOptions);
+  if (location_types.length === 0) {
     return { error: null };
   }
+  const location_type = location_types.join(',');
 
   const { error: updateErr } = await supabase
     .from('event_types')

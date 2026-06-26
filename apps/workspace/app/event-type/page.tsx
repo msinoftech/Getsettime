@@ -30,6 +30,7 @@ import { ConfirmModal } from "@/src/components/ui/ConfirmModal";
 import { EventTypeSkeleton } from "@/src/components/ui/EventTypeSkeleton";
 import {
   EventTypeFormLayout,
+  LocationTypesMultiSelect,
   format_event_type_location_labels,
   parse_location_types_from_storage,
   serialize_location_types,
@@ -38,7 +39,10 @@ import {
   type event_type_location_value,
   type event_type_service_provider_option,
 } from "@/src/features/event-types/EventTypeFormLayout";
-import { workspace_meeting_options_to_location } from "@/src/utils/meeting_options";
+import {
+  workspace_meeting_options_to_location,
+  workspace_meeting_options_to_location_types,
+} from "@/src/utils/meeting_options";
 import {
   ROLE_MANAGER,
   ROLE_SERVICE_PROVIDER,
@@ -222,6 +226,11 @@ export default function EventTypes() {
   const [event_settings, set_event_settings] = useState<event_settings_state>(
     DEFAULT_EVENT_SETTINGS
   );
+  // All meeting options enabled during onboarding, mapped to event-type location
+  // values; used to pre-select multiple locations when creating a new event type.
+  const [default_location_types, set_default_location_types] = useState<
+    event_type_location_value[]
+  >([]);
   const [settings_loaded, set_settings_loaded] = useState(false);
   const [settings_saving, set_settings_saving] = useState(false);
   const [owner_names_by_id, set_owner_names_by_id] = useState<
@@ -268,9 +277,11 @@ export default function EventTypes() {
 
   const empty_form = (): event_type_form_state => {
     const default_location_for_form =
-      event_settings.default_location === "custom"
-        ? []
-        : [event_settings.default_location];
+      default_location_types.length > 0
+        ? default_location_types
+        : event_settings.default_location === "custom"
+          ? []
+          : [event_settings.default_location];
     return {
       title: "",
       duration_hours: "",
@@ -328,11 +339,18 @@ export default function EventTypes() {
         user?.user_metadata?.role === ROLE_SERVICE_PROVIDER;
 
       if (!isServiceProvider) {
-        const from_meta = normalize_event_settings(
-          user?.user_metadata?.[USER_META_EVENT_TYPE_SETTINGS_KEY]
-        );
+        const raw_meta = user?.user_metadata?.[
+          USER_META_EVENT_TYPE_SETTINGS_KEY
+        ] as Record<string, unknown> | undefined;
+        const from_meta = normalize_event_settings(raw_meta);
         if (from_meta) {
           set_event_settings(from_meta);
+          const saved_location_types = parse_location_types_from_storage(
+            raw_meta?.default_location_types as string | null | undefined
+          );
+          if (saved_location_types.length > 0) {
+            set_default_location_types(saved_location_types);
+          }
           return;
         }
       }
@@ -363,6 +381,9 @@ export default function EventTypes() {
           default_location: location_from_meeting_options,
         }));
       }
+      set_default_location_types(
+        workspace_meeting_options_to_location_types(meeting_options)
+      );
     } catch (err) {
       console.error("Failed to load event type settings:", err);
     } finally {
@@ -627,6 +648,9 @@ export default function EventTypes() {
           [USER_META_EVENT_TYPE_SETTINGS_KEY]: {
             default_visibility: event_settings.default_visibility,
             default_location: event_settings.default_location,
+            default_location_types: serialize_location_types(
+              default_location_types
+            ),
             admin_notice: event_settings.admin_notice,
           },
         },
@@ -650,6 +674,7 @@ export default function EventTypes() {
 
   const handle_reset_settings = () => {
     set_event_settings(DEFAULT_EVENT_SETTINGS);
+    set_default_location_types([DEFAULT_EVENT_SETTINGS.default_location]);
     set_settings_saved_message("Settings reset to default values.");
     setTimeout(() => set_settings_saved_message(""), 2500);
   };
@@ -1330,21 +1355,10 @@ export default function EventTypes() {
                     <label className="mb-2 block text-sm font-semibold text-slate-700">
                       Default Location
                     </label>
-                    <select
-                      value={event_settings.default_location}
-                      onChange={(e) =>
-                        set_event_settings((prev) => ({
-                          ...prev,
-                          default_location: e.target.value as event_type_location,
-                        }))
-                      }
-                      className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-sky-400"
-                    >
-                      <option value="video">Google Meet</option>
-                      <option value="phone">Phone Call</option>
-                      <option value="in_person">In Person</option>
-                      <option value="custom">Custom</option>
-                    </select>
+                    <LocationTypesMultiSelect
+                      value={default_location_types}
+                      onChange={set_default_location_types}
+                    />
                   </div>
                 </div>
               </div>
@@ -1382,7 +1396,9 @@ export default function EventTypes() {
                     <span className="font-semibold text-slate-800">
                       Default location:
                     </span>{" "}
-                    {get_location_label(event_settings.default_location)}
+                    {default_location_types.length > 0
+                      ? format_event_type_location_labels(default_location_types)
+                      : get_location_label(event_settings.default_location)}
                   </p>
                 </div>
               </div>

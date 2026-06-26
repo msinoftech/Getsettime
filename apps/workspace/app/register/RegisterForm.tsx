@@ -167,9 +167,12 @@ export default function RegisterForm() {
     in_person: true,
     phone_call: false,
     google_meet: false,
-    // whatsapp: false,
   });
   const [step3Saved, setStep3Saved] = useState(false);
+  const [step3NextError, setStep3NextError] = useState<"top" | "bottom" | null>(
+    null
+  );
+  const bottomErrorRef = useRef<HTMLDivElement>(null);
   const [timesheetSaveFeedback, setTimesheetSaveFeedback] =
     useState<availability_timesheet_save_feedback>(null);
   const [onboardingUser, setOnboardingUser] = useState<{ email?: string; google_calendar_sync?: boolean } | null>(null);
@@ -1057,8 +1060,22 @@ export default function RegisterForm() {
     }
   };
 
-  const handleOnboardingNext = async () => {
+  useEffect(() => {
+    if (step3NextError !== "bottom") return;
+    const t = window.setTimeout(() => {
+      bottomErrorRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
+    }, 260);
+    return () => window.clearTimeout(t);
+  }, [step3NextError]);
+
+  const handleOnboardingNext = async (
+    position: "top" | "bottom" = "bottom"
+  ) => {
     setError("");
+    setStep3NextError(null);
     if (onboardingStep === 1) {
       const ok = await saveStep1();
       if (ok) goToOnboardingStep(2);
@@ -1082,7 +1099,7 @@ export default function RegisterForm() {
       }
     } else if (onboardingStep === 3) {
       if (!step3Saved) {
-        setError("Save working hours first, then click Next.");
+        setStep3NextError(position);
         return;
       }
       setOnboardingSaving(true);
@@ -1289,15 +1306,23 @@ export default function RegisterForm() {
           )}
 
           {onboardingStep === 3 && (
-            <div className="mb-4 flex justify-end">
+            <div className="mb-4 flex flex-col items-end gap-2">
               <button
                 type="button"
-                onClick={handleOnboardingNext}
+                onClick={() => handleOnboardingNext("top")}
                 disabled={onboardingNextDisabled}
                 className="px-6 py-3 rounded-lg bg-blue-600 text-white font-medium hover:bg-blue-700 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {onboardingSaving ? "Saving…" : "Next"}
               </button>
+              {step3NextError === "top" && (
+                <div className="w-full">
+                  <AlertMessage
+                    type="error"
+                    message="Save working hours first, then click Next."
+                  />
+                </div>
+              )}
             </div>
           )}
 
@@ -1663,6 +1688,7 @@ export default function RegisterForm() {
                 onSave={() => {
                   setStep3Saved(true);
                   setError("");
+                  setStep3NextError(null);
                 }}
                 onSaveFeedback={setTimesheetSaveFeedback}
               />
@@ -1701,6 +1727,7 @@ export default function RegisterForm() {
                   type="button"
                   onClick={() => {
                     setError("");
+                    setStep3NextError(null);
                     goToOnboardingStep(onboardingStep - 1);
                   }}
                   disabled={onboardingSaving}
@@ -1711,13 +1738,21 @@ export default function RegisterForm() {
               ) : <span />}
               <button
                 type="button"
-                onClick={handleOnboardingNext}
+                onClick={() => handleOnboardingNext("bottom")}
                 disabled={onboardingNextDisabled}
                 className="px-6 py-3 rounded-lg bg-blue-600 text-white font-medium hover:bg-blue-700 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {onboardingSaving ? "Saving…" : onboardingStep === 4 ? "Finish" : "Next"}
               </button>
             </div>
+            {step3NextError === "bottom" && (
+              <div ref={bottomErrorRef} className="animate-fade-slide-in">
+                <AlertMessage
+                  type="error"
+                  message="Save working hours first, then click Next."
+                />
+              </div>
+            )}
           </div>
         </div>
       </div>

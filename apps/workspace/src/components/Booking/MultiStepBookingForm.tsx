@@ -78,6 +78,9 @@ const MultiStepBookingForm = ({
   const { general, settings, loading: loadingSettings } = useWorkspaceSettings();
   const { user } = useAuth();
   const [step, setStep] = useState(1);
+  // Once the user manually steps backward, stop auto-advancing/masking so they can
+  // review earlier steps (department, event type) even when each has a single option.
+  const [disableAutoAdvance, setDisableAutoAdvance] = useState(false);
   const stepTopRef = useRef<HTMLDivElement | null>(null);
   const hasMountedRef = useRef(false);
 
@@ -236,7 +239,7 @@ const MultiStepBookingForm = ({
   }, []);
 
   useAutoAdvanceStep1({
-    enabled: true,
+    enabled: !disableAutoAdvance,
     step,
     loadingDepartments,
     departments,
@@ -256,6 +259,36 @@ const MultiStepBookingForm = ({
   });
 
   const sortedEventTypes = useMemo(() => sortEventTypesByDuration(eventTypes), [eventTypes]);
+
+  // When exactly one bookable event type remains, auto-select it so Step 2 has no
+  // decision left and the flow can skip straight to date/time selection.
+  const eventTypeAutoResolved =
+    !!selectedType && sortedEventTypes.length === 1 && !loadingEventTypes;
+  const canSkipToStep3 = eventTypeAutoResolved && serviceGate.canAutoAdvancePastStep1;
+
+  // Step 1 only needs the user when there is a genuine choice to make: multiple
+  // departments, multiple providers in the chosen department, or multiple services.
+  const step1RequiresUserInput =
+    departments.length > 1 ||
+    (!!selectedDepartment && showProviderPicker && serviceProviders.length > 1) ||
+    serviceGate.requiresManualSelection;
+
+  // While single-option levels are still resolving (or about to skip ahead), show a
+  // loader instead of flashing Step 1/2 so single-option links open straight on Step 3.
+  const autoAdvanceResolving =
+    !disableAutoAdvance &&
+    ((step === 1 && !step1RequiresUserInput) ||
+      (step === 2 && (loadingEventTypes || canSkipToStep3)));
+
+  useEffect(() => {
+    if (!loadingEventTypes && sortedEventTypes.length === 1 && !selectedType) {
+      setSelectedType(sortedEventTypes[0]);
+    }
+  }, [loadingEventTypes, sortedEventTypes, selectedType]);
+
+  useEffect(() => {
+    if (canSkipToStep3 && step === 2 && !disableAutoAdvance) setStep(3);
+  }, [canSkipToStep3, step, disableAutoAdvance]);
 
   const serviceCatalogForSlots = useMemo(
     () => mergeServiceCatalogForDuration(providerScopedCatalogServices, services),
@@ -380,6 +413,7 @@ const MultiStepBookingForm = ({
   const handle_step_click = useCallback(
     (target: number) => {
       if (!can_navigate_to_booking_step(step_nav_context, target)) return;
+      if (target < step) setDisableAutoAdvance(true);
       if (step === 3 && target < 3) {
         setSelectedDate(null);
         setSelectedTime('');
@@ -391,8 +425,11 @@ const MultiStepBookingForm = ({
   );
 
   useEffect(() => {
-    if (!loadingDepartments && departments.length === 0 && step === 1) setStep(2);
-  }, [loadingDepartments, departments.length, step]);
+    if (disableAutoAdvance) return;
+    if (!loadingDepartments && departments.length === 0 && step === 1) {
+      setStep(canSkipToStep3 ? 3 : 2);
+    }
+  }, [loadingDepartments, departments.length, step, canSkipToStep3, disableAutoAdvance]);
 
   useEffect(() => {
     if (selectedType) {
@@ -776,19 +813,22 @@ const MultiStepBookingForm = ({
                 </button>
               </div>
             )}
-            <ProgressIndicator
-              step={step > 4 ? 4 : step}
-              totalSteps={4}
-              onStepClick={handle_step_click}
-              canClickStep={can_click_booking_step}
-            />
+            {!autoAdvanceResolving && (
+              <ProgressIndicator
+                step={step > 4 ? 4 : step}
+                totalSteps={4}
+                onStepClick={handle_step_click}
+                canClickStep={can_click_booking_step}
+              />
+            )}
             {error && (
               <div className="mb-6 p-4 bg-red-50 border border-red-200 text-red-700 rounded-xl text-sm">
                 {error}
               </div>
             )}
             <div className="relative">
-              {step === 1 && (
+              {autoAdvanceResolving && <StepFallback />}
+              {step === 1 && !autoAdvanceResolving && (
                 <Step1DepartmentProvider
                   departments={departments}
                   selectedDepartment={selectedDepartment}
@@ -811,10 +851,10 @@ const MultiStepBookingForm = ({
                     setSelectedServiceIds([]);
                   }}
                   onSelectProvider={setSelectedProvider}
-                  onContinue={() => setStep(2)}
+                  onContinue={() => setStep(canSkipToStep3 ? 3 : 2)}
                 />
               )}
-              {step === 2 && (
+              {step === 2 && !autoAdvanceResolving && (
                 <Step2ServiceSelection
                   eventTypes={sortedEventTypes}
                   selectedType={selectedType}
@@ -822,7 +862,10 @@ const MultiStepBookingForm = ({
                   onSelectType={setSelectedType}
                   onBack={
                     departments.length > 0
-                      ? () => setStep(1)
+                      ? () => {
+                          setDisableAutoAdvance(true);
+                          setStep(1);
+                        }
                       : undefined
                   }
                   onContinue={() => setStep(3)}
@@ -863,6 +906,7 @@ const MultiStepBookingForm = ({
                     })}
                     onSetCurrentMonth={(d) => setCurrentMonth(new Date(d.getFullYear(), d.getMonth(), 1))}
                     onBack={() => {
+                      setDisableAutoAdvance(true);
                       setStep(departments.length === 0 ? 2 : 1);
                       setSelectedDate(null);
                       setSelectedTime('');

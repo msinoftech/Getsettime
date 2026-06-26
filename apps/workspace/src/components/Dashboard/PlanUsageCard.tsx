@@ -1,14 +1,16 @@
 "use client";
 
-import Link from "next/link";
 import DashboardIcon from "./DashboardIcon";
 import { formatBookingLimitLabel, isUnlimitedBookingLimit } from "@app/db/subscription";
+import type { plans, workspace_usage } from "@app/db/subscription";
 
 type PlanUsageCardProps = {
   loading: boolean;
   used: number;
   limit: number;
   onUpgrade: () => void;
+  plan?: plans | null;
+  usage?: workspace_usage | null;
 };
 
 export default function PlanUsageCard({
@@ -16,6 +18,8 @@ export default function PlanUsageCard({
   used,
   limit,
   onUpgrade,
+  plan,
+  usage,
 }: PlanUsageCardProps) {
   const unlimited = isUnlimitedBookingLimit(limit);
   const remaining = unlimited ? null : Math.max(0, limit - used);
@@ -63,21 +67,49 @@ export default function PlanUsageCard({
         </>
       ) : null}
 
-      <div className="mt-5 grid grid-cols-2 gap-3">
-        <Link
-          href="/billings"
-          className="flex items-center justify-center gap-2 rounded-xl bg-slate-50 px-4 py-2.5 text-sm font-bold text-slate-700 ring-1 ring-slate-200/70 hover:bg-slate-100"
-        >
-          <DashboardIcon name="activity" size={16} /> View Usage
-        </Link>
-        <button
-          type="button"
-          onClick={onUpgrade}
-          className="flex items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-indigo-700"
-        >
-          <DashboardIcon name="trend" size={16} /> Upgrade
-        </button>
-      </div>
+      {!loading && plan ? (
+        <div className="mt-5 border-t border-slate-100 pt-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="truncate text-sm font-bold text-slate-900">
+                {plan.name}
+              </p>
+              <p className="text-xs font-medium text-slate-500">
+                {formatBookingLimitLabel(plan.booking_limit)} bookings/month · up
+                to {plan.service_provider_limit} providers
+              </p>
+            </div>
+            <p className="shrink-0 text-sm font-bold text-slate-900">
+              ₹{plan.price.toLocaleString("en-IN")}
+              <span className="text-xs font-medium text-slate-400">/mo</span>
+            </p>
+          </div>
+
+          {usage ? (
+            <dl className="mt-3 grid grid-cols-2 gap-3">
+              <div className="rounded-xl bg-slate-50 px-3 py-2">
+                <dt className="text-xs font-medium text-slate-500">
+                  Bookings this month
+                </dt>
+                <dd className="text-sm font-bold text-slate-900">
+                  {usage.bookings_this_month}
+                  {isUnlimitedBookingLimit(usage.booking_limit)
+                    ? ""
+                    : ` / ${usage.booking_limit}`}
+                </dd>
+              </div>
+              <div className="rounded-xl bg-slate-50 px-3 py-2">
+                <dt className="text-xs font-medium text-slate-500">
+                  Service providers
+                </dt>
+                <dd className="text-sm font-bold text-slate-900">
+                  {usage.service_provider_count} / {usage.service_provider_limit}
+                </dd>
+              </div>
+            </dl>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -3,7 +3,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { AvailabilityGeneralSkeleton } from '@/src/components/ui/AvailabilityGeneralSkeleton';
 
-type DayName = "Sun" | "Mon" | "Tue" | "Wed" | "Thu" | "Fri" | "Sat";
+type DayName = "Mon" | "Tue" | "Wed" | "Thu" | "Fri" | "Sat" | "Sun";
 
 interface BreakTime {
   id: string;
@@ -36,16 +36,16 @@ interface AvailabilityTimesheetProps {
   headerExtra?: React.ReactNode;
 }
 
-const DAYS: DayName[] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const DAYS: DayName[] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 const DAY_NAMES: Record<DayName, string> = {
-  Sun: "Sunday",
   Mon: "Monday",
   Tue: "Tuesday",
   Wed: "Wednesday",
   Thu: "Thursday",
   Fri: "Friday",
   Sat: "Saturday",
+  Sun: "Sunday",
 };
 
 const generateTimeOptions = () => {
@@ -77,13 +77,13 @@ function buildDefaultSchedules(): Record<DayName, DaySchedule> {
     breaks: [],
   };
   return {
-    Sun: { ...defaultSchedule },
     Mon: { ...defaultSchedule, enabled: true },
     Tue: { ...defaultSchedule, enabled: true },
     Wed: { ...defaultSchedule, enabled: true },
     Thu: { ...defaultSchedule, enabled: true },
     Fri: { ...defaultSchedule, enabled: true },
     Sat: { ...defaultSchedule },
+    Sun: { ...defaultSchedule },
   };
 }
 
@@ -1014,7 +1014,7 @@ export default function AvailabilityTimesheet({
 
                 {/* Available Button */}
                 <div className="flex items-center justify-between gap-2">
-                  <div className={`text-xs min-w-[min(100%,280px)] ${!schedule.enabled ? 'text-slate-400' : 'text-zinc-500'}`}>
+                  <div className={`text-xs ${!schedule.enabled ? 'text-slate-400' : 'text-zinc-500'}`}>
                     {'Tip: Configure one day then "Copy to all" to apply the same settings to all days.'}
                   </div>
                   <button

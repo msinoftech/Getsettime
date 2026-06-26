@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createSupabaseServerClient } from '@app/db';
 import { createClient } from '@supabase/supabase-js';
 import { appendActivityLog } from '@/lib/activity-log';
-import { workspace_meeting_options_to_location } from '@/src/utils/meeting_options';
+import { workspace_meeting_options_to_location_types } from '@/src/utils/meeting_options';
 import { ROLE_SERVICE_PROVIDER, ROLE_STAFF, MANAGE_ROLES } from '@/src/constants/roles';
 import {
   ensureDefaultEventTypePublic,
@@ -419,8 +419,10 @@ export async function POST(req: NextRequest) {
               user.id
             )
           : mergedSettings.meeting_options;
-      const location_type = workspace_meeting_options_to_location(meetingForLocation);
-      if (location_type) {
+      const location_types =
+        workspace_meeting_options_to_location_types(meetingForLocation);
+      if (location_types.length > 0) {
+        const location_type = location_types.join(',');
         if (userRole === ROLE_SERVICE_PROVIDER) {
           await createServiceProviderEventType(supabase, {
             workspaceId: wid,

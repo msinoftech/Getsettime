@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { is_public_embed_booking_path } from '@/lib/public_embed_route';
+import { canAccessPage } from '@/src/constants/permissions';
 
 export default function proxy(request: NextRequest) {
   const url = request.nextUrl.clone();
@@ -22,7 +23,7 @@ export default function proxy(request: NextRequest) {
     return NextResponse.next();
   }
 
-  const allowedRoles = ['workspace_admin', 'manager', 'service_provider', 'customer'];
+  const allowedRoles = ['workspace_admin', 'manager', 'service_provider', 'customer', 'staff'];
   if (role) {
     if (role === 'superadmin') {
       const response = NextResponse.redirect(new URL('/login', request.url));
@@ -39,6 +40,12 @@ export default function proxy(request: NextRequest) {
 
     if (role === 'customer' && !pathname.startsWith('/my-bookings')) {
       return NextResponse.redirect(new URL('/my-bookings', request.url));
+    }
+
+    // Centralized page-level RBAC (single source of truth in permissions.ts):
+    // block direct URL access to pages this role may not open (e.g. staff → Admin Center).
+    if (!canAccessPage(role, pathname)) {
+      return NextResponse.redirect(new URL('/', request.url));
     }
   }
 

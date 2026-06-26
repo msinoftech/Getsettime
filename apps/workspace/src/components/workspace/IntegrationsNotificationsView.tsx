@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import type { SVGProps } from "react";
 import {
   FcFeedback,
@@ -318,7 +318,81 @@ function ChannelTypeIcon({ channel }: { channel: NotificationChannel }) {
   return <LayoutIcon name={map[channel]} size={20} />;
 }
 
+interface IntegrationPrerequisiteContext {
+  businessPhone: string;
+}
+
+interface IntegrationPrerequisiteResult {
+  ok: boolean;
+  title?: string;
+  message?: string;
+  /** Optional anchor on the /settings page to scroll/focus when redirecting. */
+  settingsHash?: string;
+}
+
+function hasConfiguredBusinessPhone(businessPhone: string): boolean {
+  const trimmed = (businessPhone ?? "").trim();
+  return trimmed.length > 0 && /\d/.test(trimmed);
+}
+
+/**
+ * Pre-enable validation for integrations / notification workflows, keyed by the
+ * workflow `settingsKey`. Returns `ok: false` with modal content when a prerequisite
+ * is missing. Extend the switch to add future checks (e.g. SMS sender, Google Calendar
+ * sync, payment gateway, email sender) without changing the toggle/save flow.
+ */
+function validateIntegrationPrerequisites(
+  type: string,
+  ctx: IntegrationPrerequisiteContext,
+): IntegrationPrerequisiteResult {
+  switch (type) {
+    case "whatsapp": // WhatsApp notifications to Admin
+      if (!hasConfiguredBusinessPhone(ctx.businessPhone)) {
+        return {
+          ok: false,
+          title: "Business Phone Number Required",
+          message:
+            "Please add a business phone number in Settings before enabling WhatsApp notifications to admin.",
+          settingsHash: "business-phone",
+        };
+      }
+      return { ok: true };
+    default:
+      return { ok: true };
+  }
+}
+
+/**
+ * Builds the workflow list from saved settings, forcing a workflow OFF when its
+ * prerequisites are not met (e.g. WhatsApp-to-admin without a business phone) so a
+ * default-on workflow never appears enabled while its requirement is missing.
+ */
+function buildWorkflowFlows(
+  notificationSettings: Record<string, boolean | undefined>,
+  businessPhone: string,
+): Workflow[] {
+  return WORKFLOW_DEFINITIONS.map((def, index) => {
+    let active = workflowInitialActive(def, notificationSettings);
+    if (
+      active &&
+      def.settingsKey &&
+      !validateIntegrationPrerequisites(def.settingsKey, { businessPhone }).ok
+    ) {
+      active = false;
+    }
+    return {
+      id: index + 1,
+      name: def.name,
+      description: def.description,
+      active,
+      iconIndex: def.iconIndex,
+      settingsKey: def.settingsKey,
+    };
+  });
+}
+
 export function IntegrationsNotificationsView() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const { user } = useAuth();
 
@@ -334,6 +408,12 @@ export function IntegrationsNotificationsView() {
 
   const [flows, setFlows] = useState<Workflow[]>([]);
   const [workflowsLoading, setWorkflowsLoading] = useState(true);
+  const [businessPhone, setBusinessPhone] = useState("");
+  const [prereqModal, setPrereqModal] = useState<{
+    title: string;
+    message: string;
+    settingsHash?: string;
+  } | null>(null);
   const [selectedIntegrationId, setSelectedIntegrationId] = useState<string | null>(null);
   const [upgradeModalOpen, setUpgradeModalOpen] = useState(false);
   const [upgradeModalMessage, setUpgradeModalMessage] = useState(
@@ -409,28 +489,15 @@ export function IntegrationsNotificationsView() {
 
         if (response.ok) {
           const result = await response.json();
+          const general = (result.settings?.general || {}) as Record<string, unknown>;
+          const generalPhone = typeof general.business_phone === "string" ? general.business_phone : "";
+          setBusinessPhone(generalPhone);
           const notificationSettings = (result.settings?.notifications || {}) as Record<string, boolean | undefined>;
-          const loadedFlows: Workflow[] = WORKFLOW_DEFINITIONS.map((def, index) => ({
-            id: index + 1,
-            name: def.name,
-            description: def.description,
-            active: workflowInitialActive(def, notificationSettings),
-            iconIndex: def.iconIndex,
-            settingsKey: def.settingsKey,
-          }));
-          setFlows(loadedFlows);
+          setFlows(buildWorkflowFlows(notificationSettings, generalPhone));
         }
       } catch (error) {
         console.error("Error loading notification settings:", error);
-        const defaultFlows: Workflow[] = WORKFLOW_DEFINITIONS.map((def, index) => ({
-          id: index + 1,
-          name: def.name,
-          description: def.description,
-          active: workflowInitialActive(def, {}),
-          iconIndex: def.iconIndex,
-          settingsKey: def.settingsKey,
-        }));
-        setFlows(defaultFlows);
+        setFlows(buildWorkflowFlows({}, ""));
       } finally {
         setWorkflowsLoading(false);
       }
@@ -502,6 +569,20 @@ export function IntegrationsNotificationsView() {
   const toggleFlow = async (id: number) => {
     const target = flows.find((f) => f.id === id);
     if (!target) return;
+
+    // Pre-validation: block enabling a workflow when its prerequisites are missing.
+    const willEnable = !target.active;
+    if (willEnable && target.settingsKey) {
+      const prereq = validateIntegrationPrerequisites(target.settingsKey, { businessPhone });
+      if (!prereq.ok) {
+        setPrereqModal({
+          title: prereq.title ?? "Action Required",
+          message: prereq.message ?? "A prerequisite is missing.",
+          settingsHash: prereq.settingsHash,
+        });
+        return;
+      }
+    }
 
     const previousFlows = flows;
     const updatedFlows = flows.map((f) => (f.id === id ? { ...f, active: !f.active } : f));
@@ -640,12 +721,13 @@ export function IntegrationsNotificationsView() {
       [
         {
           id: "google_calendar" as const,
-          name: "Google Calendar",
+          name: "Google Calendar & Meet",
           desc: "Sync bookings, avoid double booking, and manage availability in real time.",
           category: "Calendar",
           icon: "calendar" as const,
           connected: integrations.google_calendar,
           connectType: "google" as const,
+          comingSoon: false,
         },
         {
           id: "zoom" as const,
@@ -655,6 +737,7 @@ export function IntegrationsNotificationsView() {
           icon: "video" as const,
           connected: integrations.zoom,
           connectType: "zoom" as const,
+          comingSoon: true,
         },
       ],
     [integrations.google_calendar, integrations.zoom],
@@ -770,6 +853,7 @@ export function IntegrationsNotificationsView() {
                   <div className="grid gap-4">
                     {items.map((it) => {
                       const connected = it.connected;
+                      const comingSoon = it.comingSoon;
                       const selected = selectedIntegrationId === it.id;
                       return (
                         <article
@@ -799,10 +883,14 @@ export function IntegrationsNotificationsView() {
                             </div>
                             <span
                               className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-bold ${
-                                connected ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"
+                                comingSoon
+                                  ? "bg-amber-50 text-amber-700"
+                                  : connected
+                                    ? "bg-emerald-50 text-emerald-700"
+                                    : "bg-slate-100 text-slate-500"
                               }`}
                             >
-                              {connected ? "Connected" : "Not connected"}
+                              {comingSoon ? "Coming Soon" : connected ? "Connected" : "Not connected"}
                             </span>
                           </div>
 
@@ -824,21 +912,26 @@ export function IntegrationsNotificationsView() {
                               type="button"
                               onClick={(e) => {
                                 e.stopPropagation();
+                                if (comingSoon) return;
                                 if (connected) handleDisconnectClick(it.id);
                                 else void handleConnect(it.connectType);
                               }}
-                              disabled={actionLoading !== null}
-                              className={`rounded-2xl px-4 py-2.5 text-sm font-bold transition disabled:opacity-50 ${
+                              disabled={comingSoon || actionLoading !== null}
+                              aria-disabled={comingSoon || actionLoading !== null}
+                              title={comingSoon ? "Coming soon" : undefined}
+                              className={`rounded-2xl px-4 py-2.5 text-sm font-bold transition disabled:cursor-not-allowed disabled:opacity-50 ${
                                 connected
                                   ? "border border-slate-200 text-slate-700 hover:bg-slate-50"
                                   : "bg-blue-600 text-white shadow-lg shadow-blue-600/20 hover:bg-blue-700"
                               }`}
                             >
-                              {actionLoading === it.id || actionLoading === it.connectType
-                                ? "Loading..."
-                                : connected
-                                  ? "Disconnect"
-                                  : "Connect"}
+                              {comingSoon
+                                ? "Coming Soon"
+                                : actionLoading === it.id || actionLoading === it.connectType
+                                  ? "Loading..."
+                                  : connected
+                                    ? "Disconnect"
+                                    : "Connect"}
                             </button>
                             <button
                               type="button"
@@ -1010,6 +1103,22 @@ export function IntegrationsNotificationsView() {
         message={upgradeModalMessage}
         onClose={() => setUpgradeModalOpen(false)}
       />
+
+      {prereqModal && (
+        <ConfirmModal
+          title={prereqModal.title}
+          message={prereqModal.message}
+          confirmLabel="Go to Settings"
+          cancelLabel="Cancel"
+          variant="primary"
+          onConfirm={() => {
+            const hash = prereqModal.settingsHash ? `#${prereqModal.settingsHash}` : "";
+            setPrereqModal(null);
+            router.push(`/settings${hash}`);
+          }}
+          onCancel={() => setPrereqModal(null)}
+        />
+      )}
     </main>
   );
 }

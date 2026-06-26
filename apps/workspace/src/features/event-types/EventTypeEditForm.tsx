@@ -70,6 +70,7 @@ export function EventTypeEditForm({ eventTypeId }: EventTypeEditFormProps) {
     service_provider_id: "",
   });
   const [formError, setFormError] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [serviceProviderOwnerIds, setServiceProviderOwnerIds] = useState<Set<string>>(
     () => new Set()
@@ -301,6 +302,7 @@ export function EventTypeEditForm({ eventTypeId }: EventTypeEditFormProps) {
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setFormError(null);
+    setSuccessMessage(null);
 
     if (!form.title.trim()) return;
 
@@ -319,6 +321,7 @@ export function EventTypeEditForm({ eventTypeId }: EventTypeEditFormProps) {
     submitInFlightRef.current = true;
     setSubmitting(true);
 
+    let succeeded = false;
     try {
       const {
         data: { session },
@@ -360,13 +363,19 @@ export function EventTypeEditForm({ eventTypeId }: EventTypeEditFormProps) {
         return;
       }
 
-      router.push("/event-type");
+      succeeded = true;
+      setSuccessMessage("Event type updated successfully.");
+      setTimeout(() => {
+        router.push("/event-type");
+      }, 1200);
     } catch (err) {
       console.error("Error:", err);
       setFormError("Something went wrong. Please try again.");
     } finally {
       submitInFlightRef.current = false;
-      setSubmitting(false);
+      // Keep the submit button disabled while the success message shows and we
+      // redirect, so the form cannot be submitted again.
+      if (!succeeded) setSubmitting(false);
     }
   };
 
@@ -422,6 +431,7 @@ export function EventTypeEditForm({ eventTypeId }: EventTypeEditFormProps) {
         }}
         editingId={eventTypeId}
         formError={formError}
+        successMessage={successMessage}
         submitting={submitting}
         onSubmit={handleSubmit}
         onCancel={handleCancel}

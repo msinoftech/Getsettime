@@ -73,18 +73,28 @@ export function FreePlanWelcomeBanner() {
           </ul>
         </div>
         <div className="flex shrink-0 flex-col gap-2 sm:items-end">
-          <button
+          {/* <button
             type="button"
             onClick={() => set_show_upgrade_modal(true)}
             className="inline-flex items-center justify-center rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
           >
             Upgrade Plan
-          </button>
+          </button> */}
           <button
             type="button"
             onClick={handleDismiss}
-            className="text-sm text-slate-500 hover:text-slate-700"
+            aria-label="Dismiss"
+            className="inline-flex items-center gap-1 text-sm text-slate-500 hover:text-slate-700"
           >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 20 20"
+              fill="currentColor"
+              className="h-4 w-4"
+              aria-hidden="true"
+            >
+              <path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z" />
+            </svg>
             Dismiss
           </button>
         </div>

@@ -119,16 +119,11 @@ export function Step3DateTime({
     scrolledForDateRef.current = selectedDate ? selectedDate.toDateString() : null;
   }
 
-  // Auto-select today's date the first time Step 3 is opened with no existing
-  // selection, so available times show immediately. Existing selections (e.g.
-  // when navigating back/forth between steps) are preserved.
-  const autoSelectedTodayRef = useRef(false);
-  useEffect(() => {
-    if (autoSelectedTodayRef.current) return;
-    if (selectedDate != null) return;
-    autoSelectedTodayRef.current = true;
-    onSelectDate(normalizeDate(new Date()));
-  }, [selectedDate, onSelectDate]);
+  // Auto-select the first available date the first time Step 3 opens with no
+  // existing selection, so available times show immediately. Existing selections
+  // (e.g. navigating back/forth between steps) are preserved. The selection waits
+  // for availability to load and runs after `availableDays` is computed below.
+  const autoSelectedDefaultDateRef = useRef(false);
 
   const loadMoreDates = useCallback(() => {
     if (isLoadingMoreRef.current) return;
@@ -256,6 +251,20 @@ export function Step3DateTime({
     providerTimezone,
     customerTimezone,
   ]);
+
+  useEffect(() => {
+    if (autoSelectedDefaultDateRef.current) return;
+    if (selectedDate != null) {
+      autoSelectedDefaultDateRef.current = true;
+      return;
+    }
+    // Wait for availability/bookings so `availableDays` reflects real openings
+    // before picking the default date.
+    if (loadingAvailability || loadingBookings) return;
+    autoSelectedDefaultDateRef.current = true;
+    const firstAvailable = availableDays[0];
+    onSelectDate(normalizeDate(firstAvailable ?? new Date()));
+  }, [selectedDate, onSelectDate, loadingAvailability, loadingBookings, availableDays]);
 
   const formatPreviousDateTime = (iso: string) => {
     if (customerTimezone) {

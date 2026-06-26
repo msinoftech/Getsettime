@@ -69,6 +69,8 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
 
   const activeMenu = pathnameToActiveMenu(pathname);
 
+  const isStaff = user?.user_metadata?.role === "staff";
+
   const [newBookingsCount, setNewBookingsCount] = useState(0);
 
   const fetchNewBookingsCount = useCallback(async () => {
@@ -216,6 +218,8 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
               Services
             </Link>
 
+            {!isStaff && (
+            <>
             <button
               type="button"
               onClick={() => setIsAdminCenterOpen((prev) => !prev)}
@@ -245,10 +249,6 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
               <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-users h-4.5 w-4.5" aria-hidden="true" data-source-pos="107:20-107:52" data-source-name="Icon"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path><path d="M16 3.128a4 4 0 0 1 0 7.744"></path><path d="M22 21v-2a4 4 0 0 0-3-3.87"></path><circle cx="9" cy="7" r="4"></circle></svg>
               Team Members
             </Link>
-            <Link href="/contacts" className={`flex items-center gap-3 rounded-xl px-4 py-1 text-left text-[14px] font-medium transition-all ${ activeMenu === "contacts" ? "bg-indigo-50 text-indigo-700 shadow-sm" : "text-gray-700 hover:bg-gray-50" }`} onClick={handleNavClick}>
-              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-contact h-4.5 w-4.5" aria-hidden="true" data-source-pos="107:20-107:52" data-source-name="Icon"><path d="M16 2v2"></path><path d="M7 22v-2a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v2"></path><path d="M8 2v2"></path><circle cx="12" cy="11" r="3"></circle><rect x="3" y="4" width="18" height="18" rx="2"></rect></svg>
-              Contacts
-            </Link>
             <Link href="/integrations" className={`flex items-center gap-3 rounded-xl px-4 py-1 text-left text-[14px] font-medium transition-all ${ activeMenu === "integrations" ? "bg-indigo-50 text-indigo-700 shadow-sm" : "text-gray-700 hover:bg-gray-50" }`} onClick={handleNavClick}>
               <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-plug-zap h-4.5 w-4.5" aria-hidden="true" data-source-pos="107:20-107:52" data-source-name="Icon"><path d="M6.3 20.3a2.4 2.4 0 0 0 3.4 0L12 18l-6-6-2.3 2.3a2.4 2.4 0 0 0 0 3.4Z"></path><path d="m2 22 3-3"></path><path d="M7.5 13.5 10 11"></path><path d="M10.5 16.5 13 14"></path><path d="m18 3-4 4h6l-4 4"></path></svg>
               Workflow Integrations
@@ -257,14 +257,20 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
               <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-shield-check h-4.5 w-4.5" aria-hidden="true" data-source-pos="107:20-107:52" data-source-name="Icon"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"></path><path d="m9 12 2 2 4-4"></path></svg>
               Roles &amp; permissions
             </Link>
-            <Link href="/billings" className={`flex items-center gap-3 rounded-xl px-4 py-1 text-left text-[14px] font-medium transition-all ${ activeMenu === "billings" ? "bg-indigo-50 text-indigo-700 shadow-sm" : "text-gray-700 hover:bg-gray-50" }`} onClick={handleNavClick}>
+            {/* <Link href="/billings" className={`flex items-center gap-3 rounded-xl px-4 py-1 text-left text-[14px] font-medium transition-all ${ activeMenu === "billings" ? "bg-indigo-50 text-indigo-700 shadow-sm" : "text-gray-700 hover:bg-gray-50" }`} onClick={handleNavClick}>
               <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4.5 w-4.5" aria-hidden="true"><rect width="20" height="14" x="2" y="5" rx="2"/><line x1="2" x2="22" y1="10" y2="10"/></svg>
               Billing &amp; Plans
+            </Link>             */}
+            <Link href="/contacts" className={`flex items-center gap-3 rounded-xl px-4 py-1 text-left text-[14px] font-medium transition-all ${ activeMenu === "contacts" ? "bg-indigo-50 text-indigo-700 shadow-sm" : "text-gray-700 hover:bg-gray-50" }`} onClick={handleNavClick}>
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-contact h-4.5 w-4.5" aria-hidden="true" data-source-pos="107:20-107:52" data-source-name="Icon"><path d="M16 2v2"></path><path d="M7 22v-2a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v2"></path><path d="M8 2v2"></path><circle cx="12" cy="11" r="3"></circle><rect x="3" y="4" width="18" height="18" rx="2"></rect></svg>
+              Contacts
             </Link>
             <Link href="/settings" className={`flex items-center gap-3 rounded-xl px-4 py-1 text-left text-[14px] font-medium transition-all ${ activeMenu === "settings" ? "bg-indigo-50 text-indigo-700 shadow-sm" : "text-gray-700 hover:bg-gray-50" }`} onClick={handleNavClick}>
               <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-settings h-4.5 w-4.5" aria-hidden="true" data-source-pos="107:20-107:52" data-source-name="Icon"><path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"></path><circle cx="12" cy="12" r="3"></circle></svg>
               Settings
             </Link>
+            </>
+            )}
             </>
             )}
           </nav>

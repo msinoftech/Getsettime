@@ -82,9 +82,10 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
   const [editingBooking, setEditingBooking] = useState<Booking | null>(null);
   const [loading, setLoading] = useState(false);
   const [deleteConfirmModal, setDeleteConfirmModal] = useState<{ id: string } | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState(false);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
   const [alertModal, setAlertModal] = useState<{ message: string } | null>(null);
-  const [showBookingUpdatedSuccess, setShowBookingUpdatedSuccess] =
-    useState(false);
   const [pagination, setPagination] = useState<PaginationInfo>({
     page: 1,
     limit: ITEMS_PER_PAGE,
@@ -304,6 +305,100 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
     ]
   );
 
+  const toggleSelect = useCallback((id: string, selected: boolean) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (selected) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }, []);
+
+  const handleSelectAll = useCallback(
+    (selected: boolean) => {
+      setSelectedIds(selected ? new Set(bookings.map((b) => b.id)) : new Set());
+    },
+    [bookings]
+  );
+
+  const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
+
+  // Drop selections that no longer exist after the list refreshes.
+  useEffect(() => {
+    setSelectedIds((prev) => {
+      if (prev.size === 0) return prev;
+      const visible = new Set(bookings.map((b) => b.id));
+      const next = new Set<string>();
+      prev.forEach((id) => {
+        if (visible.has(id)) next.add(id);
+      });
+      return next.size === prev.size ? prev : next;
+    });
+  }, [bookings]);
+
+  const handleBulkDeleteConfirm = useCallback(async () => {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) {
+      setBulkDeleteConfirm(false);
+      return;
+    }
+
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.access_token) {
+      setBulkDeleteConfirm(false);
+      setAlertModal({ message: "Not authenticated" });
+      return;
+    }
+
+    try {
+      setBulkDeleting(true);
+      const response = await fetch(
+        `/api/bookings?ids=${encodeURIComponent(ids.join(","))}`,
+        {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${session.access_token}` },
+        }
+      );
+
+      if (response.ok) {
+        setBulkDeleteConfirm(false);
+        clearSelection();
+        await fetchBookings(
+          currentPage,
+          debouncedFilter,
+          debouncedDate,
+          debouncedStatus,
+          debouncedEventType,
+          effectiveProviderFilter,
+          debouncedSort
+        );
+        await fetchWorkspaceBookingStats();
+      } else {
+        const errorData = await response.json();
+        setBulkDeleteConfirm(false);
+        setAlertModal({ message: errorData.error || "Failed to delete bookings" });
+      }
+    } catch (error) {
+      console.error("Error deleting bookings:", error);
+      setBulkDeleteConfirm(false);
+      setAlertModal({ message: "An error occurred while deleting the bookings" });
+    } finally {
+      setBulkDeleting(false);
+    }
+  }, [
+    selectedIds,
+    clearSelection,
+    currentPage,
+    debouncedFilter,
+    debouncedDate,
+    debouncedStatus,
+    debouncedEventType,
+    effectiveProviderFilter,
+    debouncedSort,
+    fetchBookings,
+    fetchWorkspaceBookingStats,
+  ]);
+
   const markBookingAsViewed = useCallback(async (bookingId: string) => {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session?.access_token) return;
@@ -369,7 +464,6 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
       debouncedSort
     );
     await fetchWorkspaceBookingStats();
-    setShowBookingUpdatedSuccess(true);
     window.dispatchEvent(new Event('bookings-viewed-update'));
   }, [
     currentPage,
@@ -382,14 +476,6 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
     fetchBookings,
     fetchWorkspaceBookingStats,
   ]);
-
-  useEffect(() => {
-    if (!showBookingUpdatedSuccess) return;
-    const t = window.setTimeout(() => {
-      setShowBookingUpdatedSuccess(false);
-    }, 6000);
-    return () => window.clearTimeout(t);
-  }, [showBookingUpdatedSuccess]);
 
   const handleFormCancel = useCallback(() => {
     setShowForm(false);
@@ -449,6 +535,11 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
       }),
     [bookings, serviceProviders]
   );
+
+  const selectedCount = selectedIds.size;
+  const allSelected =
+    bookings.length > 0 && selectedCount === bookings.length;
+  const someSelected = selectedCount > 0 && !allSelected;
 
   const handlePageChange = useCallback((page: number) => {
     setCurrentPage(page);
@@ -541,44 +632,6 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
           </div>
         </div>
 
-        {showBookingUpdatedSuccess && (
-          <div
-            className="flex items-center justify-between gap-3 rounded-2xl border border-green-200 bg-green-50 px-4 py-3"
-            role="status"
-            aria-live="polite"
-          >
-            <div className="flex min-w-0 flex-1 items-center gap-3">
-              <span className="inline-flex shrink-0 items-center rounded-full bg-green-100 px-2.5 py-0.5 text-xs font-semibold text-green-800">
-                Success
-              </span>
-              <span className="text-sm font-medium text-green-900">
-                Booking has been updated
-              </span>
-            </div>
-            <button
-              type="button"
-              onClick={() => setShowBookingUpdatedSuccess(false)}
-              className="shrink-0 rounded-md p-1 text-green-700 transition hover:bg-green-100 hover:text-green-900"
-              aria-label="Dismiss success message"
-            >
-              <svg
-                className="h-5 w-5"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-                strokeWidth={2}
-                aria-hidden
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M6 18L18 6M6 6l12 12"
-                />
-              </svg>
-            </button>
-          </div>
-        )}
-
         {/* Filters card */}
         <div className="rounded-[24px] border border-slate-200/70 bg-white/90 p-4 shadow-[0_16px_40px_-20px_rgba(15,23,42,0.18)] backdrop-blur">
           <BookingFilters
@@ -662,11 +715,33 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
 
         {/* Desktop table */}
         <div className="hidden overflow-hidden rounded-[28px] border border-slate-200/70 bg-white/90 shadow-[0_16px_40px_-20px_rgba(15,23,42,0.18)] backdrop-blur lg:block">
-          <div className="border-b border-slate-100 px-6 py-4">
-            <h2 className="text-lg font-semibold text-slate-900">All Bookings</h2>
-            <p className="text-sm text-slate-500">
-              Clean overview of your scheduled appointments and actions.
-            </p>
+          <div className="flex flex-col gap-3 border-b border-slate-100 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 className="text-lg font-semibold text-slate-900">All Bookings</h2>
+              <p className="text-sm text-slate-500">
+                Clean overview of your scheduled appointments and actions.
+              </p>
+            </div>
+            {selectedCount > 0 && (
+              <div className="flex items-center gap-3">
+                <span className="text-sm font-medium text-slate-600">
+                  {selectedCount} selected
+                </span>
+                <button
+                  onClick={clearSelection}
+                  className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-50"
+                >
+                  Clear
+                </button>
+                <button
+                  onClick={() => setBulkDeleteConfirm(true)}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700 transition hover:bg-rose-100"
+                >
+                  <Trash2 className="h-4 w-4" />
+                  Delete Selected
+                </button>
+              </div>
+            )}
           </div>
 
           {loading ? (
@@ -690,6 +765,18 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
               <table className="min-w-full">
                 <thead className="bg-slate-50/80">
                   <tr className="text-left text-sm text-slate-600">
+                    <th className="px-6 py-4 font-semibold">
+                      <input
+                        type="checkbox"
+                        checked={allSelected}
+                        ref={(el) => {
+                          if (el) el.indeterminate = someSelected;
+                        }}
+                        onChange={(e) => handleSelectAll(e.target.checked)}
+                        className="h-4 w-4 cursor-pointer rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                        aria-label="Select all bookings"
+                      />
+                    </th>
                     <th className="px-6 py-4 font-semibold">Client</th>
                     <th className="px-6 py-4 font-semibold">Booked Date / Time</th>
                     <th className="px-6 py-4 font-semibold">Service Provider</th>
@@ -708,6 +795,10 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
                         displayBooking={displayBooking}
                         workspace_owner={workspaceOwner}
                         isLast={index === displayBookings.length - 1}
+                        selected={selectedIds.has(displayBooking.id)}
+                        onSelectChange={(checked) =>
+                          toggleSelect(displayBooking.id, checked)
+                        }
                         onView={() => handleBeforeViewBooking(displayBooking)}
                         onEdit={() =>
                           actualBooking && handleEdit(actualBooking)
@@ -724,6 +815,32 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
 
         {/* Mobile / tablet cards */}
         <div className="space-y-4 lg:hidden">
+          {!loading && displayBookings.length > 0 && (
+            <div className="flex items-center justify-between rounded-2xl border border-slate-200/70 bg-white/90 px-4 py-3 shadow-sm">
+              <label className="flex items-center gap-2 text-sm font-medium text-slate-600">
+                <input
+                  type="checkbox"
+                  checked={allSelected}
+                  ref={(el) => {
+                    if (el) el.indeterminate = someSelected;
+                  }}
+                  onChange={(e) => handleSelectAll(e.target.checked)}
+                  className="h-4 w-4 cursor-pointer rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                  aria-label="Select all bookings"
+                />
+                {selectedCount > 0 ? `${selectedCount} selected` : "Select all"}
+              </label>
+              {selectedCount > 0 && (
+                <button
+                  onClick={() => setBulkDeleteConfirm(true)}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700 transition hover:bg-rose-100"
+                >
+                  <Trash2 className="h-4 w-4" />
+                  Delete
+                </button>
+              )}
+            </div>
+          )}
           {loading ? (
             <BookingTableSkeleton />
           ) : displayBookings.length === 0 ? (
@@ -750,6 +867,15 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
                 >
                   <div className="mb-4 flex items-start justify-between gap-3">
                     <div className="flex items-center gap-3">
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.has(displayBooking.id)}
+                        onChange={(e) =>
+                          toggleSelect(displayBooking.id, e.target.checked)
+                        }
+                        className="h-4 w-4 cursor-pointer rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                        aria-label={`Select booking for ${displayBooking.name}`}
+                      />
                       <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-50 to-violet-50 text-indigo-600">
                         <UserRound className="h-5 w-5" />
                       </div>
@@ -854,6 +980,20 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
             variant="danger"
             onConfirm={handleDeleteConfirm}
             onCancel={() => setDeleteConfirmModal(null)}
+          />
+        )}
+
+        {bulkDeleteConfirm && (
+          <ConfirmModal
+            title="Delete Bookings"
+            message={`Are you sure you want to delete ${selectedCount} ${
+              selectedCount === 1 ? "booking" : "bookings"
+            }? This action cannot be undone.`}
+            confirmLabel="Delete"
+            variant="danger"
+            loading={bulkDeleting}
+            onConfirm={handleBulkDeleteConfirm}
+            onCancel={() => !bulkDeleting && setBulkDeleteConfirm(false)}
           />
         )}
 

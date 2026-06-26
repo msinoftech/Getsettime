@@ -620,7 +620,9 @@ export default function SettingsPage() {
           timezone: timezone.trim() || undefined,
           tagline: tagline.trim() || undefined,
           business_email: businessEmail.trim() || undefined,
-          business_phone: businessPhone.trim() || undefined,
+          // Send empty string (not undefined) so clearing the field overwrites the
+          // stored value — JSON.stringify drops `undefined`, leaving the old value in DB.
+          business_phone: businessPhone.trim(),
           address: address.trim() || undefined,
           city: city.trim() || undefined,
           state: addressState.trim() || undefined,
@@ -724,6 +726,18 @@ export default function SettingsPage() {
     void loadSettings();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- load once on mount
   }, []);
+
+  // When linked from another page (e.g. #business-phone), scroll to and focus the field.
+  useEffect(() => {
+    if (isLoading || typeof window === "undefined") return;
+    if (window.location.hash !== "#business-phone") return;
+    requestAnimationFrame(() => {
+      const el = document.getElementById("business-phone");
+      if (!el) return;
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      (el as HTMLInputElement).focus({ preventScroll: true });
+    });
+  }, [isLoading]);
 
   if (isLoading) {
     return (
@@ -940,12 +954,13 @@ export default function SettingsPage() {
                           Business Phone
                         </span>
                         <input
+                          id="business-phone"
                           type="tel"
                           value={businessPhone}
                           onChange={(e) => setBusinessPhone(e.target.value)}
                           disabled={nonLinkFieldsDisabled}
-                          className="h-14 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-base font-medium outline-none transition focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:opacity-60"
-                          placeholder="+1 …"
+                          className="h-14 w-full scroll-mt-24 rounded-2xl border border-slate-200 bg-slate-50 px-4 text-base font-medium outline-none transition focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:opacity-60"
+                          placeholder="e.g. +919530693882"
                         />
                       </label>
                     </div>

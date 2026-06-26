@@ -70,7 +70,7 @@ export default function RecentActivityFeed() {
         }
         const body = (await res.json()) as { activities?: dashboard_activity_feed_item[] };
         if (alive) {
-          set_items((body.activities ?? []).slice(0, 5));
+          set_items((body.activities ?? []).slice(0, 4));
         }
       } catch {
         if (alive) set_error("Could not load activity");

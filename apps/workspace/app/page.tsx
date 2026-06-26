@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
+import { supabase } from "@/lib/supabaseClient";
 import { useAuth } from "@/src/providers/AuthProvider";
 import { useCreateBookingModal } from "@/src/providers/CreateBookingModalProvider";
 import { useWorkspaceSettings } from "@/src/hooks/useWorkspaceSettings";
@@ -18,6 +19,7 @@ import WorkspaceOverviewCard from "@/src/components/Dashboard/WorkspaceOverviewC
 import UpcomingAppointmentsList from "@/src/components/Dashboard/UpcomingAppointmentsList";
 import PlanUsageCard from "@/src/components/Dashboard/PlanUsageCard";
 import RecentActivityFeed from "@/src/components/Dashboard/RecentActivityFeed";
+import DashboardCalendarSnapshot from "@/src/components/Dashboard/DashboardCalendarSnapshot";
 import { PublicBookingPreviewCard } from "@/src/components/Dashboard/PublicBookingPreviewCard";
 import CopyPublicLinkButton from "@/src/components/Dashboard/CopyPublicLinkButton";
 import QrCodePublicLinkButton from "@/src/components/Dashboard/QrCodePublicLinkButton";
@@ -67,6 +69,7 @@ const Dashboard: React.FC = () => {
   });
   const [dashboard_refresh_key, set_dashboard_refresh_key] = useState(0);
   const [show_upgrade_modal, set_show_upgrade_modal] = useState(false);
+  const [google_calendar_active, set_google_calendar_active] = useState(false);
 
   useEffect(() => {
     const on_bookings_refresh = () => {
@@ -77,6 +80,39 @@ const Dashboard: React.FC = () => {
       window.removeEventListener("bookings-viewed-update", on_bookings_refresh);
   }, []);
 
+  useEffect(() => {
+    if (!user) {
+      set_google_calendar_active(false);
+      return;
+    }
+    let alive = true;
+    const load_integrations = async () => {
+      try {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+        const token = session?.access_token;
+        if (!token) return;
+        const res = await fetch("/api/integrations/status", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) return;
+        const body = (await res.json()) as {
+          integrations?: { google_calendar?: boolean };
+        };
+        if (alive) {
+          set_google_calendar_active(body.integrations?.google_calendar === true);
+        }
+      } catch {
+        if (alive) set_google_calendar_active(false);
+      }
+    };
+    void load_integrations();
+    return () => {
+      alive = false;
+    };
+  }, [user]);
+
   const {
     today_bookings,
     today_loading,
@@ -84,6 +120,8 @@ const Dashboard: React.FC = () => {
     week_loading,
     month_bookings,
     month_loading,
+    upcoming_appointments,
+    upcoming_loading,
   } = useDashboardBookings(user, view_date, dashboard_refresh_key);
   const { data: subscription_data, loading: subscription_loading } = useSubscription(
     Boolean(user),
@@ -288,24 +326,30 @@ const Dashboard: React.FC = () => {
             completion_trend={completion_trend}
             total_bookings={bookingsTotal}
             total_bookings_trend={total_bookings_trend}
+            google_calendar_active={google_calendar_active}
             whatsapp_active={whatsapp_active}
             email_active={email_active}
           />
           <UpcomingAppointmentsList
-            bookings={range_bookings}
-            loading={range_loading}
+            bookings={upcoming_appointments}
+            loading={upcoming_loading}
+          />
+          <PlanUsageCard
+            loading={subscription_loading}
+            used={subscription_data?.usage.bookings_this_month ?? 0}
+            limit={subscription_data?.usage.booking_limit ?? 250}
+            plan={subscription_data?.plan ?? null}
+            usage={subscription_data?.usage ?? null}
+            onUpgrade={() => set_show_upgrade_modal(true)}
           />
         </div>
 
         <div className="space-y-6">
           <PublicBookingPreviewCard />
-          <PlanUsageCard
-            loading={subscription_loading}
-            used={subscription_data?.usage.bookings_this_month ?? 0}
-            limit={subscription_data?.usage.booking_limit ?? 250}
-            onUpgrade={() => set_show_upgrade_modal(true)}
-          />
-          <RecentActivityFeed />
+          {/* <div className="grid gap-6 sm:grid-cols-2"> */}
+            <DashboardCalendarSnapshot />
+            <RecentActivityFeed />
+          {/* </div> */}
         </div>
       </section>
 

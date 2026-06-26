@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { type Booking, BOOKING_STATUSES } from "@/src/types/booking";
 import { supabase } from "@/lib/supabaseClient";
 import { useWorkspaceSettings } from "@/src/hooks/useWorkspaceSettings";
@@ -45,6 +45,14 @@ const BookingForm = ({ booking, onSave, onCancel }: BookingFormProps) => {
   const [additionalDescription, setAdditionalDescription] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState(false);
+  const successRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (success) {
+      successRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }, [success]);
 
   const allowedServices = useMemo(() => {
     if (!intakeFormSettings?.services?.enabled) return [];
@@ -191,7 +199,13 @@ const BookingForm = ({ booking, onSave, onCancel }: BookingFormProps) => {
           throw new Error(errorData.error || "Failed to save booking");
         }
 
-        onSave();
+        // The booking row is already persisted at this point; remaining work
+        // (notifications, calendar sync, etc.) runs in the background on the
+        // server, so surface success immediately inside the modal.
+        setSuccess(true);
+        window.setTimeout(() => {
+          onSave();
+        }, 4500);
       } catch (err) {
         setError((err as Error).message || "An error occurred");
       } finally {
@@ -224,6 +238,29 @@ const BookingForm = ({ booking, onSave, onCancel }: BookingFormProps) => {
       {error && (
         <div className="md:col-span-2 p-3 bg-red-100 text-red-700 rounded-lg text-sm">
           {error}
+        </div>
+      )}
+
+      {success && (
+        <div
+          ref={successRef}
+          className="md:col-span-2 flex items-start gap-2 p-3 bg-green-100 text-green-700 rounded-lg text-sm"
+        >
+          <svg
+            className="mt-0.5 h-4 w-4 shrink-0"
+            fill="none"
+            stroke="currentColor"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth="2"
+            viewBox="0 0 24 24"
+            aria-hidden="true"
+          >
+            <path d="M5 13l4 4L19 7" />
+          </svg>
+          <span>
+            {booking ? "Booking updated successfully." : "Booking created successfully."}{" "}
+          </span>
         </div>
       )}
 
@@ -576,10 +613,16 @@ const BookingForm = ({ booking, onSave, onCancel }: BookingFormProps) => {
       <div className="md:col-span-2 flex justify-end gap-2 mt-2">
         <button
           type="submit"
-          disabled={loading}
+          disabled={loading || success}
           className="px-5 py-2.5 cursor-pointer rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 transition font-medium disabled:opacity-50"
         >
-          {loading ? "Saving..." : booking ? "Update Booking" : "Create Booking"}
+          {success
+            ? "Saved"
+            : loading
+              ? "Saving..."
+              : booking
+                ? "Update Booking"
+                : "Create Booking"}
         </button>
       </div>
     </form>

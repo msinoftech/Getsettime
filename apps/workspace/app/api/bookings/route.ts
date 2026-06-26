@@ -1128,12 +1128,25 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ error: 'Booking not found or access denied' }, { status: 404 });
     }
 
-    const finalIsReschedule =
-      String(data?.status ?? '').toLowerCase() === 'reschedule';
-    const shouldSendDatetimeChangeNotifications = timeChanged;
+    const prevStatusNorm = String(existingRow.status ?? '').toLowerCase();
+    const newStatusNorm = String(data.status ?? '').toLowerCase();
+    const statusChanged =
+      status !== undefined && prevStatusNorm !== newStatusNorm;
+    const finalIsReschedule = newStatusNorm === 'reschedule';
+    /**
+     * Outbound notifications fire only when the status actually changes and the
+     * new status is one of these transitions. Every other change (time-only
+     * edits, invitee detail edits, completed/no-show/etc.) stays silent.
+     */
+    const notifiable_status_change =
+      statusChanged &&
+      (newStatusNorm === 'cancelled' ||
+        newStatusNorm === 'reschedule' ||
+        newStatusNorm === 'confirmed');
 
-    if (shouldSendDatetimeChangeNotifications) {
-      try {
+    if (notifiable_status_change && finalIsReschedule) {
+      after(async () => {
+       try {
         let providerEmail: string | undefined;
         let providerName: string | undefined;
         let departmentName: string | undefined;
@@ -1336,28 +1349,18 @@ export async function PATCH(req: NextRequest) {
             });
           }
         }
-      } catch (emailErr) {
+       } catch (emailErr) {
         console.error('Error sending reschedule emails (dashboard):', emailErr);
-      }
+       }
+      });
     }
 
-    const prevStatusNorm = String(existingRow.status ?? '').toLowerCase();
-    const newStatusNorm = String(data.status ?? '').toLowerCase();
-    const statusChanged =
-      status !== undefined && prevStatusNorm !== newStatusNorm;
-    const skipStatusNotifyBecauseDatetimeChange = shouldSendDatetimeChangeNotifications;
-    /** Admin/dashboard status updates: no outbound email/WhatsApp to invitees */
-    const silentAdminStatusNotify =
-      newStatusNorm === 'completed' ||
-      newStatusNorm === 'no-show' ||
-      newStatusNorm === 'deleted';
-
     if (
-      statusChanged &&
-      !skipStatusNotifyBecauseDatetimeChange &&
-      !silentAdminStatusNotify
+      notifiable_status_change &&
+      (newStatusNorm === 'cancelled' || newStatusNorm === 'confirmed')
     ) {
-      try {
+      after(async () => {
+       try {
         let providerEmail: string | undefined;
         let providerName: string | undefined;
         let departmentName: string | undefined;
@@ -1615,12 +1618,13 @@ export async function PATCH(req: NextRequest) {
             });
           }
         }
-      } catch (statusNotifyErr) {
+       } catch (statusNotifyErr) {
         console.error(
           'Error sending status-change notifications (dashboard):',
           statusNotifyErr
         );
-      }
+       }
+      });
     }
 
     await appendActivityLog(workspaceId, {
@@ -1688,9 +1692,19 @@ export async function DELETE(req: NextRequest) {
     }
 
     const { searchParams } = new URL(req.url);
+    const idsParam = searchParams.get('ids');
     const id = searchParams.get('id');
 
-    if (!id) {
+    const ids = idsParam
+      ? idsParam
+          .split(',')
+          .map((value) => value.trim())
+          .filter(Boolean)
+      : id
+        ? [id]
+        : [];
+
+    if (ids.length === 0) {
       return NextResponse.json({ error: 'Booking ID is required' }, { status: 400 });
     }
 
@@ -1699,45 +1713,52 @@ export async function DELETE(req: NextRequest) {
     if (!workspaceId) {
       return NextResponse.json({ error: 'Workspace ID not found' }, { status: 400 });
     }
-    const { data: beforeBooking } = await supabase
+    const { data: beforeBookings } = await supabase
       .from('bookings')
       .select('id,invitee_name,status,start_at,end_at')
-      .eq('id', id)
-      .eq('workspace_id', workspaceId)
-      .single();
+      .in('id', ids)
+      .eq('workspace_id', workspaceId);
 
     const { error: updErr } = await supabase
       .from('bookings')
       .update({ status: 'deleted' })
-      .eq('id', id)
+      .in('id', ids)
       .eq('workspace_id', workspaceId);
 
     if (updErr) {
-      console.error('Error soft-deleting booking:', updErr);
+      console.error('Error soft-deleting bookings:', updErr);
       return NextResponse.json({ error: updErr.message }, { status: 500 });
     }
 
-    await appendActivityLog(workspaceId, {
-      type: 'booking',
-      action: 'deleted',
-      entity_id: id,
-      actor_user_id: user.id,
-      title: 'Booking marked deleted',
-      description: `Booking ID ${id} was hidden from the bookings list but kept for audit (superadmin can restore).`,
-      before_data: {
-        invitee_name: beforeBooking?.invitee_name,
-        status: beforeBooking?.status,
-        start_at: beforeBooking?.start_at,
-        end_at: beforeBooking?.end_at,
-      },
-      after_data: {
-        status: 'deleted',
-      },
-    });
+    await Promise.all(
+      ids.map((bookingId) => {
+        const beforeBooking = beforeBookings?.find((b) => b.id === bookingId);
+        return appendActivityLog(workspaceId, {
+          type: 'booking',
+          action: 'deleted',
+          entity_id: bookingId,
+          actor_user_id: user.id,
+          title: 'Booking marked deleted',
+          description: `Booking ID ${bookingId} was hidden from the bookings list but kept for audit (superadmin can restore).`,
+          before_data: {
+            invitee_name: beforeBooking?.invitee_name,
+            status: beforeBooking?.status,
+            start_at: beforeBooking?.start_at,
+            end_at: beforeBooking?.end_at,
+          },
+          after_data: {
+            status: 'deleted',
+          },
+        });
+      })
+    );
 
     return NextResponse.json({
       success: true,
-      message: 'Booking deleted successfully',
+      message:
+        ids.length > 1
+          ? `${ids.length} bookings deleted successfully`
+          : 'Booking deleted successfully',
     });
   } catch (err: unknown) {
     const error = err as Error;

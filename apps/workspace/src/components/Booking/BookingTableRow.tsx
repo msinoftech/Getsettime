@@ -51,6 +51,8 @@ interface BookingTableRowProps {
   onView: () => void;
   onEdit: () => void;
   onDelete: () => void;
+  selected?: boolean;
+  onSelectChange?: (selected: boolean) => void;
   isLast?: boolean;
 }
 
@@ -60,6 +62,8 @@ export function BookingTableRow({
   onView,
   onEdit,
   onDelete,
+  selected = false,
+  onSelectChange,
   isLast = false,
 }: BookingTableRowProps) {
   const router = useRouter();
@@ -92,10 +96,24 @@ export function BookingTableRow({
       onClick={handleRowClick}
       onKeyDown={handleRowKeyDown}
       className={`cursor-pointer transition hover:bg-slate-50/70 ${
-        isLast ? '' : 'border-b border-slate-100'
-      }`}
+        selected ? 'bg-indigo-50/50' : ''
+      } ${isLast ? '' : 'border-b border-slate-100'}`}
       aria-label={`View booking for ${displayBooking.name}`}
     >
+      <td
+        className="px-6 py-5 align-middle"
+        data-label="Select"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <input
+          type="checkbox"
+          checked={selected}
+          onChange={(e) => onSelectChange?.(e.target.checked)}
+          className="h-4 w-4 cursor-pointer rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+          aria-label={`Select booking for ${displayBooking.name}`}
+        />
+      </td>
+
       <td className="px-6 py-5 align-middle" data-label="Name">
         <div className="flex items-center gap-3">
           <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-50 to-violet-50 text-indigo-600">

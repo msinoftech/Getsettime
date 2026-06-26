@@ -28,6 +28,8 @@ export function useDashboardBookings(
     today_loading: true,
     next_appointment: null,
     next_loading: true,
+    upcoming_appointments: [],
+    upcoming_loading: true,
     week_bookings: [],
     week_loading: true,
     month_bookings: [],
@@ -43,6 +45,8 @@ export function useDashboardBookings(
         today_loading: false,
         next_appointment: null,
         next_loading: false,
+        upcoming_appointments: [],
+        upcoming_loading: false,
         week_bookings: [],
         week_loading: false,
         month_bookings: [],
@@ -58,6 +62,7 @@ export function useDashboardBookings(
         ...prev,
         today_loading: true,
         next_loading: true,
+        upcoming_loading: true,
         week_loading: true,
         month_loading: true,
       }));
@@ -75,6 +80,8 @@ export function useDashboardBookings(
               today_loading: false,
               next_appointment: null,
               next_loading: false,
+              upcoming_appointments: [],
+              upcoming_loading: false,
               week_bookings: [],
               week_loading: false,
               month_bookings: [],
@@ -100,12 +107,18 @@ export function useDashboardBookings(
           end_date: toDateKey(end_of_month),
         });
 
-        const [today_res, next_res, week_res, month_res] = await Promise.all([
+        const [today_res, next_res, upcoming_res, week_res, month_res] = await Promise.all([
           fetch(
             `/api/bookings?date=${today_key}&limit=150`,
             { headers: auth_header, signal: ac.signal },
           ),
           fetch('/api/bookings?sort=upcoming&limit=1', {
+            headers: auth_header,
+            signal: ac.signal,
+          }),
+          // Range-independent: next future appointments across all dates.
+          // Fetch extra so inactive (cancelled/etc.) rows can be filtered client-side.
+          fetch('/api/bookings?sort=upcoming&limit=10', {
             headers: auth_header,
             signal: ac.signal,
           }),
@@ -127,6 +140,9 @@ export function useDashboardBookings(
         const next_json = next_res.ok
           ? ((await next_res.json()) as BookingsApiResponse)
           : { data: [] };
+        const upcoming_json = upcoming_res.ok
+          ? ((await upcoming_res.json()) as BookingsApiResponse)
+          : { data: [] };
         const week_json = week_res.ok
           ? ((await week_res.json()) as BookingsApiResponse)
           : { data: [] };
@@ -145,6 +161,8 @@ export function useDashboardBookings(
           today_loading: false,
           next_appointment: next_first,
           next_loading: false,
+          upcoming_appointments: sort_bookings_by_start(upcoming_json.data ?? []),
+          upcoming_loading: false,
           week_bookings: week_json.data ?? [],
           week_loading: false,
           month_bookings: month_json.data ?? [],
@@ -159,6 +177,8 @@ export function useDashboardBookings(
             today_loading: false,
             next_appointment: null,
             next_loading: false,
+            upcoming_appointments: [],
+            upcoming_loading: false,
             week_bookings: [],
             week_loading: false,
             month_bookings: [],

@@ -27,6 +27,7 @@ type WorkspaceOverviewCardProps = {
   completion_trend?: MetricTrend;
   total_bookings: number;
   total_bookings_trend?: MetricTrend;
+  google_calendar_active: boolean;
   whatsapp_active: boolean;
   email_active: boolean;
 };
@@ -118,6 +119,7 @@ export default function WorkspaceOverviewCard({
   completion_trend,
   total_bookings,
   total_bookings_trend,
+  google_calendar_active,
   whatsapp_active,
   email_active,
 }: WorkspaceOverviewCardProps) {
@@ -127,8 +129,8 @@ export default function WorkspaceOverviewCard({
       icon: "calendar",
       icon_bg: "bg-blue-50",
       icon_color: "text-blue-600",
-      state_label: "Connect",
-      active: false,
+      state_label: google_calendar_active ? "Connected" : "Connect",
+      active: google_calendar_active,
       href: "/integrations",
     },
     {

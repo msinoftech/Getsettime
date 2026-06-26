@@ -7,6 +7,7 @@ import { useWorkspaceSettings } from '@/src/hooks/useWorkspaceSettings';
 import { build_service_provider_public_booking_url, build_workspace_public_booking_url } from '@/src/utils/public_booking_link';
 import { ROLE_SERVICE_PROVIDER } from '@/src/constants/roles';
 import { useAuth } from '@/src/providers/AuthProvider';
+import { useCreateBookingModal } from '@/src/providers/CreateBookingModalProvider';
 
 type PreviewEventType = {
   title: string;
@@ -24,6 +25,7 @@ function format_preview_slot(total_minutes: number): string {
 
 export function PublicBookingPreviewCard() {
   const { user } = useAuth();
+  const { open: open_create_booking } = useCreateBookingModal();
   const {
     loading: loading_settings,
     workspaceSlug,
@@ -157,9 +159,8 @@ export function PublicBookingPreviewCard() {
         </div>
         <button
           type="button"
-          onClick={open_public_page}
-          disabled={!booking_url}
-          className="mt-4 w-full rounded-xl bg-indigo-600 py-2.5 text-sm font-bold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+          onClick={open_create_booking}
+          className="mt-4 w-full rounded-xl bg-indigo-600 py-2.5 text-sm font-bold text-white transition hover:bg-indigo-700"
         >
           Book Appointment
         </button>

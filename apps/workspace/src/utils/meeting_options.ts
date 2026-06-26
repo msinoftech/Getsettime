@@ -33,6 +33,23 @@ export function workspace_meeting_options_to_location(
   return null;
 }
 
+/**
+ * Map every enabled workspace `meeting_options` key to its `event_types.location_type`
+ * value, preserving the canonical order (in_person → phone → video). WhatsApp has no
+ * event-type location and is skipped.
+ */
+export function workspace_meeting_options_to_location_types(
+  meeting_options: meeting_options_settings | unknown
+): event_type_location_from_meeting[] {
+  if (!meeting_options || typeof meeting_options !== 'object') return [];
+  const opts = meeting_options as Record<string, unknown>;
+  const result: event_type_location_from_meeting[] = [];
+  if (opts.in_person === true) result.push('in_person');
+  if (opts.phone_call === true) result.push('phone');
+  if (opts.google_meet === true) result.push('video');
+  return result;
+}
+
 /** Enabled keys in stable display order. */
 export function list_enabled_meeting_option_keys(
   meeting_options: meeting_options_settings | unknown
