@@ -97,6 +97,58 @@ function normalizeDepartmentMeta(meta_data: unknown): Record<string, unknown> {
   return { services: [] };
 }
 
+type ResolvedDepartment = { id: number; name: string; created: boolean };
+
+/**
+ * Resolves a single department name to a workspace row, creating it or restoring
+ * a soft-deleted match as needed, and links the workspace owner. `existing` is the
+ * caller-provided cache of current workspace rows and must be kept in sync by the caller.
+ */
+async function resolveDepartmentByName(
+  supabase: SupabaseClient,
+  workspaceId: number | string,
+  rawName: string,
+  existing: { id: number; name: string; flag: boolean }[]
+): Promise<ResolvedDepartment | null> {
+  const trimmedName = rawName.trim();
+  if (!trimmedName) return null;
+  const lower = trimmedName.toLowerCase();
+
+  const reuse = existing.find(
+    (d) => typeof d.name === 'string' && d.name.toLowerCase() === lower
+  );
+  if (reuse) {
+    if (reuse.flag === false) {
+      const { data: restored, error } = await supabase
+        .from('departments')
+        .update({ flag: true, status: 'active' })
+        .eq('id', reuse.id)
+        .select('id, name')
+        .single();
+      if (error || !restored) return null;
+      await linkWorkspaceOwnerToDepartment(supabase, workspaceId, restored.id as number);
+      return { id: restored.id as number, name: restored.name as string, created: true };
+    }
+    await linkWorkspaceOwnerToDepartment(supabase, workspaceId, reuse.id);
+    return { id: reuse.id, name: reuse.name, created: false };
+  }
+
+  const { data: created, error } = await supabase
+    .from('departments')
+    .insert({
+      workspace_id: workspaceId,
+      name: trimmedName,
+      description: null,
+      meta_data: { services: [] },
+      status: 'active',
+    })
+    .select('id, name')
+    .single();
+  if (error || !created) return null;
+  await linkWorkspaceOwnerToDepartment(supabase, workspaceId, created.id as number);
+  return { id: created.id as number, name: created.name as string, created: true };
+}
+
 // GET: Fetch all departments for the workspace
 export async function GET(req: NextRequest) {
   try {
@@ -114,10 +166,12 @@ export async function GET(req: NextRequest) {
     }
 
     // RLS automatically filters by workspace_id from JWT
-    // flag=false rows are soft-deleted and must not appear in the workspace UI
+    // flag=false rows are soft-deleted and must not appear in the workspace UI.
+    // Select explicit columns only: `flag` is always true here and the legacy
+    // `meta_data.service_providers` is stripped below so it never leaks to clients.
     const { data, error } = await supabase
       .from('departments')
-      .select('*')
+      .select('id, workspace_id, name, description, status, meta_data, created_at')
       .eq('flag', true)
       .order('created_at', { ascending: false });
 
@@ -126,7 +180,12 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    return NextResponse.json({ departments: data || [] });
+    const departments = (data ?? []).map((d) => ({
+      ...d,
+      meta_data: normalizeDepartmentMeta(d.meta_data),
+    }));
+
+    return NextResponse.json({ departments });
   } catch (err: unknown) {
     const error = err as Error;
     console.error('Error:', error);
@@ -155,6 +214,93 @@ export async function POST(req: NextRequest) {
     const workspaceId = user.user_metadata?.workspace_id;
     if (!workspaceId) {
       return NextResponse.json({ error: 'Workspace ID not found' }, { status: 400 });
+    }
+
+    // Batch path: create/restore many departments and (optionally) link the caller
+    // in a single request. Used by onboarding to avoid a GET -> N x POST -> GET -> PUT chain.
+    if (Array.isArray(body.names)) {
+      const requested = (body.names as unknown[])
+        .map((n) => (typeof n === 'string' ? n.trim() : ''))
+        .filter((n): n is string => n.length > 0);
+
+      const uniqueNames: string[] = [];
+      const seen = new Set<string>();
+      for (const n of requested) {
+        const lower = n.toLowerCase();
+        if (seen.has(lower)) continue;
+        seen.add(lower);
+        uniqueNames.push(n);
+      }
+
+      if (uniqueNames.length === 0) {
+        return NextResponse.json({ departments: [] });
+      }
+
+      const { data: existingRows, error: existingErr } = await supabase
+        .from('departments')
+        .select('id, name, flag')
+        .eq('workspace_id', workspaceId);
+      if (existingErr) {
+        console.error('Error checking existing departments:', existingErr);
+        return NextResponse.json({ error: existingErr.message }, { status: 500 });
+      }
+
+      const existing = (existingRows ?? []) as { id: number; name: string; flag: boolean }[];
+      const resolved: ResolvedDepartment[] = [];
+      for (const deptName of uniqueNames) {
+        const row = await resolveDepartmentByName(supabase, workspaceId, deptName, existing);
+        if (!row) {
+          return NextResponse.json(
+            { error: `Failed to create department "${deptName}"` },
+            { status: 500 }
+          );
+        }
+        resolved.push(row);
+        if (!existing.some((d) => d.id === row.id)) {
+          existing.push({ id: row.id, name: row.name, flag: true });
+        }
+      }
+
+      if (body.link_self === true) {
+        const ids = resolved.map((r) => r.id);
+        const { data: existingLinks, error: linkFetchErr } = await supabase
+          .from('user_departments')
+          .select('department_id')
+          .eq('workspace_id', workspaceId)
+          .eq('user_id', user.id);
+        if (linkFetchErr) {
+          console.error('Error fetching user_departments:', linkFetchErr);
+          return NextResponse.json({ error: linkFetchErr.message }, { status: 500 });
+        }
+        const alreadyLinked = new Set((existingLinks ?? []).map((r) => r.department_id));
+        const toInsert = ids
+          .filter((id) => !alreadyLinked.has(id))
+          .map((department_id) => ({ user_id: user.id, department_id, workspace_id: workspaceId }));
+        if (toInsert.length > 0) {
+          const { error: insErr } = await supabase.from('user_departments').insert(toInsert);
+          if (insErr) {
+            console.error('Error linking user to departments:', insErr);
+            return NextResponse.json({ error: insErr.message }, { status: 500 });
+          }
+        }
+      }
+
+      for (const r of resolved) {
+        if (!r.created) continue;
+        await appendActivityLog(workspaceId, {
+          type: 'department',
+          action: 'created',
+          entity_id: r.id,
+          actor_user_id: user.id,
+          title: 'Department created',
+          description: r.name,
+          after_data: { name: r.name, status: 'active' },
+        });
+      }
+
+      return NextResponse.json({
+        departments: resolved.map((r) => ({ id: r.id, name: r.name })),
+      });
     }
 
     const trimmedName = typeof name === 'string' ? name.trim() : '';

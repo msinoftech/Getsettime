@@ -162,12 +162,6 @@ export async function saveIntegration(params: {
   } = params;
   const provider = TYPE_TO_PROVIDER[type];
 
-  const credentials = {
-    access_token,
-    ...(refresh_token != null && { refresh_token }),
-    ...(expires_at != null && { expires_at }),
-  };
-
   const config: Record<string, unknown> = { ...(metadata ?? {}) };
   if (linked_auth_user_id) {
     config[INTEGRATION_LINKED_AUTH_USER_KEY] = linked_auth_user_id;
@@ -180,6 +174,16 @@ export async function saveIntegration(params: {
     rows,
     linked_auth_user_id === undefined ? undefined : linked_auth_user_id ?? null
   );
+
+  // Google only returns a refresh_token on first consent; preserve the stored
+  // one on update so auto-refresh (which omits it) doesn't wipe it.
+  const existingCreds = (existing?.credentials as Record<string, unknown>) ?? {};
+  const credentials = {
+    ...existingCreds,
+    access_token,
+    ...(refresh_token != null && { refresh_token }),
+    ...(expires_at != null && { expires_at }),
+  };
 
   if (existing) {
     const { error } = await supabaseAdmin

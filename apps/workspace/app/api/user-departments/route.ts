@@ -62,9 +62,11 @@ export async function GET(req: NextRequest) {
     const userId = searchParams.get('user_id');
     const departmentId = searchParams.get('department_id');
 
+    // Only expose fields the client actually reads; `workspace_id` is redundant
+    // (already scoped below) and `created_at` is unused.
     let query = supabase
       .from('user_departments')
-      .select('*')
+      .select('id, user_id, department_id')
       .eq('workspace_id', workspaceId);
 
     if (userId) query = query.eq('user_id', userId);

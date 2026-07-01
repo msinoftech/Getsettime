@@ -194,6 +194,10 @@ export default function RegisterForm() {
   const emailFromUrlAppliedRef = useRef(false);
   /** Apply metadata resume step only once per user after login / first load; do not override Back/Next. */
   const resumeStepHydratedUserIdRef = useRef<string | null>(null);
+
+  // Optimistic step-1 save: started when leaving step 1, awaited before any step
+  // that depends on the saved departments/profession (and surfaced as an error there).
+  const step1SavePromiseRef = useRef<Promise<boolean> | null>(null);
   /** Locked for full invite onboarding so auth refresh cannot create a personal workspace. */
   const onboardingKindRef = useRef<"invite" | "owner" | null>(null);
   const lockedWorkspaceIdRef = useRef<number | null>(null);
@@ -870,23 +874,37 @@ export default function RegisterForm() {
     if (uerr) throw new Error(uerr.message);
   };
 
-  const saveStep1 = async (): Promise<boolean> => {
-    const isSpOnboarding = onboardingRole === "service_provider";
+  const collectStep1DepartmentNames = (): string[] => {
     const isOtherProfession = selectedProfessionId === OTHER_VALUE;
-    const hasProfession = isOtherProfession ? !!customProfession.trim() : !!selectedProfessionId;
     const customDepartmentName = customDepartment.trim();
     const departmentNames = [
       ...selectedDepartments,
       ...((isOtherProfession || customDepartmentMode) && customDepartmentName ? [customDepartmentName] : []),
     ];
-    const uniqueDepartmentNames = Array.from(new Set(departmentNames.map((name) => name.trim()).filter(Boolean)));
-    const hasDepartment = uniqueDepartmentNames.length > 0;
+    return Array.from(new Set(departmentNames.map((name) => name.trim()).filter(Boolean)));
+  };
+
+  const validateStep1 = (): boolean => {
+    const isSpOnboarding = onboardingRole === "service_provider";
+    const isOtherProfession = selectedProfessionId === OTHER_VALUE;
+    const hasProfession = isOtherProfession ? !!customProfession.trim() : !!selectedProfessionId;
+    const hasDepartment = collectStep1DepartmentNames().length > 0;
 
     if (workspaceId == null) return false;
     if (!isSpOnboarding && (!hasProfession || !hasDepartment)) return false;
     if (isSpOnboarding && !hasDepartment) return false;
-    setOnboardingSaving(true);
-    setError("");
+    return true;
+  };
+
+  // Persists profession + departments in a single batched request. Runs optimistically
+  // in the background (see handleOnboardingNext); does not toggle onboardingSaving.
+  const saveStep1 = async (): Promise<boolean> => {
+    if (!validateStep1()) return false;
+
+    const isSpOnboarding = onboardingRole === "service_provider";
+    const isOtherProfession = selectedProfessionId === OTHER_VALUE;
+    const uniqueDepartmentNames = collectStep1DepartmentNames();
+
     try {
       const headers = await headers_for_workspace_api();
 
@@ -910,65 +928,16 @@ export default function RegisterForm() {
         }
       }
 
-      // Check if department already exists in this workspace before creating
-      const existingRes = await fetch("/api/departments", { headers });
-      const existingDepts: { id: number; name: string }[] = existingRes.ok
-        ? (await existingRes.json()).departments ?? []
-        : [];
-      const existingNameSet = new Set(existingDepts.map((d) => d.name.toLowerCase()));
-      for (const departmentName of uniqueDepartmentNames) {
-        if (existingNameSet.has(departmentName.toLowerCase())) continue;
-        const deptRes = await fetch("/api/departments", {
-          method: "POST",
-          headers,
-          body: JSON.stringify({ name: departmentName }),
-        });
-        if (!deptRes.ok) {
-          const err = await deptRes.json().catch(() => ({}));
-          throw new Error(err.error ?? "Failed to create department");
-        }
-        existingNameSet.add(departmentName.toLowerCase());
-      }
-
-      // Ensure workspace owner is linked in user_departments for every selected name.
-      // Skipped POSTs (department already existed) and older API bugs could leave rows missing.
-      const finalListRes = await fetch("/api/departments", { headers });
-      const allWorkspaceDepts: { id: number; name: string }[] = finalListRes.ok
-        ? (await finalListRes.json()).departments ?? []
-        : [];
-      const linkUserId = isSpOnboarding
-        ? onboardingProviderUserId
-        : (await supabase.auth.getSession()).data.session?.user?.id;
-      if (linkUserId && allWorkspaceDepts.length > 0) {
-        const deptIdsToLink = uniqueDepartmentNames
-          .map(
-            (deptName) =>
-              allWorkspaceDepts.find(
-                (d) => d.name.toLowerCase() === deptName.toLowerCase()
-              )?.id
-          )
-          .filter((id): id is number => typeof id === "number");
-        if (deptIdsToLink.length > 0) {
-          const { data: { session: adminSession } } = await supabase.auth.getSession();
-          const token = adminSession?.access_token;
-          if (token && workspaceId != null) {
-            const linkRes = await fetch("/api/user-departments", {
-              method: "PUT",
-              headers: {
-                ...headers,
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify({
-                user_id: linkUserId,
-                department_ids: deptIdsToLink,
-              }),
-            });
-            if (!linkRes.ok) {
-              const err = await linkRes.json().catch(() => ({}));
-              throw new Error(err.error ?? "Failed to assign departments to your profile");
-            }
-          }
-        }
+      // Single batched call: create/restore all selected departments and link the
+      // current user (workspace owner, or the onboarding service provider) at once.
+      const deptRes = await fetch("/api/departments", {
+        method: "POST",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({ names: uniqueDepartmentNames, link_self: true }),
+      });
+      if (!deptRes.ok) {
+        const err = await deptRes.json().catch(() => ({}));
+        throw new Error(err.error ?? "Failed to create departments");
       }
 
       if (isSpOnboarding) {
@@ -993,8 +962,6 @@ export default function RegisterForm() {
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Failed to save");
       return false;
-    } finally {
-      setOnboardingSaving(false);
     }
   };
 
@@ -1077,11 +1044,22 @@ export default function RegisterForm() {
     setError("");
     setStep3NextError(null);
     if (onboardingStep === 1) {
-      const ok = await saveStep1();
-      if (ok) goToOnboardingStep(2);
+      // Optimistic: validate locally, kick off the single batched save in the
+      // background, and advance immediately so the user doesn't wait. The promise
+      // is awaited on step 2 (below) to surface any failure before dependent work.
+      if (!validateStep1()) return;
+      step1SavePromiseRef.current = saveStep1();
+      goToOnboardingStep(2);
     } else if (onboardingStep === 2) {
       setOnboardingSaving(true);
       try {
+        if (step1SavePromiseRef.current) {
+          const step1Ok = await step1SavePromiseRef.current;
+          if (!step1Ok) {
+            goToOnboardingStep(1);
+            return;
+          }
+        }
         if (onboardingRole === "service_provider") {
           const headers = await headers_for_workspace_api();
           await fetch("/api/settings/provider-settings", {
