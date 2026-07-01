@@ -779,7 +779,7 @@ export default function AvailabilityTimesheet({
     DAYS.forEach((day) => {
       if (day !== sourceDay) {
         updated[day] = {
-          enabled: sourceSchedule.enabled,
+          enabled: base[day].enabled,
           startTime: sourceSchedule.startTime,
           endTime: sourceSchedule.endTime,
           breaks: sourceSchedule.breaks.map((breakTime) => ({

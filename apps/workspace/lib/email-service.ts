@@ -1223,8 +1223,8 @@ export const sendWelcomeEmail = async (params: WelcomeEmailParams): Promise<void
         <li>Public booking page</li>
       </ul>
       <p>
-        <a href="${dashboardUrl}" class="button">Go to dashboard</a>
-        <a href="${upgradeUrl}" class="button button-secondary">Upgrade plan</a>
+        <a href="${dashboardUrl}" class="button" style="color:#fff !important;">Go to dashboard</a>
+        <a href="${upgradeUrl}" class="button button-secondary" style="color:#000 !important;">Upgrade plan</a>
       </p>
       <div class="footer">
         <p>&copy; ${new Date().getFullYear()} GetSetTime. All rights reserved.</p>
