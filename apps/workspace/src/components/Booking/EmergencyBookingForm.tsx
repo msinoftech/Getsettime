@@ -10,6 +10,7 @@ import { userActsAsServiceProviderFromMetadata } from "@/lib/service_provider_ro
 import { normalizeDepartmentIdsFromUserMetadata } from "@/lib/sync_department_service_providers_from_team";
 import { useWorkspaceSettings } from "@/src/hooks/useWorkspaceSettings";
 import { useLocationContext } from "@app/location";
+import { filterBookableEventTypes } from "@/src/utils/bookingFormUtils";
 import {
   resolveCustomerTimezone,
   resolveProviderTimezone,
@@ -43,6 +44,7 @@ interface EventType {
   id: string;
   title: string;
   duration_minutes: number | null;
+  status?: string | null;
 }
 
 interface ServiceProvider {
@@ -143,7 +145,7 @@ export default function EmergencyBookingForm() {
         });
         if (res.ok) {
           const json = await res.json();
-          const types = (json.data || []) as EventType[];
+          const types = filterBookableEventTypes((json.data || []) as EventType[]);
           if (types.length > 0) {
             const maxDuration = types.reduce((best, t) => {
               const d = t.duration_minutes ?? 0;

@@ -346,10 +346,8 @@ const Dashboard: React.FC = () => {
 
         <div className="space-y-6">
           <PublicBookingPreviewCard />
-          {/* <div className="grid gap-6 sm:grid-cols-2"> */}
-            <DashboardCalendarSnapshot />
-            <RecentActivityFeed />
-          {/* </div> */}
+          <DashboardCalendarSnapshot />
+          <RecentActivityFeed />
         </div>
       </section>
 

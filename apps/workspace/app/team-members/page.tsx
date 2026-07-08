@@ -932,7 +932,7 @@ export default function TeamMembersPage() {
       {initialLoading ? (
         <TeamMemberSkeleton />
       ) : (
-        <div className="mx-auto max-w-7xl">
+        <div className="mx-auto">
           <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_20px_60px_-30px_rgba(15,23,42,0.25)]">
             <div className="border-b border-slate-100 bg-gradient-to-r from-sky-50 via-white to-indigo-50 px-5 py-5 md:px-7 md:py-6">
               <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">

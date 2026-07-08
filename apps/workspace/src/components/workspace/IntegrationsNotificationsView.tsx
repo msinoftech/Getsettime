@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
+import Image from "next/image";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { SVGProps } from "react";
 import {
@@ -20,6 +21,7 @@ import { ConfirmModal } from "@/src/components/ui/ConfirmModal";
 import { RequestIntegrationModal } from "@/src/components/ui/RequestIntegrationModal";
 import { UpgradePlanModal } from "@/src/components/Subscription/UpgradePlanModal";
 import { useSubscription } from "@/src/hooks/useSubscription";
+import DashboardIcon from "@/src/components/Dashboard/DashboardIcon";
 
 type NotificationChannel = "Email" | "SMS" | "WhatsApp" | "System";
 
@@ -270,31 +272,71 @@ function PanelHeader({ eyebrow, title, description }: { eyebrow: string; title: 
   );
 }
 
+const INTEGRATION_BRAND_ICONS: Record<"google_calendar" | "zoom", { src: string; alt: string }> = {
+  google_calendar: { src: "/integrations/google-calendar.png", alt: "Google Calendar" },
+  zoom: { src: "/integrations/zoom.png", alt: "Zoom" },
+};
+
+function IntegrationBrandIcon({
+  id,
+  className = "h-8 w-8 min-[1350px]:h-10 min-[1350px]:w-10",
+}: {
+  id: "google_calendar" | "zoom";
+  className?: string;
+}) {
+  const { src, alt } = INTEGRATION_BRAND_ICONS[id];
+  return (
+    <Image
+      src={src}
+      alt={alt}
+      width={40}
+      height={40}
+      className={`object-contain ${className}`}
+    />
+  );
+}
+
 function StatCard({
   icon,
   label,
   value,
   helper,
   valueClassName,
+  iconClassName,
 }: {
   icon: LayoutIconName;
   label: string;
   value: string;
   helper: string;
   valueClassName?: string;
+  iconClassName?: string;
 }) {
   return (
-    <div className="rounded-[1.75rem] border border-slate-200 bg-white p-5 shadow-sm">
-      <div className="flex items-center justify-between gap-4">
-        <div>
-          <p className="text-sm font-semibold text-slate-500">{label}</p>
-          <p className={`mt-1 text-2xl font-bold text-slate-950 ${valueClassName ?? ""}`}>{value}</p>
+    <div className="rounded-2xl border border-slate-200 bg-white px-4 py-4 shadow-sm transition hover:border-slate-300">
+      <div className="flex items-top gap-3">
+        <div
+          className={`flex h-13 w-13 shrink-0 items-center justify-center rounded-xl ring-1 ${iconClassName ?? ""}`}
+        >
+          <LayoutIcon name={icon} size={28} />
         </div>
-        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-blue-50 text-blue-700 ring-1 ring-blue-100">
-          <LayoutIcon name={icon} size={22} />
+        <div className="min-w-0 flex-1">
+          <p className="text-xs font-semibold text-slate-500">{label}</p>
+          <p className={`mt-0.5 text-2xl font-bold leading-none py-2 text-slate-950 ${valueClassName ?? ""}`}>{value}</p>
+          <p className="mt-1 truncate text-xs font-medium text-slate-400">{helper}</p>
+        </div>
+        <div className="text-slate-400" aria-hidden>
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            xmlns="http://www.w3.org/2000/svg"
+            className="stroke-current"
+          >
+            <path d="M9 6 15 12 9 18" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
         </div>
       </div>
-      <p className="mt-3 text-xs font-medium text-slate-400">{helper}</p>
     </div>
   );
 }
@@ -308,14 +350,40 @@ function InfoPill({ icon, label }: { icon: LayoutIconName; label: string }) {
   );
 }
 
-function ChannelTypeIcon({ channel }: { channel: NotificationChannel }) {
-  const map: Record<NotificationChannel, LayoutIconName> = {
+function ChannelTypeIcon({
+  channel,
+  variant = "flow",
+}: {
+  channel: NotificationChannel;
+  variant?: "flow" | "channel";
+}) {
+  if (channel === "WhatsApp") {
+    return <DashboardIcon name="whatsapp" size={20} />;
+  }
+
+  const map: Record<Exclude<NotificationChannel, "WhatsApp">, LayoutIconName> = {
     Email: "mail",
-    SMS: "smartphone",
-    WhatsApp: "messageCircle",
+    SMS: variant === "channel" ? "messageCircle" : "smartphone",
     System: "shield",
   };
   return <LayoutIcon name={map[channel]} size={20} />;
+}
+
+function ChannelBlock({ channel }: { channel: NotificationChannel }) {
+  const chMeta = CHANNEL_META[channel];
+  return (
+    <div className="flex h-full w-[8.5rem] shrink-0 items-center gap-2 rounded-xl border border-slate-200 bg-white px-2 py-2">
+      <div
+        className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ring-1 ${chMeta.className}`}
+      >
+        <ChannelTypeIcon channel={channel} variant="channel" />
+      </div>
+      <div className="min-w-0">
+        <p className="text-sm font-semibold leading-tight text-slate-900">{channel}</p>
+        <p className="text-[10px] leading-tight text-slate-400">Channel</p>
+      </div>
+    </div>
+  );
 }
 
 interface IntegrationPrerequisiteContext {
@@ -765,27 +833,57 @@ export function IntegrationsNotificationsView() {
   }, [flows, connectedCount, totalCount, integrationsLoading, workflowsLoading]);
 
   return (
-    <main className="min-h-screen bg-slate-50 px-6 py-6 text-slate-950">
-      <section className="mx-auto max-w-7xl space-y-6">
-        <div className="overflow-hidden rounded-[2rem] border border-slate-200 bg-white shadow-sm">
-          <div className="relative px-6 py-7 md:px-8">
-            <div className="absolute inset-0 bg-gradient-to-br from-blue-50 via-white to-emerald-50" />
-            <div className="relative">
-              <div className="max-w-2xl">
-                <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-blue-100 bg-white/80 px-3 py-1 text-xs font-semibold text-blue-700 shadow-sm">
-                  <LayoutIcon name="sparkles" size={14} />
-                  Automation Control Center
-                </div>
-                <h1 className="text-3xl font-bold tracking-tight text-slate-950 md:text-4xl">
-                  Integrations &amp; Notifications
-                </h1>
-                <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
-                  Connect calendars, video meeting tools, WhatsApp, SMS, and email workflows from one premium GetSetTime
-                  settings page.
-                </p>
-              </div>
+    <main className="min-h-screen text-slate-950">
+      <section className="mx-auto space-y-6">
+        <div className="rounded-2xl border border-slate-200 bg-white px-5 py-5 shadow-sm md:px-6">
+          <div className="flex items-start gap-4">
+            <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-700 ring-1 ring-blue-100">
+              <LayoutIcon name="zap" size={45} />
+            </div>
+            <div className="min-w-0">
+              <h1 className="text-[30px] font-bold leading-tight tracking-tight text-slate-900 md:text-[30px]">
+                Integrations &amp; Notifications
+              </h1>
+              <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
+                Connect your favorite tools and automate communication across your workflows.<br></br>
+                Stay organized, save time, and never miss a step.
+              </p>
             </div>
           </div>
+        </div>
+
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <StatCard
+            icon="calendar"
+            iconClassName="bg-violet-50 text-violet-600 ring-violet-100"
+            label="Connected Apps"
+            value={
+              integrationsLoading ? "—" : `${stats.connected}/${stats.totalIntegrations}`
+            }
+            helper={`${stats.connected} app connected`}
+          />
+          <StatCard
+            icon="zap"
+            iconClassName="bg-emerald-50 text-emerald-600 ring-emerald-100"
+            label="Active Automations"
+            value={workflowsLoading ? "—" : String(stats.activeRules)}
+            helper={`${stats.totalRules} total rules configured`}
+          />
+          <StatCard
+            icon="messageSquare"
+            iconClassName="bg-blue-50 text-blue-600 ring-blue-100"
+            label="Channels"
+            value={workflowsLoading ? "—" : String(stats.channels)}
+            helper="Email, SMS, WhatsApp, System"
+          />
+          <StatCard
+            icon="shield"
+            iconClassName="bg-emerald-50 text-emerald-600 ring-emerald-100"
+            label="System Health"
+            value={integrationsLoading || workflowsLoading ? "—" : stats.healthLabel}
+            helper={stats.healthHint}
+            valueClassName={stats.healthClass}
+          />
         </div>
 
         {message && (
@@ -800,89 +898,71 @@ export function IntegrationsNotificationsView() {
           </div>
         )}
 
-        <div className="grid gap-4 md:grid-cols-4">
-          <StatCard
-            icon="calendar"
-            label="Connected Apps"
-            value={
-              integrationsLoading ? "—" : `${stats.connected}/${stats.totalIntegrations}`
-            }
-            helper="Live integrations"
-          />
-          <StatCard
-            icon="zap"
-            label="Active Rules"
-            value={workflowsLoading ? "—" : String(stats.activeRules)}
-            helper={`${stats.totalRules} workflows configured`}
-          />
-          <StatCard
-            icon="messageSquare"
-            label="Channels"
-            value={workflowsLoading ? "—" : String(stats.channels)}
-            helper="Email, SMS, WhatsApp"
-          />
-          <StatCard
-            icon="bell"
-            label="System Health"
-            value={integrationsLoading || workflowsLoading ? "—" : stats.healthLabel}
-            helper={stats.healthHint}
-            valueClassName={stats.healthClass}
-          />
-        </div>
-
-        <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)] lg:items-start">
-          <section className="min-w-0 space-y-5">
-            <PanelHeader
-              eyebrow="Connected Apps"
-              title="Integrations"
-              description="Manage calendar, video meeting, and communication apps."
-            />
+        <div className="grid gap-5 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,1.95fr)] lg:items-start lg:max-[1349px]:grid-cols-[minmax(0,1.3fr)_minmax(0,1.7fr)]">
+          <section className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm md:p-5">
+            <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900">Connected Apps</h2>
+                <p className="mt-1 text-xs text-slate-500">
+                  Manage calendar, video meeting, and communication apps.
+                </p>
+              </div>
+              {/* <button
+                type="button"
+                onClick={() => setRequestModalOpen(true)}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-100"
+              >
+                <span className="text-sm leading-none">+</span> Add App
+              </button> */}
+            </div>
 
             {integrationsLoading ? (
-              <div className="space-y-4">
-                <div className="h-48 animate-pulse rounded-[1.75rem] bg-slate-200/80" />
-                <div className="h-48 animate-pulse rounded-[1.75rem] bg-slate-200/80" />
+              <div className="space-y-3">
+                <div className="h-44 animate-pulse rounded-2xl bg-slate-100" />
+                <div className="h-44 animate-pulse rounded-2xl bg-slate-100" />
+              </div>
+            ) : items.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-10 text-center">
+                <p className="text-lg font-bold text-slate-950">No integrations found</p>
               </div>
             ) : (
-              <>
-                {items.length === 0 ? (
-                  <div className="rounded-[1.75rem] border border-dashed border-slate-300 bg-white p-10 text-center shadow-sm">
-                    <p className="text-lg font-bold text-slate-950">No integrations found</p>
-                  </div>
-                ) : (
-                  <div className="grid gap-4">
-                    {items.map((it) => {
-                      const connected = it.connected;
-                      const comingSoon = it.comingSoon;
-                      const selected = selectedIntegrationId === it.id;
-                      return (
-                        <article
-                          key={it.id}
-                          role="button"
-                          tabIndex={0}
-                          onClick={() => setSelectedIntegrationId(it.id)}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter" || e.key === " ") {
-                              e.preventDefault();
-                              setSelectedIntegrationId(it.id);
-                            }
-                          }}
-                          className={`cursor-pointer rounded-[1.75rem] border bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:border-blue-200 hover:shadow-xl hover:shadow-slate-200/70 ${
-                            selected ? "border-blue-200 ring-4 ring-blue-50" : "border-slate-200"
-                          }`}
-                        >
-                          <div className="flex items-start justify-between gap-4">
-                            <div className="flex gap-4">
-                              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-blue-50 text-blue-700 ring-1 ring-blue-100">
-                                <LayoutIcon name={it.icon} size={22} />
-                              </div>
-                              <div className="min-w-0">
-                                <h3 className="font-bold text-slate-900">{it.name}</h3>
-                                <p className="mt-1 text-sm leading-5 text-slate-500">{it.desc}</p>
-                              </div>
-                            </div>
+              <div className="grid gap-3">
+                {items.map((it) => {
+                  const connected = it.connected;
+                  const comingSoon = it.comingSoon;
+                  const selected = selectedIntegrationId === it.id;
+                  return (
+                    <article
+                      key={it.id}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => setSelectedIntegrationId(it.id)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          setSelectedIntegrationId(it.id);
+                        }
+                      }}
+                      className={`cursor-pointer rounded-xl border bg-white p-3 transition min-[1350px]:p-4 ${
+                        selected ? "border-blue-200 ring-2 ring-blue-50" : "border-slate-200 hover:border-slate-300"
+                      }`}
+                    >
+                      <div className="flex items-start gap-3 min-[1350px]:gap-4">
+                        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white min-[1350px]:h-16 min-[1350px]:w-16">
+                          {it.id === "google_calendar" || it.id === "zoom" ? (
+                            <IntegrationBrandIcon id={it.id} />
+                          ) : (
+                            <LayoutIcon name="calendar" size={20} className="min-[1350px]:!h-6 min-[1350px]:!w-6" />
+                          )}
+                        </div>
+
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-1.5 min-[1350px]:gap-2">
+                            <h3 className="truncate text-sm font-semibold leading-tight text-slate-900 min-[1350px]:text-base">
+                              {it.name}
+                            </h3>
                             <span
-                              className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-bold ${
+                              className={`shrink-0 rounded-full px-2 py-0.5 text-[9px] font-semibold min-[1350px]:text-[10px] ${
                                 comingSoon
                                   ? "bg-amber-50 text-amber-700"
                                   : connected
@@ -893,38 +973,52 @@ export function IntegrationsNotificationsView() {
                               {comingSoon ? "Coming Soon" : connected ? "Connected" : "Not connected"}
                             </span>
                           </div>
+                        </div>
+                      </div>
 
-                          <div className="mt-5 rounded-2xl bg-slate-50 px-4 py-3 text-xs font-semibold text-slate-500">
-                            {connected && it.id === "google_calendar" && integrations.google_calendar_email ? (
-                              <span className="block truncate text-slate-700">{integrations.google_calendar_email}</span>
-                            ) : connected ? (
-                              <span className="text-slate-600">Account linked</span>
-                            ) : (
-                              <span>Connect account to enable sync</span>
-                            )}
-                            <span className="mt-1 block text-slate-400">
-                              {connected ? "Status: ready for bookings" : "Not synced"}
-                            </span>
-                          </div>
+                      <p className="mt-2 text-xs leading-5 break-words text-slate-500 min-[1350px]:mt-1 min-[1350px]:text-sm">
+                        {it.desc}
+                      </p>
 
-                          <div className="mt-5 flex flex-wrap gap-2 border-t border-slate-100 pt-4">
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                if (comingSoon) return;
-                                if (connected) handleDisconnectClick(it.id);
-                                else void handleConnect(it.connectType);
-                              }}
-                              disabled={comingSoon || actionLoading !== null}
-                              aria-disabled={comingSoon || actionLoading !== null}
-                              title={comingSoon ? "Coming soon" : undefined}
-                              className={`rounded-2xl px-4 py-2.5 text-sm font-bold transition disabled:cursor-not-allowed disabled:opacity-50 ${
-                                connected
-                                  ? "border border-slate-200 text-slate-700 hover:bg-slate-50"
-                                  : "bg-blue-600 text-white shadow-lg shadow-blue-600/20 hover:bg-blue-700"
-                              }`}
-                            >
+                      <div className="mt-2 rounded-lg bg-slate-50 px-2.5 py-2 text-[11px] text-slate-500 min-[1350px]:mt-3 min-[1350px]:px-3 min-[1350px]:py-2.5 min-[1350px]:text-xs">
+                        {connected && it.id === "google_calendar" && integrations.google_calendar_email ? (
+                          <span className="block truncate font-medium text-slate-700">
+                            {integrations.google_calendar_email}
+                          </span>
+                        ) : connected ? (
+                          <span className="font-medium text-slate-600">Account linked</span>
+                        ) : (
+                          <span className="font-medium text-slate-600">Connect account to enable sync</span>
+                        )}
+                        <span className="mt-1 flex items-center gap-1.5 text-slate-500">
+                          <span
+                            className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+                              connected ? "bg-emerald-500" : "bg-slate-300"
+                            }`}
+                            aria-hidden
+                          />
+                          {connected ? "Status: ready for bookings" : "Not synced"}
+                        </span>
+                      </div>
+
+                      <div className="mt-2 flex items-stretch gap-2 min-[1350px]:mt-3">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (comingSoon) return;
+                            if (connected) handleDisconnectClick(it.id);
+                            else void handleConnect(it.connectType);
+                          }}
+                          disabled={comingSoon || actionLoading !== null}
+                          aria-disabled={comingSoon || actionLoading !== null}
+                          title={comingSoon ? "Coming soon" : undefined}
+                          className={`w-full rounded-lg px-2 py-1.5 text-center text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 min-[1350px]:py-2 min-[1350px]:text-sm ${
+                            connected
+                              ? "border border-slate-200 text-slate-700 hover:bg-slate-50"
+                              : "bg-blue-600 text-white hover:bg-blue-700"
+                          }`}
+                        >
                               {comingSoon
                                 ? "Coming Soon"
                                 : actionLoading === it.id || actionLoading === it.connectType
@@ -933,144 +1027,149 @@ export function IntegrationsNotificationsView() {
                                     ? "Disconnect"
                                     : "Connect"}
                             </button>
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                void fetchIntegrations();
-                              }}
-                              className="rounded-2xl border border-slate-200 px-4 py-2.5 text-sm font-bold text-slate-700 hover:border-blue-200 hover:text-blue-700"
-                            >
-                              Sync
-                            </button>
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setRequestModalOpen(true);
-                              }}
-                              className="rounded-2xl border border-slate-200 px-4 py-2.5 text-sm font-bold text-slate-700 hover:border-blue-200 hover:text-blue-700"
-                            >
-                              Manage
-                            </button>
                           </div>
-                        </article>
-                      );
-                    })}
-                  </div>
-                )}
-              </>
+                    </article>
+                  );
+                })}
+              </div>
             )}
           </section>
 
-          <section id="workspace-notifications" className="min-w-0 scroll-mt-6 space-y-5">
-            <div className="space-y-5">
-                <PanelHeader
-                  eyebrow="Workflow Automation"
-                  title="Notifications"
-                  description="Automate reminders, confirmations, follow-ups, and internal alerts."
-                />
-
-                {workflowsLoading ? (
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    {[1, 2, 3, 4].map((i) => (
-                      <div key={i} className="h-48 animate-pulse rounded-[1.75rem] bg-slate-200/80" />
-                    ))}
-                  </div>
-                ) : (
-                  <div className="grid min-w-0 gap-4 sm:grid-cols-2">
-                    {flows.map((flow) => {
-                        const meta = flow.settingsKey ? WORKFLOW_META[flow.settingsKey] : null;
-                        const channel = meta?.channel ?? "Email";
-                        const chMeta = CHANNEL_META[channel];
-                        const IconComponent = getWorkflowIcon(flow);
-                        return (
-                          <article
-                            key={flow.id}
-                            className="group rounded-[1.75rem] border border-slate-200 bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:border-blue-200 hover:shadow-xl hover:shadow-slate-200/70"
-                          >
-                            <div className="flex items-start justify-between gap-4">
-                              <div className="flex min-w-0 gap-4">
-                                <div
-                                  className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl ring-1 ${chMeta.className}`}
-                                >
-                                  <ChannelTypeIcon channel={channel} />
-                                </div>
-                                <div className="min-w-0">
-                                  <div className="flex flex-wrap items-center gap-2">
-                                    <h3 className="truncate text-base font-bold text-slate-900">{flow.name}</h3>
-                                    {flow.active && (
-                                      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-1 text-[11px] font-bold text-emerald-700">
-                                        <LayoutIcon name="check" size={12} /> Active
-                                      </span>
-                                    )}
-                                  </div>
-                                  <p className="mt-1 line-clamp-2 text-sm leading-5 text-slate-500">
-                                    {flow.description}
-                                  </p>
-                                </div>
-                              </div>
-                              <button
-                                type="button"
-                                onClick={() => void toggleFlow(flow.id)}
-                                className={`relative h-7 w-12 shrink-0 rounded-full transition ${
-                                  flow.active ? "bg-emerald-500" : "bg-slate-300"
-                                }`}
-                                aria-label={flow.active ? "Disable workflow" : "Enable workflow"}
-                              >
-                                <span
-                                  className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow transition ${
-                                    flow.active ? "left-6" : "left-1"
-                                  }`}
-                                />
-                              </button>
-                            </div>
-
-                            {meta && (
-                              <div className="mt-5 grid grid-cols-2 gap-3 text-xs">
-                                <InfoPill icon="clock" label={meta.timing} />
-                                <InfoPill icon="users" label={meta.audience} />
-                              </div>
-                            )}
-
-                            <div className="mt-5 flex items-center justify-between border-t border-slate-100 pt-4">
-                              <span className="rounded-full bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-500">
-                                {channel} Channel
-                              </span>
-                              <div className="flex h-8 w-8 items-center justify-center rounded-xl text-slate-400">
-                                <IconComponent className="h-6 w-6" aria-hidden />
-                              </div>
-                            </div>
-                          </article>
-                        );
-                    })}
-                  </div>
-                )}
+          <section id="workspace-notifications" className="min-w-0 scroll-mt-6 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm md:p-5">
+            <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900">Notification Automations</h2>
+                <p className="mt-1 text-xs text-slate-500">
+                  Automate reminders, confirmations, follow-ups, and internal alerts.
+                </p>
+              </div>
+              {/* <button
+                type="button"
+                onClick={() => setRequestModalOpen(true)}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-100"
+              >
+                <span className="text-sm leading-none">+</span> New Rule
+              </button> */}
             </div>
+
+            {workflowsLoading ? (
+              <div className="space-y-3">
+                {[1, 2, 3, 4].map((i) => (
+                  <div key={i} className="h-20 animate-pulse rounded-xl bg-slate-100" />
+                ))}
+              </div>
+            ) : (
+              <div className="space-y-2.5">
+                {flows.map((flow) => {
+                  const meta = flow.settingsKey ? WORKFLOW_META[flow.settingsKey] : null;
+                  const channel = meta?.channel ?? "Email";
+                  const chMeta = CHANNEL_META[channel];
+                  return (
+                    <div
+                      key={flow.id}
+                      className="grid grid-cols-1 items-stretch gap-2 md:grid-cols-[minmax(0,1fr)_8.5rem]"
+                    >
+                      <article className="grid min-w-0 grid-cols-[minmax(0,1fr)_3rem] items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-3 transition hover:border-slate-300 min-[1350px]:grid-cols-[minmax(0,1fr)_auto_auto_3rem]">
+                        <div className="flex min-w-0 items-start gap-3">
+                          <div
+                            className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ring-1 ${chMeta.className}`}
+                          >
+                            <ChannelTypeIcon channel={channel} />
+                          </div>
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2">
+                              <h3 className="text-[15px] font-semibold text-slate-900">{flow.name}</h3>
+                              <span
+                                className={`inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                                  flow.active ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"
+                                }`}
+                              >
+                                {flow.active ? "Active" : "Inactive"}
+                              </span>
+                            </div>
+                            <p className="mt-0.5 text-xs leading-5 break-words text-slate-500">{flow.description}</p>
+                            <div className="mt-2 flex flex-wrap items-center gap-2 max-md:hidden min-[1350px]:hidden">
+                              <span className="w-fit shrink-0 whitespace-nowrap rounded-md bg-slate-100 px-1.5 py-1 text-[11px] font-medium leading-tight text-slate-500">
+                                {meta?.timing ?? "Instant"}
+                              </span>
+                              <span className="inline-flex w-fit shrink-0 items-center gap-1 whitespace-nowrap rounded-md bg-slate-100 px-1.5 py-1 text-[11px] font-medium leading-tight text-slate-500">
+                                <LayoutIcon name="users" size={14} className="shrink-0 text-slate-400" />
+                                {meta?.audience ?? "Customer"}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <span className="hidden w-fit shrink-0 whitespace-nowrap rounded-md bg-slate-100 px-1.5 py-1 text-[11px] font-medium leading-tight text-slate-500 min-[1350px]:inline-block">
+                          {meta?.timing ?? "Instant"}
+                        </span>
+                        <span className="hidden w-fit shrink-0 items-center gap-1 whitespace-nowrap rounded-md bg-slate-100 px-1.5 py-1 text-[11px] font-medium leading-tight text-slate-500 min-[1350px]:inline-flex">
+                          <LayoutIcon name="users" size={14} className="shrink-0 text-slate-400" />
+                          {meta?.audience ?? "Customer"}
+                        </span>
+
+                        <div className="flex items-center justify-end">
+                          <button
+                            type="button"
+                            onClick={() => void toggleFlow(flow.id)}
+                            className={`relative h-6 w-11 shrink-0 rounded-full transition ${
+                              flow.active ? "bg-emerald-500" : "bg-slate-300"
+                            }`}
+                            aria-label={flow.active ? "Disable workflow" : "Enable workflow"}
+                          >
+                            <span
+                              className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow transition ${
+                                flow.active ? "left-6" : "left-1"
+                              }`}
+                            />
+                          </button>
+                        </div>
+                      </article>
+
+                      <div className="max-md:hidden">
+                        <ChannelBlock channel={channel} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </section>
         </div>
 
         <div
           id="workspace-request-integration"
-          className="scroll-mt-6 rounded-[2rem] border border-blue-100 bg-gradient-to-r from-blue-600 to-cyan-500 p-6 text-white shadow-lg shadow-blue-600/20"
+          className="scroll-mt-6 rounded-2xl border border-slate-200 bg-slate-50/80 p-4 shadow-sm md:p-5"
         >
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-            <div>
-              <div className="mb-2 flex items-center gap-2 text-sm font-bold text-blue-100">
-                <LayoutIcon name="shield" size={17} className="text-blue-100" />
-                Secure integration layer
+            <div className="flex items-center gap-3">
+              <div className="flex h-15 w-15 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-indigo-500 shadow-sm">
+                <LayoutIcon name="sparkles" size={30} />
               </div>
-              <h2 className="text-2xl font-bold">Need another calendar, CRM, or messaging channel?</h2>
-              <p className="mt-2 max-w-2xl text-sm leading-6 text-blue-50">
-                Request a new integration and the GetSetTime team will review it for your workspace.
-              </p>
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900">Need another calendar, CRM, or messaging channel?</h2>
+                <p className="mt-1 text-sm text-slate-600">
+                  Request a new integration and the GetSetTime team will review it for your workspace.
+                </p>
+              </div>
             </div>
             <button
               type="button"
               onClick={() => setRequestModalOpen(true)}
-              className="shrink-0 rounded-2xl bg-white px-5 py-3 text-sm font-bold text-blue-700 shadow-sm transition hover:bg-blue-50"
+              className="inline-flex shrink-0 items-center gap-2 rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700"
             >
               Request New Integration
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg"
+                className="stroke-current"
+                aria-hidden
+              >
+                <path d="M5 12h14M13 6l6 6-6 6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
             </button>
           </div>
         </div>

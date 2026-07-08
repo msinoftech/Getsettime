@@ -190,36 +190,38 @@ export default function Topbar({ toggleSidebar, isSidebarOpen }: TopbarProps) {
           </button>
           
           <div className="lg:hidden">
-            <Link href="/" className="flex items-center gap-1">
-              {!loadingSettings && (
-                <>
-                  <WorkspaceBrandLogo
-                    src={workspaceLogoResolved}
-                    alt={`${accountName} Logo`}
-                    width={120}
-                    height={30}
-                    className="h-8 w-auto object-contain"
-                  />
-                  {accountName && accountName !== "GetSetTime" && (
-                    <span className="text-sm sm:text-md font-bold text-gray-700">
-                      {accountName}
-                    </span>
-                  )}
-                </>
-              )}
-            </Link>
+            <div className="h-16 px-3 flex items-center justify-start border-b border-gray-200">
+              <Link href="/" className="logo flex flex-col items-start gap-0.5">
+                {!loadingSettings && (
+                  <>
+                    <WorkspaceBrandLogo
+                      src={workspaceLogoResolved}
+                      alt={`${accountName} Logo`}
+                      width={150}
+                      height={40}
+                      className="h-8 w-auto object-contain"
+                    />
+                    {accountName && accountName !== "GetSetTime" && (
+                      <span className="text-xs sm:text-sm font-semibold text-gray-700 truncate max-w-[180px]">
+                        {accountName}
+                      </span>
+                    )}
+                  </>
+                )}
+              </Link>
+            </div>
           </div>
         </div>
 
         {/* Center section - global search */}
-        <div className="hidden flex-1 justify-left px-4 md:flex">
+        <div className="hidden flex-1 justify-left px-4 min-[1050px]:flex">
           <GlobalSearch />
         </div>
 
         
 
         <div className="flex items-center space-x-2">
-          <Link href="/billings" className="text-sm text-gray-500 hover:text-gray-700 px-2.5 py-1 rounded-full text-xs font-medium border bg-emerald-50 text-emerald-700 border-emerald-200">
+          <Link href="/billings" className="hidden sm:flex text-sm text-gray-500 hover:text-gray-700 px-2.5 py-1 rounded-full text-xs font-medium border bg-emerald-50 text-emerald-700 border-emerald-200">
             <span className="text-sm font-medium">Current Plan: {currentBillingPlan}</span>
           </Link>
           {!loadingSettings && workspaceProfessionLabel ? (

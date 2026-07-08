@@ -728,8 +728,8 @@ export default function ServicesPage() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-100 p-4 md:p-6">
-      <div className="mx-auto max-w-7xl space-y-4">
+    <div className="min-h-screen">
+      <div className="mx-auto space-y-4">
         {/* Top header */}
         <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm md:p-6">
           <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">

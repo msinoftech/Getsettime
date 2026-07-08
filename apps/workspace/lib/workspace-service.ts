@@ -373,6 +373,7 @@ export async function getOrCreateWorkspace(
       location_type: null,
       location_value: null,
       is_public: true,
+      status: 'active',
       settings: null,
     });
 
@@ -471,6 +472,7 @@ export async function createServiceProviderEventType(
       location_type: null,
       location_value: null,
       is_public: true,
+      status: 'active',
       settings: null,
     })
     .select('id')

@@ -5,11 +5,26 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { TIMEZONE_OPTIONS } from "@/src/constants/timezone";
 import { ROLE_MANAGER, ROLE_SERVICE_PROVIDER, ROLE_STAFF, ROLE_WORKSPACE_ADMIN } from "@/src/constants/roles";
-import { CURRENCY_OPTIONS } from "@/src/constants/currency";
+import { CURRENCY_OPTIONS, CURRENCY_SYMBOLS } from "@/src/constants/currency";
+import { getTimezoneAbbreviation } from "@/lib/date-timezone";
 import { useAuth } from "@/src/providers/AuthProvider";
+import { useCreateBookingModal } from "@/src/providers/CreateBookingModalProvider";
 import { useWorkspaceSettings } from "@/src/hooks/useWorkspaceSettings";
 import { WorkspaceBrandLogo } from "@/src/components/molecules/WorkspaceBrandLogo";
+import { AddressAutocompleteInput } from "@/src/components/molecules/AddressAutocompleteInput";
+import { BookingPhoneInput } from "@/src/components/Booking/MultiStepBooking/BookingPhoneInput";
 import { resolve_workspace_logo_src } from "@/src/utils/workspace_logo";
+import {
+  build_address_display_line,
+  type parsed_address,
+} from "@/src/utils/parse_google_place_address";
+import {
+  build_service_provider_public_booking_url,
+  build_workspace_public_booking_url,
+  copy_text_to_clipboard,
+} from "@/src/utils/public_booking_link";
+import { is_whatsapp_user_enabled } from "@/lib/workspace-notification-flags";
+import type { workspace_notifications_settings } from "@/lib/workspace-notification-flags";
 
 type settings_icon_name =
   | "palette"
@@ -23,11 +38,52 @@ type settings_icon_name =
   | "link"
   | "building"
   | "check"
-  | "trash";
+  | "trash"
+  | "user"
+  | "externalLink"
+  | "copy"
+  | "share"
+  | "refresh"
+  | "eye";
 
 const DATE_FORMAT_OPTIONS = ["DD MMM YYYY", "MM/DD/YYYY", "YYYY-MM-DD"] as const;
 const TIME_FORMAT_OPTIONS = ["12-hour", "24-hour"] as const;
 const LANGUAGE_OPTIONS = ["English", "Hindi", "Spanish", "French"] as const;
+const TAGLINE_MAX_LENGTH = 50;
+
+const TIME_FORMAT_LABELS: Record<(typeof TIME_FORMAT_OPTIONS)[number], string> = {
+  "12-hour": "12 Hour (AM/PM)",
+  "24-hour": "24 Hour",
+};
+
+function format_regional_timezone_option(iana: string): string {
+  try {
+    const date = new Date();
+    const offset =
+      new Intl.DateTimeFormat("en-US", {
+        timeZone: iana,
+        timeZoneName: "longOffset",
+      })
+        .formatToParts(date)
+        .find((part) => part.type === "timeZoneName")?.value ?? "";
+    const longName =
+      new Intl.DateTimeFormat("en-US", {
+        timeZone: iana,
+        timeZoneName: "long",
+      })
+        .formatToParts(date)
+        .find((part) => part.type === "timeZoneName")?.value ?? iana;
+    const abbr = getTimezoneAbbreviation(iana, date);
+    return offset ? `(${offset}) ${longName} (${abbr})` : `${longName} (${abbr})`;
+  } catch {
+    return iana;
+  }
+}
+
+function currency_option_label(code: string): string {
+  const symbol = CURRENCY_SYMBOLS[code];
+  return symbol ? `${code} - ${symbol}` : code;
+}
 
 function get_public_booking_host(): string {
   const raw = process.env.NEXT_PUBLIC_APP_URL?.trim();
@@ -40,6 +96,13 @@ function get_public_booking_host(): string {
     }
   }
   return "getsettime.com";
+}
+
+function workspace_name_initial(name: string): string {
+  const trimmed = name.trim();
+  if (!trimmed) return "W";
+  const match = trimmed.match(/[A-Za-z0-9]/);
+  return (match?.[0] ?? trimmed.charAt(0)).toUpperCase();
 }
 
 function get_preview_url(slug: string, host: string): string {
@@ -84,12 +147,14 @@ type snapshot = {
   allowReschedule: boolean;
   allowCancellation: boolean;
   emailReminder: boolean;
+  smsReminder: boolean;
   whatsappReminder: boolean;
 };
 
 export default function SettingsPage() {
   const router = useRouter();
   const { user } = useAuth();
+  const { open: open_create_booking } = useCreateBookingModal();
   const { refetch: refetchWorkspaceShell } = useWorkspaceSettings();
   const bookingHost = useMemo(() => get_public_booking_host(), []);
   const userRole = user?.user_metadata?.role as string | undefined;
@@ -121,9 +186,12 @@ export default function SettingsPage() {
     text: string;
   } | null>(null);
   const [linkError, setLinkError] = useState<string | null>(null);
+  const [linkCopied, setLinkCopied] = useState(false);
+  const [shareNotice, setShareNotice] = useState<string | null>(null);
 
   const [businessEmail, setBusinessEmail] = useState("");
   const [businessPhone, setBusinessPhone] = useState("");
+  const [addressLine, setAddressLine] = useState("");
   const [address, setAddress] = useState("");
   const [city, setCity] = useState("");
   const [addressState, setAddressState] = useState("");
@@ -139,7 +207,8 @@ export default function SettingsPage() {
   const [allowReschedule, setAllowReschedule] = useState(true);
   const [allowCancellation, setAllowCancellation] = useState(true);
   const [emailReminder, setEmailReminder] = useState(true);
-  const [whatsappReminder, setWhatsappReminder] = useState(false);
+  const [smsReminder, setSmsReminder] = useState(true);
+  const [whatsappReminder, setWhatsappReminder] = useState(true);
 
   const snapshotRef = useRef<snapshot | null>(null);
 
@@ -159,6 +228,16 @@ export default function SettingsPage() {
     bookingHost,
   ]);
 
+  const publicBookingUrl = useMemo(() => {
+    if (isServiceProvider) {
+      return build_service_provider_public_booking_url(
+        workspaceSlug,
+        serviceProviderSlug
+      );
+    }
+    return build_workspace_public_booking_url(workspaceSlug);
+  }, [isServiceProvider, workspaceSlug, serviceProviderSlug]);
+
   const applySnapshot = (s: snapshot) => {
     setAccountName(s.accountName);
     setWorkspaceSlug(s.workspaceSlug);
@@ -172,6 +251,15 @@ export default function SettingsPage() {
     setBusinessEmail(s.businessEmail);
     setBusinessPhone(s.businessPhone);
     setAddress(s.address);
+    setAddressLine(
+      build_address_display_line({
+        address: s.address,
+        city: s.city,
+        addressState: s.addressState,
+        zipcode: s.zipcode,
+        country: s.country,
+      })
+    );
     setCity(s.city);
     setAddressState(s.addressState);
     setZipcode(s.zipcode);
@@ -186,6 +274,7 @@ export default function SettingsPage() {
     setAllowReschedule(s.allowReschedule);
     setAllowCancellation(s.allowCancellation);
     setEmailReminder(s.emailReminder);
+    setSmsReminder(s.smsReminder);
     setWhatsappReminder(s.whatsappReminder);
     setLinkError(null);
   };
@@ -218,7 +307,8 @@ export default function SettingsPage() {
       allowReschedule: true,
       allowCancellation: true,
       emailReminder: true,
-      whatsappReminder: false,
+      smsReminder: true,
+      whatsappReminder: true,
     };
 
     try {
@@ -354,7 +444,10 @@ export default function SettingsPage() {
           >;
           snap.autoConfirm = notifications["auto-confirm-booking"] === true;
           snap.emailReminder = notifications["email-reminder"] !== false;
-          snap.whatsappReminder = notifications["sms-reminder"] === true;
+          snap.smsReminder = notifications["sms-reminder"] !== false;
+          snap.whatsappReminder = is_whatsapp_user_enabled(
+            notifications as workspace_notifications_settings
+          );
 
           const {
             data: { user: authUser },
@@ -585,6 +678,7 @@ export default function SettingsPage() {
             allowReschedule,
             allowCancellation,
             emailReminder,
+            smsReminder,
             whatsappReminder,
           }),
           serviceProviderSlug: trimmedProviderSlug,
@@ -618,12 +712,12 @@ export default function SettingsPage() {
           primaryColor,
           accentColor,
           timezone: timezone.trim() || undefined,
-          tagline: tagline.trim() || undefined,
+          tagline: tagline.trim().slice(0, TAGLINE_MAX_LENGTH) || undefined,
           business_email: businessEmail.trim() || undefined,
           // Send empty string (not undefined) so clearing the field overwrites the
           // stored value — JSON.stringify drops `undefined`, leaving the old value in DB.
           business_phone: businessPhone.trim(),
-          address: address.trim() || undefined,
+          address: addressLine.trim() || undefined,
           city: city.trim() || undefined,
           state: addressState.trim() || undefined,
           zipcode: zipcode.trim() || undefined,
@@ -640,7 +734,8 @@ export default function SettingsPage() {
         notifications: {
           "auto-confirm-booking": autoConfirm,
           "email-reminder": emailReminder,
-          "sms-reminder": whatsappReminder,
+          "sms-reminder": smsReminder,
+          "whatsapp-user": whatsappReminder,
         },
       };
 
@@ -680,7 +775,7 @@ export default function SettingsPage() {
         tagline,
         businessEmail,
         businessPhone,
-        address,
+        address: addressLine,
         city,
         addressState,
         zipcode,
@@ -695,6 +790,7 @@ export default function SettingsPage() {
         allowReschedule,
         allowCancellation,
         emailReminder,
+        smsReminder,
         whatsappReminder,
       };
     } catch (error) {
@@ -750,7 +846,7 @@ export default function SettingsPage() {
   }
 
   const checklist_items: { label: string; done: boolean }[] = [
-    { label: "Workspace name added", done: accountName.trim().length > 0 },
+    { label: "Workspace details added", done: accountName.trim().length > 0 },
     { label: "Booking link configured", done: isServiceProvider
         ? workspaceSlug.trim().length > 0 && serviceProviderSlug.trim().length > 0
         : workspaceSlug.trim().length > 0 },
@@ -762,40 +858,132 @@ export default function SettingsPage() {
       label: "Timezone preference set",
       done: true,
     },
+    {
+      label: "Notifications configured",
+      done:
+        autoConfirm ||
+        allowReschedule ||
+        allowCancellation ||
+        emailReminder ||
+        smsReminder ||
+        whatsappReminder,
+    },
   ];
 
-  const previewHref = `https://${previewUrl}`;
+  const copyWorkspaceLink = async () => {
+    if (!publicBookingUrl) return;
+    const ok = await copy_text_to_clipboard(publicBookingUrl);
+    if (ok) {
+      setLinkCopied(true);
+      window.setTimeout(() => setLinkCopied(false), 2000);
+    }
+  };
+
+  const shareBookingPage = async () => {
+    if (!publicBookingUrl) return;
+    const workspaceTitle = accountName.trim() || "Workspace";
+    const shareText = `You can book your appointment with ${workspaceTitle} using this link:`;
+
+    try {
+      if (typeof navigator !== "undefined" && typeof navigator.share === "function") {
+        await navigator.share({
+          title: "Book an appointment",
+          text: shareText,
+          url: publicBookingUrl,
+        });
+        setShareNotice("Booking page shared successfully.");
+      } else if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(`${shareText}\n${publicBookingUrl}`);
+        setShareNotice("Booking link copied to clipboard.");
+      } else {
+        const ok = await copy_text_to_clipboard(publicBookingUrl);
+        if (ok) setShareNotice("Booking link copied to clipboard.");
+      }
+    } catch {
+      setShareNotice("Share was cancelled.");
+    }
+
+    window.setTimeout(() => setShareNotice(null), 2600);
+  };
+
+  const link_field_class = (hasError: boolean) =>
+    `relative flex min-w-0 flex-col overflow-hidden rounded-2xl border bg-slate-50 transition focus-within:bg-white focus-within:ring-4 focus-within:ring-indigo-100 sm:flex-row ${
+      hasError
+        ? "border-red-400 focus-within:border-red-500"
+        : "border-slate-200 focus-within:border-indigo-400"
+    }`;
+
+  const link_prefix_class =
+    "flex max-w-full shrink-0 items-center gap-2 truncate border-b border-slate-200 bg-white px-3 py-2.5 text-xs font-semibold text-slate-500 sm:border-b-0 sm:border-r sm:px-4 sm:py-0 sm:text-sm";
+
+  const link_slug_input_class =
+    "h-14 min-w-0 w-full bg-transparent px-4 pr-20 text-base font-medium outline-none disabled:cursor-not-allowed disabled:opacity-60";
+
+  const link_action_buttons = (
+    <div className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-1">
+      <a
+        href={publicBookingUrl ?? undefined}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-blue-600 transition hover:bg-blue-50"
+        aria-label="Open booking page"
+      >
+        <SettingsIcon name="externalLink" className="h-4 w-4" />
+      </a>
+      <button
+        type="button"
+        onClick={() => void copyWorkspaceLink()}
+        className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-blue-600 transition hover:bg-blue-50"
+        aria-label="Copy booking link"
+      >
+        <SettingsIcon name={linkCopied ? "check" : "copy"} className="h-4 w-4" />
+      </button>
+    </div>
+  );
+
+  const settings_input_class =
+    "h-14 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-base font-medium outline-none transition focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:opacity-60";
+
+  const settings_select_class = settings_input_class;
+
+  const handleAddressLineChange = (value: string) => {
+    setAddressLine(value);
+    setAddress(value);
+  };
+
+  const handleAddressPlaceSelect = (parsed: parsed_address) => {
+    setAddressLine(parsed.formattedAddress);
+    setAddress(parsed.address);
+    setCity(parsed.city);
+    setAddressState(parsed.state);
+    setZipcode(parsed.zipcode);
+    setCountry(parsed.country);
+  };
 
   return (
-    <main className="min-h-screen bg-slate-50 px-5 py-6 text-slate-900 md:px-8 lg:px-10">
-      <div className="mx-auto max-w-7xl space-y-6">
-        <form onSubmit={handleSubmit}>
-          <section className="overflow-hidden rounded-[2rem] border border-white bg-white shadow-[0_24px_80px_rgba(15,23,42,0.08)]">
-            <div className="relative bg-gradient-to-br from-indigo-600 via-violet-600 to-cyan-500 p-6 text-white md:p-8">
-              <div className="absolute -right-20 -top-20 h-56 w-56 rounded-full bg-white/20 blur-3xl" />
-              <div className="absolute bottom-0 right-1/3 h-32 w-32 rounded-full bg-emerald-300/20 blur-2xl" />
-
-              <div className="relative flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
-                <div>
-                  <div className="mb-3 inline-flex items-center gap-2 rounded-full bg-white/15 px-4 py-2 text-sm font-semibold backdrop-blur">
-                    <SettingsIcon name="sparkles" className="h-4 w-4" />{" "}
-                    Workspace Settings
+    <main className="min-h-screen min-w-0 max-w-full text-slate-900">
+      <div className="mx-auto min-w-0 max-w-full space-y-6">
+        <form onSubmit={handleSubmit} className="min-w-0 max-w-full">
+          <section className="min-w-0 max-w-full rounded-[2rem]">
+            <div className="bg-blue-600 px-6 py-6 text-white md:px-8">
+              <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex items-start gap-3">
+                  <SettingsIcon name="building" className="mt-0.5 h-5 w-5 shrink-0" />
+                  <div>
+                    <h1 className="text-xl font-bold md:text-2xl">Workspace Settings</h1>
+                    <p className="mt-1 max-w-2xl text-sm text-blue-100 md:text-base">
+                      {isReadOnly
+                        ? "View workspace profile, booking link, branding, and booking rules."
+                        : isServiceProvider
+                          ? "Update your personal provider booking link. Other workspace settings are managed by your admin."
+                          : "Manage your account, branding, preferences and booking experience."}
+                    </p>
                   </div>
-                  <h1 className="text-3xl font-bold tracking-tight md:text-4xl">
-                    Settings
-                  </h1>
-                  <p className="mt-2 max-w-2xl text-sm text-indigo-50 md:text-base">
-                    {isReadOnly
-                      ? "View workspace profile, booking link, branding, and booking rules."
-                      : isServiceProvider
-                        ? "Update your personal provider booking link. Other workspace settings are managed by your admin."
-                        : "Manage your account profile, booking link, brand colors, timezone, and workspace identity."}
-                  </p>
                 </div>
 
                 <Link
                   href="/change-password"
-                  className="inline-flex items-center justify-center gap-2 rounded-2xl bg-white px-5 py-3 text-sm font-bold text-indigo-700 shadow-lg shadow-indigo-950/20 transition hover:-translate-y-0.5 hover:bg-indigo-50"
+                  className="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg bg-white px-4 py-2.5 text-sm font-semibold text-blue-600 transition hover:bg-blue-50"
                 >
                   <SettingsIcon name="lock" className="h-4 w-4" />
                   Change Password
@@ -817,22 +1005,22 @@ export default function SettingsPage() {
               </div>
             )}
 
-            <div className="grid gap-6 p-5 md:p-8 lg:grid-cols-[1fr_360px]">
-              <div className="space-y-5">
-                <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-                  <div className="mb-5 flex items-start justify-between gap-4">
-                    <div>
-                      <h2 className="flex items-center gap-2 text-lg font-bold text-slate-950">
-                        <SettingsIcon
-                          name="building"
-                          className="h-5 w-5 text-indigo-600"
-                        />{" "}
-                        Account Details
-                      </h2>
-                      <p className="mt-1 text-sm text-slate-500">
-                        Basic workspace information visible across your booking
-                        pages.
-                      </p>
+            <div className="grid min-w-0 max-w-full gap-6 py-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,360px)]">
+              <div className="min-w-0 space-y-5">
+                <div className="min-w-0 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+                  <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="flex items-start gap-3">
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
+                        <SettingsIcon name="user" className="h-5 w-5" />
+                      </div>
+                      <div>
+                        <h2 className="text-lg font-bold text-slate-950">
+                          Account Details
+                        </h2>
+                        <p className="mt-1 text-sm text-slate-500">
+                          Basic information about your workspace
+                        </p>
+                      </div>
                     </div>
                     <span className="shrink-0 rounded-full bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-700">
                       Active
@@ -840,100 +1028,121 @@ export default function SettingsPage() {
                   </div>
 
                   <div className="grid gap-5">
-                    <label className="block">
-                      <span className="mb-2 block text-sm font-bold text-slate-700">
-                        Account Name
-                      </span>
-                      <input
-                        type="text"
-                        value={accountName}
-                        onChange={(e) => setAccountName(e.target.value)}
-                        disabled={nonLinkFieldsDisabled}
-                        className="h-14 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-base font-medium outline-none transition focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:opacity-60"
-                        placeholder="Enter account name"
-                      />
-                    </label>
+                    <div className="grid gap-5 md:grid-cols-2">
+                      <label className="block">
+                        <span className="mb-2 block text-sm font-bold text-slate-700">
+                          Workspace Name
+                        </span>
+                        <input
+                          type="text"
+                          value={accountName}
+                          onChange={(e) => setAccountName(e.target.value)}
+                          disabled={nonLinkFieldsDisabled}
+                          className={settings_input_class}
+                          placeholder="Enter workspace name"
+                        />
+                      </label>
 
-                    <label className="block">
-                      <span className="mb-2 block text-sm font-bold text-slate-700">
-                        My Link
-                      </span>
-                      {isServiceProvider ? (
-                        <>
-                          <div
-                            className={`flex overflow-hidden rounded-2xl border bg-slate-50 transition focus-within:bg-white focus-within:ring-4 focus-within:ring-indigo-100 ${
-                              linkError
-                                ? "border-red-400 focus-within:border-red-500"
-                                : "border-slate-200 focus-within:border-indigo-400"
-                            }`}
-                          >
-                            <div className="hidden items-center gap-2 border-r border-slate-200 bg-white px-4 text-sm font-semibold text-slate-500 md:flex">
-                              <SettingsIcon name="link" className="h-4 w-4" />
-                              {bookingHost}/{workspaceSlug || "workspace"}/
+                      <label className="block">
+                        <span className="mb-2 block text-sm font-bold text-slate-700">
+                          {isServiceProvider ? "Provider Link" : "Workspace Link"}
+                        </span>
+                        {isServiceProvider ? (
+                          <>
+                            <div className={link_field_class(Boolean(linkError))}>
+                              <div className={link_prefix_class}>
+                                <SettingsIcon name="link" className="h-4 w-4 shrink-0" />
+                                <span className="truncate">
+                                  {bookingHost}/{workspaceSlug || "workspace"}/
+                                </span>
+                              </div>
+                              <div className="relative min-w-0 flex-1">
+                                <input
+                                  type="text"
+                                  value={serviceProviderSlug}
+                                  onChange={(e) => {
+                                    setServiceProviderSlug(e.target.value);
+                                    if (linkError) setLinkError(null);
+                                  }}
+                                  disabled={!canEditProviderSlug}
+                                  className={link_slug_input_class}
+                                  placeholder="your-provider-link"
+                                  required={canEditProviderSlug}
+                                  aria-invalid={linkError ? true : undefined}
+                                />
+                                {link_action_buttons}
+                              </div>
                             </div>
-                            <input
-                              type="text"
-                              value={serviceProviderSlug}
-                              onChange={(e) => {
-                                setServiceProviderSlug(e.target.value);
-                                if (linkError) setLinkError(null);
-                              }}
-                              disabled={!canEditProviderSlug}
-                              className="h-14 min-w-0 flex-1 bg-transparent px-4 text-base font-medium outline-none disabled:cursor-not-allowed disabled:opacity-60"
-                              placeholder="your-provider-link"
-                              required={canEditProviderSlug}
-                              aria-invalid={linkError ? true : undefined}
-                            />
-                          </div>
-                          <p className="mt-2 text-xs text-slate-500">
-                            Workspace link:{" "}
-                            <span className="font-medium text-slate-700">
-                              {workspaceSlug || "Not configured"}
-                            </span>
-                          </p>
-                        </>
-                      ) : (
-                        <div
-                          className={`flex overflow-hidden rounded-2xl border bg-slate-50 transition focus-within:bg-white focus-within:ring-4 focus-within:ring-indigo-100 ${
-                            linkError
-                              ? "border-red-400 focus-within:border-red-500"
-                              : "border-slate-200 focus-within:border-indigo-400"
-                          }`}
-                        >
-                          <div className="hidden items-center gap-2 border-r border-slate-200 bg-white px-4 text-sm font-semibold text-slate-500 md:flex">
-                            <SettingsIcon name="link" className="h-4 w-4" />
-                            {bookingHost}/
-                          </div>
-                          <input
-                            type="text"
-                            value={workspaceSlug}
-                            onChange={(e) => {
-                              setWorkspaceSlug(e.target.value);
-                              if (linkError) setLinkError(null);
-                            }}
-                            disabled={!canEditAllSettings}
-                            className="h-14 min-w-0 flex-1 bg-transparent px-4 text-base font-medium outline-none disabled:cursor-not-allowed disabled:opacity-60"
-                            placeholder="your-link"
-                            required={canEditAllSettings}
-                            aria-invalid={linkError ? true : undefined}
-                          />
-                        </div>
-                      )}
-                      {linkError ? (
-                        <p className="mt-2 text-sm font-medium text-red-600">
-                          {linkError}
-                        </p>
-                      ) : (
+                            {linkError ? (
+                              <p className="mt-2 text-sm font-medium text-red-600">
+                                {linkError}
+                              </p>
+                            ) : null}
+                          </>
+                        ) : (
+                          <>
+                            <div className={link_field_class(Boolean(linkError))}>
+                              <div className={link_prefix_class}>
+                                <SettingsIcon name="link" className="h-4 w-4 shrink-0" />
+                                <span className="truncate">{bookingHost}/</span>
+                              </div>
+                              <div className="relative min-w-0 flex-1">
+                                <input
+                                  type="text"
+                                  value={workspaceSlug}
+                                  onChange={(e) => {
+                                    setWorkspaceSlug(e.target.value);
+                                    if (linkError) setLinkError(null);
+                                  }}
+                                  disabled={!canEditAllSettings}
+                                  className={link_slug_input_class}
+                                  placeholder="your-link"
+                                  required={canEditAllSettings}
+                                  aria-invalid={linkError ? true : undefined}
+                                />
+                                {link_action_buttons}
+                              </div>
+                            </div>
+                            {linkError ? (
+                              <p className="mt-2 text-sm font-medium text-red-600">
+                                {linkError}
+                              </p>
+                            ) : null}
+                          </>
+                        )}
+                      </label>
+                    </div>
+
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <span className="mb-2 block text-sm font-bold text-slate-700">
+                          Public Booking Page
+                        </span>
                         <a
-                          href={previewHref}
+                          href={publicBookingUrl ?? undefined}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="mt-2 text-sm font-medium text-indigo-600 hover:underline"
+                          className="inline-flex max-w-full items-center gap-1.5 break-all text-sm font-medium text-blue-600 hover:underline"
                         >
                           {previewUrl}
+                          <SettingsIcon name="externalLink" className="h-4 w-4" />
                         </a>
-                      )}
-                    </label>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void shareBookingPage()}
+                        disabled={!publicBookingUrl}
+                        className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-blue-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <SettingsIcon name="share" className="h-4 w-4" />
+                        Share
+                      </button>
+                    </div>
+                    {shareNotice ? (
+                      <p className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm font-medium text-slate-700">
+                        {shareNotice}
+                      </p>
+                    ) : null}
 
                     <div className="grid gap-5 md:grid-cols-2">
                       <label className="block">
@@ -945,179 +1154,110 @@ export default function SettingsPage() {
                           value={businessEmail}
                           onChange={(e) => setBusinessEmail(e.target.value)}
                           disabled={nonLinkFieldsDisabled}
-                          className="h-14 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-base font-medium outline-none transition focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:opacity-60"
+                          className={settings_input_class}
                           placeholder="you@company.com"
                         />
                       </label>
-                      <label className="block">
+                      <div className="block min-w-0">
                         <span className="mb-2 block text-sm font-bold text-slate-700">
                           Business Phone
                         </span>
-                        <input
+                        <div
                           id="business-phone"
-                          type="tel"
-                          value={businessPhone}
-                          onChange={(e) => setBusinessPhone(e.target.value)}
-                          disabled={nonLinkFieldsDisabled}
-                          className="h-14 w-full scroll-mt-24 rounded-2xl border border-slate-200 bg-slate-50 px-4 text-base font-medium outline-none transition focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:opacity-60"
-                          placeholder="e.g. +919530693882"
-                        />
-                      </label>
+                          className={
+                            nonLinkFieldsDisabled
+                              ? "settings-phone-input booking-phone-input pointer-events-none min-w-0 max-w-full opacity-60"
+                              : "settings-phone-input booking-phone-input min-w-0 max-w-full"
+                          }
+                        >
+                          <BookingPhoneInput
+                            value={businessPhone}
+                            onChange={setBusinessPhone}
+                            profileCountry={
+                              user?.user_metadata?.country as string | undefined
+                            }
+                          />
+                        </div>
+                      </div>
                     </div>
 
                     <label className="block">
                       <span className="mb-2 block text-sm font-bold text-slate-700">
                         Address
                       </span>
-                      <input
-                        type="text"
-                        value={address}
-                        onChange={(e) => setAddress(e.target.value)}
+                      <AddressAutocompleteInput
+                        value={addressLine}
+                        onChange={handleAddressLineChange}
+                        onPlaceSelect={handleAddressPlaceSelect}
                         disabled={nonLinkFieldsDisabled}
-                        className="h-14 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-base font-medium outline-none transition focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:opacity-60"
-                        placeholder="Street address"
+                        placeholder="Start typing your address…"
+                        className={settings_input_class}
                       />
                     </label>
-
-                    <div className="grid gap-5 md:grid-cols-2">
-                      <label className="block">
-                        <span className="mb-2 block text-sm font-bold text-slate-700">
-                          City
-                        </span>
-                        <input
-                          type="text"
-                          value={city}
-                          onChange={(e) => setCity(e.target.value)}
-                          disabled={nonLinkFieldsDisabled}
-                          className="h-14 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-base font-medium outline-none transition focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:opacity-60"
-                          placeholder="City"
-                        />
-                      </label>
-                      <label className="block">
-                        <span className="mb-2 block text-sm font-bold text-slate-700">
-                          State
-                        </span>
-                        <input
-                          type="text"
-                          value={addressState}
-                          onChange={(e) => setAddressState(e.target.value)}
-                          disabled={nonLinkFieldsDisabled}
-                          className="h-14 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-base font-medium outline-none transition focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:opacity-60"
-                          placeholder="State / Province"
-                        />
-                      </label>
-                    </div>
-
-                    <div className="grid gap-5 md:grid-cols-2">
-                      <label className="block">
-                        <span className="mb-2 block text-sm font-bold text-slate-700">
-                          Zipcode
-                        </span>
-                        <input
-                          type="text"
-                          value={zipcode}
-                          onChange={(e) => setZipcode(e.target.value)}
-                          disabled={nonLinkFieldsDisabled}
-                          className="h-14 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-base font-medium outline-none transition focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:opacity-60"
-                          placeholder="Zip / Postal code"
-                        />
-                      </label>
-                      <label className="block">
-                        <span className="mb-2 block text-sm font-bold text-slate-700">
-                          Country
-                        </span>
-                        <input
-                          type="text"
-                          value={country}
-                          onChange={(e) => setCountry(e.target.value)}
-                          disabled={nonLinkFieldsDisabled}
-                          className="h-14 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-base font-medium outline-none transition focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:opacity-60"
-                          placeholder="Country"
-                        />
-                      </label>
-                    </div>
                   </div>
                 </div>
 
-                <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-                  <div className="mb-5">
-                    <h2 className="flex items-center gap-2 text-lg font-bold text-slate-950">
-                      <SettingsIcon
-                        name="globe"
-                        className="h-5 w-5 text-indigo-600"
-                      />{" "}
-                      Logo &amp; Tagline
-                    </h2>
-                    <p className="mt-1 text-sm text-slate-500">
-                      Used for booking public preview URL and provider preview URL.
-                    </p>
+                <div className="min-w-0 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+                  <div className="mb-5 flex items-start gap-3">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
+                      <SettingsIcon name="palette" className="h-5 w-5" />
+                    </div>
+                    <div>
+                      <h2 className="text-lg font-bold text-slate-950">
+                        Logo &amp; Branding
+                      </h2>
+                      <p className="mt-1 text-sm text-slate-500">
+                        Upload logo and add tagline for your booking pages
+                      </p>
+                    </div>
                   </div>
 
-                  <div className="grid gap-5">
+                  <div className="grid gap-5 md:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] md:items-start">
                     <div>
                       <span className="mb-2 block text-sm font-bold text-slate-700">
                         Logo
                       </span>
-                      <div className="grid gap-3 md:grid-cols-[1fr_auto]">
-                        <div className="flex h-14 min-w-0 items-center rounded-2xl border border-slate-200 bg-slate-50 px-4 text-base font-medium text-slate-700">
-                          <span className="truncate">{logoFileName}</span>
+                      <div className="flex flex-wrap items-center gap-3">
+                        <div className="grid h-20 w-20 shrink-0 place-items-center overflow-hidden rounded-2xl border border-slate-200 bg-white p-2">
+                          <WorkspaceBrandLogo
+                            src={resolve_workspace_logo_src(logoUrl)}
+                            alt="Logo preview"
+                            width={64}
+                            height={64}
+                            className="max-h-full max-w-full object-contain"
+                          />
                         </div>
                         <label
-                          className={`inline-flex h-14 items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-5 text-sm font-bold text-slate-700 transition ${
+                          className={`inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-blue-600 transition ${
                             canEditAllSettings
-                              ? "cursor-pointer hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-700"
+                              ? "cursor-pointer hover:border-blue-200 hover:bg-blue-50"
                               : "cursor-not-allowed opacity-60"
                           }`}
                         >
-                          <SettingsIcon name="upload" className="h-4 w-4" />
-                          {isUploadingLogo ? "Uploading…" : "Browse"}
+                          <SettingsIcon name="refresh" className="h-4 w-4" />
+                          {isUploadingLogo ? "Uploading…" : "Change"}
                           <input
                             type="file"
-                            accept="image/*"
+                            accept="image/png,image/jpeg,image/jpg,image/webp"
                             onChange={handleLogoChange}
                             disabled={isUploadingLogo || !canEditAllSettings}
                             className="hidden"
                           />
                         </label>
                       </div>
-                      <div className="mt-3 flex items-center gap-3">
-                        <div className="h-16 w-16 shrink-0 overflow-hidden rounded-xl border border-slate-200 bg-white p-1 grid place-items-center">
-                          <WorkspaceBrandLogo
-                            src={resolve_workspace_logo_src(logoUrl)}
-                            alt="Logo preview"
-                            width={56}
-                            height={56}
-                            className="max-h-full max-w-full object-contain"
-                          />
-                        </div>
-                        <div className="min-w-0 text-xs text-slate-500">
-                          {logoUrl ? (
-                            <>
-                              {logoPath ? (
-                                <span className="block truncate">{logoPath}</span>
-                              ) : null}
-                              {!logoPath ? (
-                                <span className="text-slate-400">Custom workspace logo</span>
-                              ) : null}
-                            </>
-                          ) : (
-                            <span className="text-slate-400">
-                              Default GetSetTime logo (upload to replace)
-                            </span>
-                          )}
-                        </div>
-                        {logoUrl && canEditAllSettings && (
-                          <button
-                            type="button"
-                            onClick={handleLogoRemove}
-                            disabled={isUploadingLogo}
-                            className="ml-auto inline-flex h-9 shrink-0 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-600 transition hover:border-red-300 hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-60"
-                          >
-                            <SettingsIcon name="trash" className="h-3.5 w-3.5" />
-                            Remove
-                          </button>
-                        )}
-                      </div>
+                      <p className="mt-2 text-xs text-slate-500">
+                        Recommended: PNG, JPG (300x300px)
+                      </p>
+                      {logoUrl && canEditAllSettings ? (
+                        <button
+                          type="button"
+                          onClick={handleLogoRemove}
+                          disabled={isUploadingLogo}
+                          className="mt-1 text-xs font-medium text-slate-500 transition hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          Remove logo
+                        </button>
+                      ) : null}
                     </div>
 
                     <label className="block">
@@ -1129,82 +1269,97 @@ export default function SettingsPage() {
                         value={tagline}
                         onChange={(e) => setTagline(e.target.value)}
                         disabled={nonLinkFieldsDisabled}
-                        className="h-14 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-base font-medium outline-none transition focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:opacity-60"
-                        placeholder="A short line shown on your booking pages"
-                        maxLength={120}
+                        className={settings_input_class}
+                        placeholder="Book appointments with ease"
+                        maxLength={TAGLINE_MAX_LENGTH}
                       />
                       <p className="mt-2 text-xs text-slate-500">
-                        Brief description of your business (max 120 characters).
+                        {tagline.length}/{TAGLINE_MAX_LENGTH} characters
+                        {tagline.length > 0
+                          ? ` · ${TAGLINE_MAX_LENGTH - tagline.length} remaining`
+                          : ""}
                       </p>
                     </label>
                   </div>
                 </div>
 
-                <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-                  <div className="mb-5">
-                    <h2 className="flex items-center gap-2 text-lg font-bold text-slate-950">
-                      <SettingsIcon
-                        name="globe"
-                        className="h-5 w-5 text-indigo-600"
-                      />{" "}
-                      Regional Preferences
-                    </h2>
-                    <p className="mt-1 text-sm text-slate-500">
-                      MVP-ready defaults for date, time, language, and currency
-                      display. Used for booking times in sidebar, emails, reminders, and API responses.
-                    </p>
+                <div className="min-w-0 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+                  <div className="mb-5 flex items-start gap-3">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
+                      <SettingsIcon name="globe" className="h-5 w-5" />
+                    </div>
+                    <div>
+                      <h2 className="text-lg font-bold text-slate-950">
+                        Regional Preferences
+                      </h2>
+                      <p className="mt-1 text-sm text-slate-500">
+                        Set your timezone, language and date/time formats
+                      </p>
+                    </div>
                   </div>
-                  <div className="grid gap-5 md:grid-cols-2">
-                    <label className="block">
-                      <span className="mb-2 block text-sm font-bold text-slate-700">
-                        Timezone
-                      </span>
-                      <select
-                        value={timezone}
-                        onChange={(e) => setTimezone(e.target.value)}
+
+                  <div className="space-y-5">
+                    <div className="grid gap-5 lg:grid-cols-3">
+                      <label className="block">
+                        <span className="mb-2 block text-sm font-bold text-slate-700">
+                          Timezone
+                        </span>
+                        <select
+                          value={timezone}
+                          onChange={(e) => setTimezone(e.target.value)}
+                          disabled={nonLinkFieldsDisabled}
+                          className={settings_select_class}
+                        >
+                          <option value="">Use visitor&apos;s timezone</option>
+                          {TIMEZONE_OPTIONS.map((option) => (
+                            <option key={option} value={option}>
+                              {format_regional_timezone_option(option)}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <SelectField
+                        label="Date Format"
+                        value={dateFormat}
+                        setValue={setDateFormat}
+                        options={[...DATE_FORMAT_OPTIONS]}
                         disabled={nonLinkFieldsDisabled}
-                        className="h-14 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-base font-medium outline-none transition focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        <option value="">Use visitor&apos;s timezone</option>
-                        {TIMEZONE_OPTIONS.map((option) => (
-                          <option key={option} value={option}>
-                            {option}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <SelectField
-                      label="Date Format"
-                      value={dateFormat}
-                      setValue={setDateFormat}
-                      options={[...DATE_FORMAT_OPTIONS]}
-                      disabled={nonLinkFieldsDisabled}
-                    />
-                    <SelectField
-                      label="Time Format"
-                      value={timeFormat}
-                      setValue={setTimeFormat}
-                      options={[...TIME_FORMAT_OPTIONS]}
-                      disabled={nonLinkFieldsDisabled}
-                    />
-                    <SelectField
-                      label="Default Language"
-                      value={language}
-                      setValue={setLanguage}
-                      options={[...LANGUAGE_OPTIONS]}
-                      disabled={nonLinkFieldsDisabled}
-                    />
-                    <SelectField
-                      label="Currency"
-                      value={currency}
-                      setValue={setCurrency}
-                      options={[...CURRENCY_OPTIONS]}
-                      disabled={nonLinkFieldsDisabled}
-                    />
+                        className={settings_select_class}
+                      />
+                      <SelectField
+                        label="Time Format"
+                        value={timeFormat}
+                        setValue={setTimeFormat}
+                        options={[...TIME_FORMAT_OPTIONS]}
+                        optionLabels={TIME_FORMAT_LABELS}
+                        disabled={nonLinkFieldsDisabled}
+                        className={settings_select_class}
+                      />
+                    </div>
+
+                    <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
+                      <SelectField
+                        label="Language"
+                        value={language}
+                        setValue={setLanguage}
+                        options={[...LANGUAGE_OPTIONS]}
+                        disabled={nonLinkFieldsDisabled}
+                        className={settings_select_class}
+                      />
+                      <SelectField
+                        label="Currency"
+                        value={currency}
+                        setValue={setCurrency}
+                        options={[...CURRENCY_OPTIONS]}
+                        getOptionLabel={currency_option_label}
+                        disabled={nonLinkFieldsDisabled}
+                        className={settings_select_class}
+                      />
+                    </div>
                   </div>
                 </div>
 
-                <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                <div className="min-w-0 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
                   <div className="mb-5">
                     <h2 className="flex items-center gap-2 text-lg font-bold text-slate-950">
                       <SettingsIcon
@@ -1213,14 +1368,14 @@ export default function SettingsPage() {
                       />{" "}
                       Booking Rules &amp; Notifications
                     </h2>
-                    <p className="mt-1 text-sm text-slate-500">
+                    <p className="mt-1 break-words text-sm text-slate-500">
                       Important SaaS controls for booking flow, reminders, and
                       customer actions.
                     </p>
                   </div>
-                  <div className="grid gap-3 md:grid-cols-2">
+                  <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
                     <ToggleRow
-                      label="Auto-confirm new bookings"
+                      label="Auto confirm new bookings"
                       value={autoConfirm}
                       setValue={setAutoConfirm}
                       disabled={nonLinkFieldsDisabled}
@@ -1244,6 +1399,12 @@ export default function SettingsPage() {
                       disabled={nonLinkFieldsDisabled}
                     />
                     <ToggleRow
+                      label="SMS reminders"
+                      value={smsReminder}
+                      setValue={setSmsReminder}
+                      disabled={nonLinkFieldsDisabled}
+                    />
+                    <ToggleRow
                       label="WhatsApp reminders"
                       value={whatsappReminder}
                       setValue={setWhatsappReminder}
@@ -1252,122 +1413,149 @@ export default function SettingsPage() {
                   </div>
                 </div>
 
-                <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-                  <div className="mb-5 flex items-start justify-between gap-4">
-                    <div>
-                      <h2 className="flex items-center gap-2 text-lg font-bold text-slate-950">
-                        <SettingsIcon
-                          name="palette"
-                          className="h-5 w-5 text-indigo-600"
-                        />{" "}
-                        Brand Appearance
-                      </h2>
-                      <p className="mt-1 text-sm text-slate-500">
-                        Control the colors used on public booking pages and
-                        notifications.
-                      </p>
+                <div className="min-w-0 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+                  <div className="mb-5 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                    <div className="flex items-start gap-3">
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
+                        <SettingsIcon name="palette" className="h-5 w-5" />
+                      </div>
+                      <div>
+                        <h2 className="text-lg font-bold text-slate-950">
+                          Brand Appearance
+                        </h2>
+                        <p className="mt-1 text-sm text-slate-500">
+                          Customize the look and feel of your public booking pages
+                        </p>
+                      </div>
                     </div>
-                    <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-gradient-to-r from-amber-500 to-orange-500 px-4 py-2 text-sm font-bold uppercase tracking-wide text-white shadow-lg shadow-amber-300/60 ring-2 ring-amber-400/50 ring-offset-2">
-                      <SettingsIcon name="sparkles" className="h-4 w-4" />
-                      Coming Soon!
-                    </span>
+                    <div className="flex shrink-0 flex-wrap items-center gap-2 lg:justify-end">
+                      <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-gradient-to-r from-amber-500 to-orange-500 px-4 py-2 text-sm font-bold uppercase tracking-wide text-white shadow-lg shadow-amber-300/60 ring-2 ring-amber-400/50 ring-offset-2">
+                        <SettingsIcon name="sparkles" className="h-4 w-4" />
+                        Coming Soon!
+                      </span>
+                      {/* <a
+                        href={publicBookingUrl ?? undefined}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center justify-center gap-2 rounded-xl border border-blue-200 bg-white px-4 py-2.5 text-sm font-semibold text-blue-600 transition hover:bg-blue-50 disabled:pointer-events-none disabled:opacity-50"
+                        aria-disabled={!publicBookingUrl}
+                        onClick={(event) => {
+                          if (!publicBookingUrl) event.preventDefault();
+                        }}
+                      >
+                        <SettingsIcon name="eye" className="h-4 w-4" />
+                        Preview Booking Page
+                      </a> */}
+                    </div>
                   </div>
 
-                  <div className="space-y-5">
+                  <div className="grid grid-cols-1 gap-5 lg:grid-cols-2 lg:gap-x-8">
                     <ColorRow
-                      label="Primary Color (Main brand color)"
+                      label="Primary Color"
                       color={primaryColor}
                       setColor={setPrimaryColor}
                       disabled={nonLinkFieldsDisabled}
                     />
                     <ColorRow
-                      label="Accent Color (CTA / highlights)"
+                      label="Accent Color (CTA / Highlights)"
+                      labelClassName="w-[8.5rem] sm:w-[9.5rem]"
                       color={accentColor}
                       setColor={setAccentColor}
                       disabled={nonLinkFieldsDisabled}
                     />
-
                     <ToggleRow
-                      label="Use gradient background on booking page."
+                      label="Use gradient background"
                       value={useGradientBookingBg}
                       setValue={setUseGradientBookingBg}
                       disabled={nonLinkFieldsDisabled}
+                      layout="inline"
                     />
                     <ToggleRow
-                      label="Enable rounded UI style (modern look)."
+                      label="Enable rounded UI style (modern look)"
                       value={roundedUiStyle}
                       setValue={setRoundedUiStyle}
                       disabled={nonLinkFieldsDisabled}
+                      layout="inline"
                     />
                   </div>
 
-                  <div className="mt-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4">
-                    <p className="text-xs font-semibold text-slate-600">
-                      Recommended for MVP:
+                  <div className="mt-5 rounded-2xl bg-blue-50 p-5">
+                    <p className="text-sm font-bold text-slate-900">
+                      Recommended for MVP
                     </p>
-                    <ul className="mt-2 space-y-1 text-xs text-slate-500">
-                      <li>Primary + Accent colors (keep simple)</li>
-                      <li>Light UI (avoid dark mode in MVP)</li>
-                      <li>Minimal branding for faster load and consistency</li>
-                    </ul>
-                    <p className="mt-3 text-xs font-semibold text-slate-600">
-                      Avoid in MVP:
-                    </p>
-                    <ul className="mt-2 space-y-1 text-xs text-slate-500">
-                      <li>Full theme builder (too complex)</li>
-                      <li>Font customization</li>
-                      <li>Advanced layout control</li>
-                      <li>Per-page branding overrides</li>
-                    </ul>
+                    <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                      {[
+                        "High contrast for accessibility",
+                        "Fast booking flow",
+                        "Light / dark mode ready",
+                        "Trusted & professional feel",
+                        "Consistent brand identity",
+                        "Better customer experience",
+                      ].map((item) => (
+                        <div
+                          key={item}
+                          className="flex items-center gap-2.5 text-sm text-slate-700"
+                        >
+                          <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-blue-600 text-white">
+                            <SettingsIcon name="check" className="h-3 w-3" />
+                          </span>
+                          {item}
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 </div>
               </div>
 
-              <aside className="space-y-5 lg:sticky lg:top-6 lg:self-start">
-                <div className="rounded-3xl border border-slate-200 bg-slate-950 p-5 text-white shadow-xl shadow-slate-950/10">
-                  <div className="mb-5 flex items-center justify-between gap-2">
-                    <div>
-                      <h3 className="text-lg font-bold">Live Brand Preview</h3>
-                      <p className="mt-1 text-sm text-slate-400">
-                        Customer booking page style
-                      </p>
-                    </div>
-                    <SettingsIcon
-                      name="shield"
-                      className="h-6 w-6 shrink-0 text-emerald-300"
-                    />
+              <aside className="min-w-0 space-y-5 lg:sticky lg:top-6 lg:self-start">
+                <div className="min-w-0 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+                  <div className="mb-4">
+                    <h3 className="text-lg font-bold text-slate-950">
+                      Live Booking Preview
+                    </h3>
+                    <p className="mt-1 text-sm text-slate-500">
+                      This is how your booking page looks
+                    </p>
                   </div>
 
                   <div
-                    className={`rounded-3xl bg-white p-4 text-slate-900 ${roundedUiStyle ? "" : "rounded-lg"}`}
+                    className={`flex flex-col items-center px-5 py-10 text-center text-white ${
+                      roundedUiStyle ? "rounded-3xl" : "rounded-lg"
+                    }`}
+                    style={{
+                      background: useGradientBookingBg
+                        ? `linear-gradient(135deg, ${primaryColor}, ${accentColor})`
+                        : primaryColor,
+                    }}
                   >
                     <div
-                      className={`mb-4 h-24 ${roundedUiStyle ? "rounded-2xl" : "rounded-sm"}`}
-                      style={{
-                        background: useGradientBookingBg
-                          ? `linear-gradient(135deg, ${primaryColor}, ${accentColor})`
-                          : primaryColor,
-                      }}
-                    />
-                    <div className="space-y-2">
-                      <h4 className="text-lg font-bold">
-                        {accountName.trim() || "Workspace Name"}
-                      </h4>
-                      <p className="text-sm text-slate-500">
-                        Book appointments with a clean, branded experience.
-                      </p>
+                      className={`mb-4 flex h-16 w-16 items-center justify-center bg-white/20 text-2xl font-bold text-white shadow-inner ring-1 ring-white/30 ${
+                        roundedUiStyle ? "rounded-full" : "rounded-xl"
+                      }`}
+                      aria-hidden
+                    >
+                      {workspace_name_initial(accountName)}
                     </div>
+                    <h4 className="text-lg font-bold leading-snug">
+                      {accountName.trim() || "Workspace Name"}
+                    </h4>
+                    <p className="mt-2 max-w-xs text-sm font-medium text-white/90">
+                      {tagline.trim() || "Book appointments with ease"}
+                    </p>
                     <button
                       type="button"
-                      className={`mt-5 w-full px-4 py-3 text-sm font-bold text-white shadow-lg transition hover:-translate-y-0.5 ${roundedUiStyle ? "rounded-2xl" : "rounded-md"}`}
-                      style={{ backgroundColor: primaryColor }}
+                      onClick={open_create_booking}
+                      className={`mt-6 w-full max-w-xs px-4 py-3 text-sm font-bold shadow-lg transition hover:-translate-y-0.5 ${
+                        roundedUiStyle ? "rounded-2xl" : "rounded-md"
+                      }`}
+                      style={{ backgroundColor: "#ffffff", color: primaryColor }}
                     >
                       Book Appointment
                     </button>
                   </div>
                 </div>
 
-                <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                <div className="min-w-0 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
                   <h3 className="text-base font-bold text-slate-950">
                     Setup Checklist
                   </h3>
@@ -1443,15 +1631,25 @@ function SelectField({
   setValue,
   options,
   disabled = false,
+  className,
+  optionLabels,
+  getOptionLabel,
 }: {
   label: string;
   value: string;
   setValue: (value: string) => void;
   options: string[];
   disabled?: boolean;
+  className?: string;
+  optionLabels?: Record<string, string>;
+  getOptionLabel?: (option: string) => string;
 }) {
+  const selectClassName =
+    className ??
+    "h-14 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-base font-medium outline-none transition focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:opacity-60";
+
   return (
-    <label className="block">
+    <label className="block min-w-0">
       <span className="mb-2 block text-sm font-bold text-slate-700">
         {label}
       </span>
@@ -1459,11 +1657,11 @@ function SelectField({
         value={value}
         onChange={(e) => setValue(e.target.value)}
         disabled={disabled}
-        className="h-14 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-base font-medium outline-none transition focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:opacity-60"
+        className={selectClassName}
       >
         {options.map((option) => (
           <option key={option} value={option}>
-            {option}
+            {getOptionLabel?.(option) ?? optionLabels?.[option] ?? option}
           </option>
         ))}
       </select>
@@ -1476,31 +1674,54 @@ function ToggleRow({
   value,
   setValue,
   disabled = false,
+  layout = "card",
 }: {
   label: string;
   value: boolean;
   setValue: (value: boolean) => void;
   disabled?: boolean;
+  layout?: "card" | "inline";
 }) {
-  return (
+  const switchControl = (
     <button
       type="button"
+      role="switch"
+      aria-checked={value}
+      aria-label={label}
       onClick={() => {
         if (!disabled) setValue(!value);
       }}
       disabled={disabled}
-      className="flex items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-left transition hover:border-indigo-200 hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:border-slate-200 disabled:hover:bg-slate-50"
+      className={`relative inline-flex h-7 w-12 shrink-0 rounded-full transition focus:outline-none focus:ring-2 focus:ring-blue-200 disabled:cursor-not-allowed disabled:opacity-60 ${
+        value ? "bg-blue-600" : "bg-slate-300"
+      }`}
     >
-      <span className="text-sm font-bold text-slate-700">{label}</span>
       <span
-        className={`relative h-7 w-12 shrink-0 rounded-full transition ${value ? "bg-indigo-600" : "bg-slate-300"}`}
-        aria-hidden
-      >
-        <span
-          className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow transition ${value ? "left-6" : "left-1"}`}
-        />
-      </span>
+        className={`pointer-events-none absolute top-0.5 left-0.5 h-6 w-6 rounded-full bg-white shadow transition-transform ${
+          value ? "translate-x-5" : "translate-x-0"
+        }`}
+      />
     </button>
+  );
+
+  if (layout === "inline") {
+    return (
+      <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+        <span className="min-w-0 text-sm font-bold leading-snug text-slate-800 sm:flex-1">
+          {label}
+        </span>
+        {switchControl}
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex w-full min-w-0 items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3 transition hover:border-indigo-200 hover:bg-indigo-50 has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-60 sm:gap-4 sm:px-4">
+      <span className="min-w-0 flex-1 text-sm font-bold leading-snug text-slate-700">
+        {label}
+      </span>
+      {switchControl}
+    </div>
   );
 }
 
@@ -1509,33 +1730,51 @@ function ColorRow({
   color,
   setColor,
   disabled = false,
+  labelClassName = "w-[6.75rem] sm:w-[7.5rem]",
 }: {
   label: string;
   color: string;
   setColor: (value: string) => void;
   disabled?: boolean;
+  labelClassName?: string;
 }) {
   return (
-    <label className="block">
-      <span className="mb-2 block text-sm font-bold text-slate-700">
+    <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:gap-3 md:gap-4">
+      <span
+        className={`text-sm font-bold leading-snug text-slate-800 sm:shrink-0 ${labelClassName}`}
+      >
         {label}
       </span>
-      <div className="grid gap-3 md:grid-cols-[1fr_150px]">
+      <div className="flex h-11 min-w-0 w-full flex-1 items-stretch gap-1.5 rounded-xl border border-slate-200 bg-white p-1.5">
+        <label
+          className={`relative min-w-0 flex-[2] overflow-hidden rounded-lg ${
+            disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer"
+          }`}
+        >
+          <span
+            className="block h-full w-full rounded-lg"
+            style={{ backgroundColor: color }}
+            aria-hidden
+          />
+          <input
+            type="color"
+            value={color}
+            onChange={(e) => setColor(e.target.value)}
+            disabled={disabled}
+            className="absolute inset-0 h-full w-full cursor-pointer opacity-0 disabled:cursor-not-allowed"
+            aria-label={`${label} picker`}
+          />
+        </label>
         <input
-          type="color"
+          type="text"
           value={color}
           onChange={(e) => setColor(e.target.value)}
           disabled={disabled}
-          className="h-14 w-full cursor-pointer rounded-2xl border border-slate-200 bg-white p-1 shadow-inner disabled:cursor-not-allowed disabled:opacity-60"
-        />
-        <input
-          value={color}
-          onChange={(e) => setColor(e.target.value)}
-          disabled={disabled}
-          className="h-14 rounded-2xl border border-slate-200 bg-slate-50 px-4 text-center text-base font-bold text-slate-800 outline-none transition focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:opacity-60"
+          className="min-w-[5.25rem] flex-1 border-0 bg-transparent px-1 text-sm font-medium text-slate-700 outline-none focus:ring-0 disabled:cursor-not-allowed disabled:opacity-60 sm:px-2"
+          spellCheck={false}
         />
       </div>
-    </label>
+    </div>
   );
 }
 
@@ -1638,6 +1877,48 @@ function SettingsIcon({
         <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
         <path d="M10 11v6" />
         <path d="M14 11v6" />
+      </>
+    ),
+    user: (
+      <>
+        <path d="M20 21a8 8 0 0 0-16 0" />
+        <circle cx="12" cy="7" r="4" />
+      </>
+    ),
+    externalLink: (
+      <>
+        <path d="M15 3h6v6" />
+        <path d="M10 14 21 3" />
+        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+      </>
+    ),
+    copy: (
+      <>
+        <rect x="9" y="9" width="13" height="13" rx="2" />
+        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+      </>
+    ),
+    share: (
+      <>
+        <circle cx="18" cy="5" r="3" />
+        <circle cx="6" cy="12" r="3" />
+        <circle cx="18" cy="19" r="3" />
+        <path d="m8.59 13.51 6.83 3.98" />
+        <path d="M15.41 6.51l-6.82 3.98" />
+      </>
+    ),
+    refresh: (
+      <>
+        <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+        <path d="M3 3v5h5" />
+        <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
+        <path d="M16 16h5v5" />
+      </>
+    ),
+    eye: (
+      <>
+        <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z" />
+        <circle cx="12" cy="12" r="3" />
       </>
     ),
   };

@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { supabase } from '@/lib/supabaseClient';
+import { filterBookableEventTypes } from '@/src/utils/bookingFormUtils';
 import type {
   EventType,
   Department,
@@ -54,7 +55,7 @@ export function useEventTypes() {
         });
         if (cancelled) return;
         const json = res.ok ? await res.json() : null;
-        setData((json?.data ?? []) as EventType[]);
+        setData(filterBookableEventTypes((json?.data ?? []) as EventType[]));
       } catch {
         if (!cancelled) setData([]);
       } finally {

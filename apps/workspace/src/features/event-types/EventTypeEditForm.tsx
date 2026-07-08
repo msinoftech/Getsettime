@@ -15,6 +15,12 @@ import {
   type event_type_service_provider_option,
 } from "@/src/features/event-types/EventTypeFormLayout";
 import {
+  check_event_type_slug_available,
+  parse_short_description_from_settings,
+  validate_event_type_slug_input,
+} from "@/src/features/event-types/event_type_slug";
+import { parse_event_type_status } from "@/src/features/event-types/event_type_status";
+import {
   ROLE_MANAGER,
   ROLE_SERVICE_PROVIDER,
   ROLE_WORKSPACE_ADMIN,
@@ -32,12 +38,15 @@ import {
 type event_type_record = {
   id: number;
   title: string;
+  slug: string | null;
   duration_minutes: number | null;
   buffer_before: number | null;
   buffer_after: number | null;
   location_type: string | null;
   is_public: boolean | null;
+  status?: string | null;
   owner_id?: string | null;
+  settings?: unknown;
 };
 
 type load_state =
@@ -48,9 +57,17 @@ type load_state =
 
 type EventTypeEditFormProps = {
   eventTypeId: number;
+  embedded?: boolean;
+  variant?: "page" | "panel";
+  onClose?: () => void;
 };
 
-export function EventTypeEditForm({ eventTypeId }: EventTypeEditFormProps) {
+export function EventTypeEditForm({
+  eventTypeId,
+  embedded = false,
+  variant = "page",
+  onClose,
+}: EventTypeEditFormProps) {
   const router = useRouter();
   const { user } = useAuth();
   const user_role =
@@ -61,15 +78,19 @@ export function EventTypeEditForm({ eventTypeId }: EventTypeEditFormProps) {
   const [load_state, set_load_state] = useState<load_state>({ status: "loading" });
   const [form, setForm] = useState<event_type_form_state>({
     title: "",
+    slug: "",
+    short_description: "",
     duration_hours: "",
     duration_minutes_part: "",
     buffer_before: "",
     buffer_after: "",
     location_types: [],
     is_public: false,
+    status: "active",
     service_provider_id: "",
   });
   const [formError, setFormError] = useState<string | null>(null);
+  const [slug_error, set_slug_error] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [serviceProviderOwnerIds, setServiceProviderOwnerIds] = useState<Set<string>>(
@@ -165,12 +186,15 @@ export function EventTypeEditForm({ eventTypeId }: EventTypeEditFormProps) {
         if (!cancelled) {
           setForm({
             title: item.title,
+            slug: item.slug ?? "",
+            short_description: parse_short_description_from_settings(item.settings),
             duration_hours,
             duration_minutes_part,
             buffer_before: item.buffer_before?.toString() || "",
             buffer_after: item.buffer_after?.toString() || "",
             location_types: parse_location_types_from_storage(item.location_type),
             is_public: item.is_public || false,
+            status: parse_event_type_status(item.status),
             service_provider_id: "",
           });
           set_load_state({ status: "ready", item });
@@ -299,6 +323,36 @@ export function EventTypeEditForm({ eventTypeId }: EventTypeEditFormProps) {
     ];
   }, [active_service_providers, form.service_provider_id, serviceProviders]);
 
+  const verify_slug = async (
+    accessToken: string,
+    slug: string
+  ): Promise<string | null> => {
+    const parsed = validate_event_type_slug_input(slug);
+    if (!parsed.ok) {
+      set_slug_error(parsed.message);
+      return null;
+    }
+    const result = await check_event_type_slug_available(
+      accessToken,
+      parsed.value,
+      eventTypeId
+    );
+    if (!result.available) {
+      set_slug_error(result.message ?? "This URL slug is already in use.");
+      return null;
+    }
+    set_slug_error(null);
+    return parsed.value;
+  };
+
+  const handle_slug_blur = async () => {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    if (!session?.access_token || !form.slug.trim()) return;
+    await verify_slug(session.access_token, form.slug);
+  };
+
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setFormError(null);
@@ -317,6 +371,17 @@ export function EventTypeEditForm({ eventTypeId }: EventTypeEditFormProps) {
       return;
     }
 
+    const {
+      data: { session: precheckSession },
+    } = await supabase.auth.getSession();
+    if (!precheckSession?.access_token) {
+      setFormError("You are not signed in. Please refresh and try again.");
+      return;
+    }
+
+    const normalized_slug = await verify_slug(precheckSession.access_token, form.slug);
+    if (!normalized_slug) return;
+
     if (submitInFlightRef.current) return;
     submitInFlightRef.current = true;
     setSubmitting(true);
@@ -334,11 +399,14 @@ export function EventTypeEditForm({ eventTypeId }: EventTypeEditFormProps) {
       const payload = {
         id: eventTypeId,
         title: form.title,
+        slug: normalized_slug,
+        short_description: form.short_description.trim() || null,
         duration_minutes: durationMinutes,
         buffer_before: form.buffer_before || null,
         buffer_after: form.buffer_after || null,
         location_type: serialize_location_types(form.location_types),
         is_public: form.is_public,
+        status: form.status,
         ...(can_assign_event_type_owner && {
           owner_id: form.service_provider_id.trim() || null,
         }),
@@ -355,19 +423,27 @@ export function EventTypeEditForm({ eventTypeId }: EventTypeEditFormProps) {
 
       if (!response.ok) {
         const error = await response.json();
-        setFormError(
+        const message =
           typeof error?.error === "string"
             ? error.error
-            : "Could not update event type."
-        );
+            : "Could not update event type.";
+        if (message.toLowerCase().includes("slug")) {
+          set_slug_error(message);
+        } else {
+          setFormError(message);
+        }
         return;
       }
 
       succeeded = true;
-      setSuccessMessage("Event type updated successfully.");
-      setTimeout(() => {
-        router.push("/event-type");
-      }, 1200);
+      if (onClose) {
+        onClose();
+      } else {
+        setSuccessMessage("Event type updated successfully.");
+        setTimeout(() => {
+          router.push("/event-type");
+        }, 1200);
+      }
     } catch (err) {
       console.error("Error:", err);
       setFormError("Something went wrong. Please try again.");
@@ -380,22 +456,30 @@ export function EventTypeEditForm({ eventTypeId }: EventTypeEditFormProps) {
   };
 
   const handleCancel = () => {
-    router.push("/event-type");
+    if (onClose) {
+      onClose();
+    } else {
+      router.push("/event-type");
+    }
   };
+
+  const wrapper_class = embedded
+    ? "flex h-full min-h-0 flex-col"
+    : "mr-auto space-y-6 rounded-2xl";
 
   if (load_state.status === "loading") {
     return (
-      <section className="mr-auto space-y-6 rounded-2xl">
-        <EventTypeSkeleton />
-      </section>
+      <div className={wrapper_class}>
+        <EventTypeSkeleton variant={embedded ? "panel" : "page"} />
+      </div>
     );
   }
 
   if (load_state.status === "not_found") {
     return (
-      <section className="mr-auto space-y-6 rounded-2xl">
-        <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center">
-          <h1 className="text-xl font-bold text-slate-900">Event type not found</h1>
+      <div className={wrapper_class}>
+        <div className="rounded-2xl border border-slate-200 bg-white p-6 text-center">
+          <h2 className="text-base font-bold text-slate-900">Event type not found</h2>
           <p className="mt-2 text-sm text-slate-500">
             This event type may have been deleted or you do not have access.
           </p>
@@ -404,30 +488,31 @@ export function EventTypeEditForm({ eventTypeId }: EventTypeEditFormProps) {
             onClick={handleCancel}
             className="mt-4 inline-flex cursor-pointer items-center rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
           >
-            Back to Event Types
+            Close
           </button>
         </div>
-      </section>
+      </div>
     );
   }
 
   if (load_state.status === "error") {
     return (
-      <section className="mr-auto space-y-6 rounded-2xl">
-        <div className="rounded-2xl border border-red-200 bg-red-50 p-8 text-center text-sm text-red-600">
+      <div className={wrapper_class}>
+        <div className="rounded-2xl border border-red-200 bg-red-50 p-6 text-center text-sm text-red-600">
           {load_state.message}
         </div>
-      </section>
+      </div>
     );
   }
 
   return (
-    <section className="mr-auto space-y-6 rounded-2xl">
+    <div className={wrapper_class}>
       <EventTypeFormLayout
         value={form}
         onChange={(next) => {
           setForm(next);
           if (formError) setFormError(null);
+          if (slug_error) set_slug_error(null);
         }}
         editingId={eventTypeId}
         formError={formError}
@@ -439,7 +524,10 @@ export function EventTypeEditForm({ eventTypeId }: EventTypeEditFormProps) {
         service_provider_options={event_type_service_provider_options}
         service_providers_loading={service_providers_loading}
         self_assign_option={event_type_self_assign_option}
+        variant={variant}
+        slug_error={slug_error}
+        on_slug_blur={() => void handle_slug_blur()}
       />
-    </section>
+    </div>
   );
 }

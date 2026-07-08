@@ -102,9 +102,10 @@ export async function get_embed_event_type_by_slug(
 
     const { data, error } = await supabase
       .from('event_types')
-      .select('id, title, slug, duration_minutes, owner_id')
+      .select('id, title, slug, duration_minutes, owner_id, status')
       .eq('workspace_id', workspaceId)
       .eq('slug', decodedSlug)
+      .eq('status', 'active')
       .maybeSingle();
 
     if (error || !data) {

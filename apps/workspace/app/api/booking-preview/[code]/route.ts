@@ -7,6 +7,7 @@ import {
   resolve_meeting_join_url_from_booking,
 } from '@/src/utils/google_meet';
 import { resolve_workspace_contact_from_general } from '@/src/utils/workspace_contact';
+import { resolve_customer_booking_rules } from '@/lib/customer-booking-rules';
 
 export async function GET(
   _req: NextRequest,
@@ -208,6 +209,7 @@ export async function GET(
         ? (settings.general as Record<string, unknown>)
         : {};
     const workspace_contact = resolve_workspace_contact_from_general(general);
+    const customer_booking_rules = resolve_customer_booking_rules(general);
 
     return NextResponse.json({
       booking: safeBooking,
@@ -235,6 +237,8 @@ export async function GET(
         const u = ws?.logo_url;
         return typeof u === 'string' && u.trim() !== '' ? u.trim() : null;
       })(),
+      allow_customer_reschedule: customer_booking_rules.allow_customer_reschedule,
+      allow_customer_cancellation: customer_booking_rules.allow_customer_cancellation,
     });
   } catch (err: unknown) {
     const error = err as Error;

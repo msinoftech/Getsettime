@@ -101,3 +101,11 @@ export function filterEventTypesForServiceProvider(
   if (!serviceProviderId) return eventTypes;
   return eventTypes.filter((et) => et.owner_id === serviceProviderId);
 }
+
+export function filterBookableEventTypes<T extends { status?: unknown }>(
+  eventTypes: T[]
+): T[] {
+  return eventTypes.filter(
+    (et) => et.status == null || et.status === 'active'
+  );
+}

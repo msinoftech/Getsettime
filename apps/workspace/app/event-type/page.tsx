@@ -1,27 +1,17 @@
 "use client";
 
 import { useMemo, useState, useEffect, useRef, type FormEvent } from "react";
-import { useRouter } from "next/navigation";
 import {
   LuCalendarDays as CalendarDays,
-  LuClock3 as Clock3,
-  LuCopy as Copy,
   LuPencil as Edit3,
-  LuLink2 as Link2,
-  LuMapPin as MapPin,
   LuPlus as Plus,
-  LuSearch as Search,
-  LuShield as Shield,
-  LuTrash2 as Trash2,
   LuUsers as Users,
-  LuVideo as Video,
-  LuPhoneCall as PhoneCall,
-  LuBriefcase as Briefcase,
   LuX as X,
   LuSettings2 as Settings2,
   LuCircleCheckBig as CheckCircle2,
   LuRotateCcw as RotateCcw,
-  LuChevronDown as ChevronDown,
+  LuEyeOff as EyeOff,
+  LuGlobe as Globe,
 } from "react-icons/lu";
 import { supabase } from "@/lib/supabaseClient";
 import { useAuth } from "@/src/providers/AuthProvider";
@@ -39,6 +29,21 @@ import {
   type event_type_location_value,
   type event_type_service_provider_option,
 } from "@/src/features/event-types/EventTypeFormLayout";
+import { EventTypeActionsMenu } from "@/src/features/event-types/EventTypeActionsMenu";
+import { EventTypeEditForm } from "@/src/features/event-types/EventTypeEditForm";
+import { EventTypeFilters } from "@/src/features/event-types/EventTypeFilters";
+import { EventTypeListMobileCards } from "@/src/features/event-types/EventTypeListMobileCards";
+import { EventTypeLocationCell } from "@/src/features/event-types/EventTypeLocationDisplay";
+import {
+  check_event_type_slug_available,
+  parse_short_description_from_settings,
+  slugify_event_type_title,
+  validate_event_type_slug_input,
+} from "@/src/features/event-types/event_type_slug";
+import {
+  event_type_status_label,
+  parse_event_type_status,
+} from "@/src/features/event-types/event_type_status";
 import {
   workspace_meeting_options_to_location,
   workspace_meeting_options_to_location_types,
@@ -68,6 +73,8 @@ import {
   capitalize_booking_display_label,
   getServiceProviderName,
 } from "@/src/utils/booking";
+import { useWorkspaceSettings } from "@/src/hooks/useWorkspaceSettings";
+import { format_timezone_display_label } from "@/lib/date-timezone";
 
 interface EventType {
   id: number;
@@ -79,6 +86,7 @@ interface EventType {
   location_type: string | null;
   location_value: any;
   is_public: boolean | null;
+  status?: string | null;
   settings: any;
   created_at: string;
   bookings_count?: number | null;
@@ -164,35 +172,18 @@ function get_location_label(location: string | null): string {
   return format_event_type_location_labels(types);
 }
 
-function get_location_icon(location: string | null) {
-  const types = parse_location_types_from_storage(location);
-  const primary = types[0];
-  switch (primary) {
-    case "video":
-      return <Video className="h-4 w-4" />;
-    case "phone":
-      return <PhoneCall className="h-4 w-4" />;
-    case "in_person":
-      return <MapPin className="h-4 w-4" />;
-    case "custom":
-      return <Briefcase className="h-4 w-4" />;
-    default:
-      return <MapPin className="h-4 w-4" />;
-  }
-}
-
-function format_duration(totalMinutes: number | null): string {
+function format_duration_short(totalMinutes: number | null): string {
   if (totalMinutes == null) return "—";
-  if (totalMinutes < 60) return `${totalMinutes} minutes`;
+  if (totalMinutes < 60) return `${totalMinutes} min`;
   const h = Math.floor(totalMinutes / 60);
   const m = totalMinutes % 60;
-  if (m === 0) return `${h} hour${h === 1 ? "" : "s"}`;
+  if (m === 0) return `${h} hr`;
   return `${h}h ${m}m`;
 }
 
 export default function EventTypes() {
-  const router = useRouter();
   const { user } = useAuth();
+  const { general } = useWorkspaceSettings();
   const user_role =
     typeof user?.user_metadata?.role === "string" ? user.user_metadata.role : "";
   const can_assign_event_type_owner =
@@ -201,6 +192,9 @@ export default function EventTypes() {
   const [totalBookings, setTotalBookings] = useState<number>(0);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [open_menu_id, set_open_menu_id] = useState<number | null>(null);
+  const [panel_animated_open, set_panel_animated_open] = useState(false);
   const [workspaceSlug, setWorkspaceSlug] = useState<string>("");
   const [providerLinks, setProviderLinks] = useState<workspace_provider_links_settings>({});
   const [serviceProviderOwnerIds, setServiceProviderOwnerIds] = useState<Set<string>>(
@@ -219,6 +213,7 @@ export default function EventTypes() {
     "all" | "private" | "public"
   >("all");
   const [provider_filter, set_provider_filter] = useState("");
+  const [status_filter, set_status_filter] = useState<"" | "active" | "draft">("");
   const { data: serviceProviders, loading: service_providers_loading } =
     useServiceProviders();
   const [settings_open, set_settings_open] = useState(false);
@@ -237,6 +232,8 @@ export default function EventTypes() {
     Record<string, string>
   >({});
   const submitInFlightRef = useRef(false);
+  const slug_touched_ref = useRef(false);
+  const [slug_error, set_slug_error] = useState<string | null>(null);
 
   const logged_in_user_acts_as_service_provider = useMemo(() => {
     if (!user?.id) return false;
@@ -284,12 +281,15 @@ export default function EventTypes() {
           : [event_settings.default_location];
     return {
       title: "",
+      slug: "",
+      short_description: "",
       duration_hours: "",
       duration_minutes_part: "",
       buffer_before: "",
       buffer_after: "",
       location_types: default_location_for_form,
       is_public: event_settings.default_visibility === "public",
+      status: "active",
       service_provider_id: default_service_provider_id_for_new_form,
     };
   };
@@ -321,6 +321,22 @@ export default function EventTypes() {
     fetchWorkspaceSlug();
     load_event_settings();
   }, [user]);
+
+  useEffect(() => {
+    if (open_menu_id === null) return;
+    const onPointerDown = (e: MouseEvent) => {
+      const target = e.target;
+      if (
+        target instanceof Element &&
+        target.closest("[data-event-type-actions-menu]")
+      ) {
+        return;
+      }
+      set_open_menu_id(null);
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    return () => document.removeEventListener("mousedown", onPointerDown);
+  }, [open_menu_id]);
 
   useEffect(() => {
     if (!showForm || !default_service_provider_id_for_new_form) {
@@ -425,6 +441,39 @@ export default function EventTypes() {
     }
   };
 
+  const handleFormChange = (next: event_type_form_state) => {
+    if (!slug_touched_ref.current && next.title !== form.title) {
+      next = { ...next, slug: slugify_event_type_title(next.title) };
+    }
+    setForm(next);
+    if (formError) setFormError(null);
+    if (slug_error) set_slug_error(null);
+  };
+
+  const verify_slug = async (
+    accessToken: string,
+    slug: string
+  ): Promise<string | null> => {
+    const parsed = validate_event_type_slug_input(slug);
+    if (!parsed.ok) {
+      set_slug_error(parsed.message);
+      return null;
+    }
+    const result = await check_event_type_slug_available(accessToken, parsed.value);
+    if (!result.available) {
+      set_slug_error(result.message ?? "This URL slug is already in use.");
+      return null;
+    }
+    set_slug_error(null);
+    return parsed.value;
+  };
+
+  const handle_slug_blur = async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.access_token || !form.slug.trim()) return;
+    await verify_slug(session.access_token, form.slug);
+  };
+
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setFormError(null);
@@ -442,6 +491,15 @@ export default function EventTypes() {
       return;
     }
 
+    const { data: { session: precheckSession } } = await supabase.auth.getSession();
+    if (!precheckSession?.access_token) {
+      setFormError("You are not signed in. Please refresh and try again.");
+      return;
+    }
+
+    const normalized_slug = await verify_slug(precheckSession.access_token, form.slug);
+    if (!normalized_slug) return;
+
     if (submitInFlightRef.current) return;
     submitInFlightRef.current = true;
     setSubmitting(true);
@@ -455,11 +513,14 @@ export default function EventTypes() {
 
       const payload = {
         title: form.title,
+        slug: normalized_slug,
+        short_description: form.short_description.trim() || null,
         duration_minutes: durationMinutes,
         buffer_before: form.buffer_before || null,
         buffer_after: form.buffer_after || null,
         location_type: serialize_location_types(form.location_types),
         is_public: form.is_public,
+        status: form.status,
         ...(can_assign_event_type_owner && {
           owner_id: form.service_provider_id.trim() || null,
         }),
@@ -476,20 +537,23 @@ export default function EventTypes() {
 
       if (!response.ok) {
         const error = await response.json();
-        setFormError(
+        const message =
           typeof error?.error === "string"
             ? error.error
-            : "Could not create event type."
-        );
+            : "Could not create event type.";
+        if (message.toLowerCase().includes("slug")) {
+          set_slug_error(message);
+        } else {
+          setFormError(message);
+        }
         return;
       }
 
       const result = await response.json();
       setItems((prev) => [result.data, ...prev]);
 
-      setForm(empty_form());
-      setShowForm(false);
       setFormError(null);
+      closePanelAnimated();
       await fetchEventTypes();
     } catch (err) {
       console.error("Error:", err);
@@ -501,7 +565,10 @@ export default function EventTypes() {
   };
 
   const handleEdit = (item: EventType) => {
-    router.push(`/event-type/${item.id}/edit`);
+    setShowForm(false);
+    setFormError(null);
+    setEditingId(item.id);
+    set_open_menu_id(null);
   };
 
   const handleDeleteClick = (id: number) => setDeleteConfirmId(id);
@@ -539,16 +606,40 @@ export default function EventTypes() {
     }
   };
 
+  const closePanelAnimated = (afterClose?: () => void) => {
+    set_panel_animated_open(false);
+    window.setTimeout(() => {
+      slug_touched_ref.current = false;
+      set_slug_error(null);
+      setForm(empty_form());
+      setFormError(null);
+      setShowForm(false);
+      setEditingId(null);
+      afterClose?.();
+    }, 300);
+  };
+
+  const handlePanelClose = () => {
+    closePanelAnimated();
+  };
+
   const handleCancel = () => {
-    setForm(empty_form());
-    setFormError(null);
-    setShowForm(false);
+    handlePanelClose();
   };
 
   const handleNewEvent = () => {
+    setEditingId(null);
+    slug_touched_ref.current = false;
+    set_slug_error(null);
     setForm(empty_form());
     setFormError(null);
     setShowForm(true);
+  };
+
+  const handleEditPanelClose = () => {
+    closePanelAnimated(() => {
+      void fetchEventTypes();
+    });
   };
 
   const handleDuplicate = async (item: EventType) => {
@@ -558,13 +649,26 @@ export default function EventTypes() {
         setAlertMessage("Not authenticated");
         return;
       }
+      const base_slug = slugify_event_type_title(`${item.title} Copy`);
+      let candidate = base_slug;
+      let suffix = 0;
+      const taken_slugs = new Set(
+        items.map((row) => row.slug).filter((s): s is string => Boolean(s))
+      );
+      while (taken_slugs.has(candidate)) {
+        suffix += 1;
+        candidate = `${base_slug}-${suffix}`;
+      }
       const payload = {
         title: `${item.title} Copy`,
+        slug: candidate,
+        short_description: parse_short_description_from_settings(item.settings) || null,
         duration_minutes: item.duration_minutes,
         buffer_before: item.buffer_before,
         buffer_after: item.buffer_after,
         location_type: item.location_type,
         is_public: item.is_public ?? false,
+        status: parse_event_type_status(item.status),
       };
       const response = await fetch("/api/event-types", {
         method: "POST",
@@ -587,12 +691,12 @@ export default function EventTypes() {
     }
   };
 
-  const handleCopyLink = async (item: EventType) => {
+  const handleCopyLink = async (item: EventType): Promise<boolean> => {
     if (!item.slug) {
       setAlertMessage(
         `Unable to copy link. Event type "${item.title}" does not have a slug. Please edit and save the event type to generate a slug.`
       );
-      return;
+      return false;
     }
 
     const ownerIsServiceProvider = Boolean(
@@ -619,20 +723,29 @@ export default function EventTypes() {
 
     if (!resolved.ok) {
       setAlertMessage(resolved.error);
-      return;
+      return false;
     }
 
     try {
       const copied = await copy_text_to_clipboard(resolved.url);
       if (!copied) {
         setAlertMessage("Failed to copy link. Please try again.");
-        return;
+        return false;
       }
       setCopiedId(item.id);
       setTimeout(() => setCopiedId(null), 2000);
+      return true;
     } catch (err) {
       console.error("Failed to copy link:", err);
       setAlertMessage("Failed to copy link. Please try again.");
+      return false;
+    }
+  };
+
+  const handle_copy_link_from_menu = async (item: EventType) => {
+    const copied = await handleCopyLink(item);
+    if (copied) {
+      window.setTimeout(() => set_open_menu_id(null), 1200);
     }
   };
 
@@ -846,10 +959,13 @@ export default function EventTypes() {
     ];
   }, [active_service_providers, form.service_provider_id, serviceProviders]);
 
-  const total_event_types = items.length;
+  const total_event_types = items.filter(
+    (e) => parse_event_type_status(e.status) === "active"
+  ).length;
+  const draft_event_types = items.filter(
+    (e) => parse_event_type_status(e.status) === "draft"
+  ).length;
   const private_event_types = items.filter((e) => !e.is_public).length;
-  const public_event_types = items.filter((e) => e.is_public).length;
-  const total_bookings = totalBookings;
 
   const filtered_items = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -865,57 +981,62 @@ export default function EventTypes() {
         (visibility_filter === "private" && !is_public);
       const matches_provider =
         provider_filter === "" || item.owner_id === provider_filter;
-      return matches_search && matches_visibility && matches_provider;
+      const item_status = parse_event_type_status(item.status);
+      const matches_status =
+        status_filter === "" || item_status === status_filter;
+      return matches_search && matches_visibility && matches_provider && matches_status;
     });
-  }, [items, search, visibility_filter, provider_filter]);
+  }, [items, search, visibility_filter, provider_filter, status_filter]);
 
-  if (showForm) {
-    return (
-      <section className="space-y-6 mr-auto rounded-2xl">
-        <EventTypeFormLayout
-          value={form}
-          onChange={(next) => {
-            setForm(next);
-            if (formError) setFormError(null);
-          }}
-          editingId={null}
-          formError={formError}
-          submitting={submitting}
-          onSubmit={handleSubmit}
-          onCancel={handleCancel}
-          show_service_provider_field={can_assign_event_type_owner}
-          service_provider_options={event_type_service_provider_options}
-          service_providers_loading={service_providers_loading}
-          self_assign_option={event_type_self_assign_option}
-        />
-      </section>
+  const panel_open = showForm || editingId !== null;
+  const panel_visible = panel_open || panel_animated_open;
+
+  useEffect(() => {
+    if (!panel_open) {
+      set_panel_animated_open(false);
+      return;
+    }
+
+    const frame = requestAnimationFrame(() => {
+      requestAnimationFrame(() => set_panel_animated_open(true));
+    });
+
+    return () => cancelAnimationFrame(frame);
+  }, [panel_open]);
+
+  const team_based_event_types = items.filter(
+    (item) =>
+      item.owner_id && serviceProviderOwnerIds.has(item.owner_id)
+  ).length;
+  const default_timezone_label = format_timezone_display_label(general?.timezone);
+
+  const get_provider_label = (ownerId: string | null | undefined) => {
+    if (!ownerId) return "—";
+    if (show_owner_labels && owner_names_by_id[ownerId]) {
+      return owner_names_by_id[ownerId];
+    }
+    const name = capitalize_booking_display_label(
+      getServiceProviderName(ownerId, serviceProviders)
     );
-  }
+    return name === "N/A" ? "—" : name;
+  };
 
   return (
-    <section className="space-y-6">
-      {/* Hero Header */}
-      <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
-        <div className="relative">
-          <div className="absolute inset-0 bg-gradient-to-r from-sky-50 via-cyan-50 to-indigo-50" />
-          <div className="relative flex flex-col gap-5 px-6 py-6 sm:px-8 lg:flex-row lg:items-center lg:justify-between">
-            <div className="flex items-start gap-4">
-              <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-sky-500 to-cyan-600 text-white shadow-lg shadow-cyan-100">
-                <CalendarDays className="h-7 w-7" />
-              </div>
-              <div>
-                <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-sky-200 bg-white/80 px-3 py-1 text-xs font-semibold text-sky-700">
-                  <span className="h-2 w-2 rounded-full bg-sky-500" />
-                  Booking Setup
-                </div>
-                <h1 className="text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">
-                  Event Type Management
-                </h1>
-                <p className="mt-2 max-w-2xl text-sm text-slate-600 sm:text-base">
-                  Create and manage booking event types for consultations, quick
-                  calls, meetings, and custom appointment flows.
-                </p>
-              </div>
+    <>
+      <section
+        className={cn(
+          "space-y-6 transition-[margin] duration-300 ease-in-out",
+          panel_animated_open && "hidden lg:block lg:mr-[28rem]"
+        )}
+      >
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h1 className="text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">
+                Event Types
+              </h1>
+              <p className="mt-1 text-sm text-slate-500">
+                Create and manage booking event types for your team.
+              </p>
             </div>
 
             <div className="flex flex-wrap gap-3">
@@ -930,337 +1051,353 @@ export default function EventTypes() {
               <button
                 type="button"
                 onClick={handleNewEvent}
-                className="inline-flex cursor-pointer items-center justify-center rounded-xl bg-gradient-to-r from-sky-600 to-cyan-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-cyan-100 transition hover:scale-[1.01]"
+                className="inline-flex cursor-pointer items-center justify-center rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-violet-700"
               >
                 <Plus className="mr-2 h-4 w-4" />
-                New Event Type
+                Add Event Type
               </button>
             </div>
           </div>
-        </div>
-      </div>
 
-      {/* Stats */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium text-slate-500">
-                Total Event Types
-              </p>
-              <h3 className="mt-2 text-3xl font-bold text-slate-900">
-                {total_event_types}
-              </h3>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-violet-50 text-violet-600">
+                  <CalendarDays className="h-5 w-5" />
+                </div>
+                <div>
+                  <p className="text-2xl font-bold text-slate-900">{total_event_types}</p>
+                  <p className="text-xs font-medium text-slate-500">Active event types</p>
+                </div>
+              </div>
             </div>
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-sky-50 text-sky-600">
-              <CalendarDays className="h-6 w-6" />
+
+            {/* <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-sky-50 text-sky-600">
+                  <Users className="h-5 w-5" />
+                </div>
+                <div>
+                  <p className="text-2xl font-bold text-slate-900">{team_based_event_types}</p>
+                  <p className="text-xs font-medium text-slate-500">Team-based</p>
+                </div>
+              </div>
+            </div> */}
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-50 text-amber-600">
+                  <EyeOff className="h-5 w-5" />
+                </div>
+                <div>
+                  <p className="text-2xl font-bold text-slate-900">{draft_event_types}</p>
+                  <p className="text-xs font-medium text-slate-500">Draft</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-orange-50 text-orange-600">
+                  <EyeOff className="h-5 w-5" />
+                </div>
+                <div>
+                  <p className="text-2xl font-bold text-slate-900">{private_event_types}</p>
+                  <p className="text-xs font-medium text-slate-500">Private</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600">
+                  <Globe className="h-5 w-5" />
+                </div>
+                <div className="min-w-0">
+                  <p className="break-words text-sm font-bold text-slate-900">{default_timezone_label}</p>
+                  <p className="text-xs font-medium text-slate-500">Default timezone</p>
+                </div>
+              </div>
             </div>
           </div>
-        </div>
 
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium text-slate-500">Private Types</p>
-              <h3 className="mt-2 text-3xl font-bold text-slate-900">
-                {private_event_types}
-              </h3>
-            </div>
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-violet-50 text-violet-600">
-              <Shield className="h-6 w-6" />
-            </div>
-          </div>
-        </div>
-
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium text-slate-500">Public Types</p>
-              <h3 className="mt-2 text-3xl font-bold text-slate-900">
-                {public_event_types}
-              </h3>
-            </div>
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-600">
-              <Users className="h-6 w-6" />
-            </div>
-          </div>
-        </div>
-
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium text-slate-500">Total Bookings</p>
-              <h3 className="mt-2 text-3xl font-bold text-slate-900">
-                {total_bookings}
-              </h3>
-            </div>
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-amber-50 text-amber-600">
-              <Clock3 className="h-6 w-6" />
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Filters */}
-      <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex min-w-0 flex-1 flex-col gap-3 sm:flex-row sm:items-center sm:gap-3">
-            <div className="relative min-w-0 w-full flex-1 sm:min-w-[26rem] lg:min-w-[32rem]">
-              <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-              <input
-                type="text"
-                placeholder="Search event type by name or slug..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="h-12 w-full rounded-xl border border-slate-200 bg-slate-50 pl-11 pr-4 text-sm text-slate-700 outline-none transition placeholder:text-slate-400 focus:border-sky-400 focus:bg-white"
+          <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-visible">
+            <div className="border-b border-slate-200 p-4 sm:px-5">
+              <EventTypeFilters
+                leading={
+                  <h2 className="text-base font-semibold text-slate-900">All Event Types</h2>
+                }
+                search={search}
+                    visibility_filter={visibility_filter}
+                    status_filter={status_filter}
+                    provider_filter={provider_filter}
+                    show_service_provider_filter={show_service_provider_filter}
+                    service_provider_options={sorted_service_providers.map((sp) => ({
+                      id: sp.id,
+                      label: service_provider_filter_label(sp.id),
+                    }))}
+                    service_provider_filter_label={service_provider_filter_label}
+                    result_count={filtered_items.length}
+                    on_search_change={setSearch}
+                    on_visibility_filter_change={set_visibility_filter}
+                    on_status_filter_change={set_status_filter}
+                    on_provider_filter_change={set_provider_filter}
               />
             </div>
 
-            {show_service_provider_filter && (
-              <div className="relative w-full shrink-0 sm:w-auto sm:min-w-[220px]">
-                <select
-                  id="event-type-provider-filter"
-                  value={provider_filter}
-                  onChange={(e) => set_provider_filter(e.target.value)}
-                  className="h-12 w-full appearance-none rounded-xl border border-slate-200 bg-slate-50 pl-4 pr-10 text-sm text-slate-700 outline-none transition focus:border-sky-400 focus:bg-white"
-                  aria-label="Filter by service provider"
-                >
-                  <option value="">All service providers</option>
-                  {sorted_service_providers.map((sp) => (
-                    <option key={sp.id} value={sp.id}>
-                      {service_provider_filter_label(sp.id)}
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown
-                  className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
-                  aria-hidden
-                />
+            {loading ? (
+              <div className="p-4">
+                <EventTypeSkeleton variant="table" />
               </div>
+            ) : filtered_items.length === 0 ? (
+              <div className="px-6 py-14 text-center">
+                <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-100 text-slate-500">
+                  <CalendarDays className="h-7 w-7" />
+                </div>
+                <h3 className="mt-4 text-lg font-bold text-slate-900">
+                  {items.length > 0 ? "No event types found" : "No event types yet"}
+                </h3>
+                <p className="mt-2 text-sm text-slate-500">
+                  {items.length > 0
+                    ? "Try changing your search or filter."
+                    : "Create your first event type to get started."}
+                </p>
+              </div>
+            ) : (
+              <>
+                <EventTypeListMobileCards
+                  items={filtered_items}
+                  open_menu_id={open_menu_id}
+                  copied_id={copiedId}
+                  loading_slug={loadingSlug}
+                  get_card_gradient={get_card_gradient}
+                  format_duration_label={format_duration_short}
+                  get_provider_label={get_provider_label}
+                  get_short_description={parse_short_description_from_settings}
+                  get_status={parse_event_type_status}
+                  get_status_label={event_type_status_label}
+                  on_edit={(item) => handleEdit(item as EventType)}
+                  on_toggle_menu={(id) =>
+                    set_open_menu_id((prev) => (prev === id ? null : id))
+                  }
+                  on_copy_link={(item) => {
+                    void handle_copy_link_from_menu(item as EventType);
+                  }}
+                  on_duplicate={(item) => {
+                    void handleDuplicate(item as EventType);
+                    set_open_menu_id(null);
+                  }}
+                  on_delete={(id) => {
+                    handleDeleteClick(id);
+                    set_open_menu_id(null);
+                  }}
+                />
+
+                <div className="hidden min-[1211px]:block overflow-x-auto overflow-y-visible">
+                  <table className="w-full min-w-[900px] border-collapse">
+                    <thead className="bg-slate-50">
+                      <tr>
+                        <th className="border-b border-slate-200 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                          Event Type
+                        </th>
+                        <th className="border-b border-slate-200 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                          Duration
+                        </th>
+                        <th className="border-b border-slate-200 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                          Location
+                        </th>
+                        <th className="border-b border-slate-200 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                          Team / Provider
+                        </th>
+                        <th className="border-b border-slate-200 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                          Booking Page
+                        </th>
+                        <th className="border-b border-slate-200 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                          Status
+                        </th>
+                        <th className="border-b border-slate-200 px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">
+                          Action
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filtered_items.map((item) => {
+                        const is_public = !!item.is_public;
+                        const status = parse_event_type_status(item.status);
+                        const status_label = event_type_status_label(status);
+                        return (
+                          <tr
+                            key={item.id}
+                            className="border-b border-slate-100 transition hover:bg-slate-50/80"
+                          >
+                            <td className="px-4 py-4">
+                              <div className="flex items-start gap-3">
+                                <div
+                                  className={cn(
+                                    "mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br text-white",
+                                    get_card_gradient(item.id)
+                                  )}
+                                >
+                                  <CalendarDays className="h-4 w-4" />
+                                </div>
+                                <div className="min-w-0">
+                                  <p className="truncate font-semibold text-slate-900">
+                                    {item.title}
+                                  </p>
+                                  {item.slug && (
+                                    <p className="mt-0.5 truncate text-xs text-slate-500">
+                                      {item.slug}
+                                    </p>
+                                  )}
+                                </div>
+                              </div>
+                            </td>
+                            <td className="px-4 py-4 text-sm text-slate-700">
+                              {format_duration_short(item.duration_minutes)}
+                            </td>
+                            <td className="px-4 py-4">
+                              <EventTypeLocationCell location_type={item.location_type} />
+                            </td>
+                            <td className="px-4 py-4">
+                              <div className="flex items-center gap-2 text-sm text-slate-700">
+                                <Users className="h-4 w-4 shrink-0 text-slate-400" />
+                                <span className="truncate">
+                                  {get_provider_label(item.owner_id)}
+                                </span>
+                              </div>
+                            </td>
+                            <td className="px-4 py-4">
+                              {item.slug ? (
+                                <span className="text-sm font-medium text-violet-600">
+                                  /{item.slug}
+                                </span>
+                              ) : (
+                                <span className="text-sm text-slate-400">—</span>
+                              )}
+                            </td>
+                            <td className="px-4 py-4">
+                              <span
+                                className={cn(
+                                  "inline-flex rounded-full px-2.5 py-1 text-xs font-semibold",
+                                  status === "active"
+                                    ? "bg-emerald-50 text-emerald-700"
+                                    : "bg-amber-50 text-amber-700"
+                                )}
+                              >
+                                {status_label}
+                              </span>
+                            </td>
+                            <td className="px-4 py-4">
+                              <div className="flex items-center justify-end gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => handleEdit(item)}
+                                  className="inline-flex cursor-pointer items-center rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+                                >
+                                  <Edit3 className="mr-1.5 h-3.5 w-3.5" />
+                                  Edit
+                                </button>
+                                <EventTypeActionsMenu
+                                  open={open_menu_id === item.id}
+                                  copy_disabled={loadingSlug || !item.slug}
+                                  copy_copied={copiedId === item.id}
+                                  on_toggle={() =>
+                                    set_open_menu_id((prev) =>
+                                      prev === item.id ? null : item.id
+                                    )
+                                  }
+                                  on_copy_link={() => {
+                                    void handle_copy_link_from_menu(item);
+                                  }}
+                                  on_duplicate={() => {
+                                    void handleDuplicate(item);
+                                    set_open_menu_id(null);
+                                  }}
+                                  on_delete={() => {
+                                    handleDeleteClick(item.id);
+                                    set_open_menu_id(null);
+                                  }}
+                                />
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="flex items-center justify-between border-t border-slate-200 px-4 py-3 text-sm text-slate-500">
+                  <span>
+                    Showing 1 to {filtered_items.length} of {filtered_items.length} event
+                    {filtered_items.length === 1 ? " type" : " types"}
+                  </span>
+                </div>
+              </>
             )}
           </div>
+        </section>
 
-          <div className="flex flex-wrap gap-2 lg:shrink-0">
-            {(["all", "private", "public"] as const).map((item) => (
-              <button
-                key={item}
-                type="button"
-                onClick={() => set_visibility_filter(item)}
-                className={cn(
-                  "cursor-pointer rounded-xl px-4 py-2 text-sm font-semibold transition",
-                  visibility_filter === item
-                    ? "bg-slate-900 text-white shadow-sm"
-                    : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
-                )}
-              >
-                {item.charAt(0).toUpperCase() + item.slice(1)}
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* Cards Grid */}
-      {loading ? (
-        <EventTypeSkeleton />
-      ) : (
-        <>
-          <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
-            {filtered_items.map((item) => {
-              const is_public = !!item.is_public;
-              return (
-                <div
-                  key={item.id}
-                  className="group overflow-hidden rounded-[26px] border border-slate-200 bg-white shadow-sm transition duration-300 hover:-translate-y-1 hover:shadow-xl hover:shadow-slate-200/60"
+      <aside
+        className={cn(
+          "fixed top-16 right-0 bottom-0 z-30 flex w-full flex-col overflow-hidden border-l border-slate-200 bg-white shadow-2xl lg:w-[28rem]",
+          "transform transition-transform duration-300 ease-in-out will-change-transform",
+          panel_animated_open
+            ? "translate-x-0"
+            : "pointer-events-none translate-x-full"
+        )}
+        aria-hidden={!panel_visible}
+      >
+        {panel_visible && (
+          <>
+            <div className="flex shrink-0 items-center justify-between border-b border-slate-200 px-5 py-4">
+                <h2 className="text-lg font-bold text-slate-900">
+                  {editingId ? "Edit Event Type" : "Add Event Type"}
+                </h2>
+                <button
+                  type="button"
+                  onClick={handlePanelClose}
+                  className="cursor-pointer rounded-lg border border-slate-200 p-2 text-slate-500 transition hover:bg-slate-50 hover:text-slate-700"
+                  aria-label="Close panel"
                 >
-                  <div
-                    className={cn(
-                      "h-1.5 w-full bg-gradient-to-r",
-                      get_card_gradient(item.id)
-                    )}
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              <div className="flex min-h-0 flex-1 flex-col overflow-hidden overscroll-contain">
+                {editingId !== null ? (
+                  <EventTypeEditForm
+                    key={editingId}
+                    eventTypeId={editingId}
+                    embedded
+                    variant="panel"
+                    onClose={handleEditPanelClose}
                   />
-
-                  <div className="p-5">
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="min-w-0">
-                        <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
-                          <h3 className="truncate text-xl font-bold text-slate-900">
-                            {item.title}
-                          </h3>
-                          {show_owner_labels &&
-                            item.owner_id &&
-                            owner_names_by_id[item.owner_id] && (
-                              <span className="inline-flex shrink-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-sm font-medium text-slate-500">
-                                <span>
-                                  (Created by: {owner_names_by_id[item.owner_id]}
-                                </span>
-                                {serviceProviderOwnerIds.has(item.owner_id) &&
-                                  deactivated_service_provider_ids.has(
-                                    item.owner_id
-                                  ) && (
-                                    <span className="inline-flex items-center rounded-full bg-slate-200 px-2 py-0.5 text-xs font-medium text-slate-600">
-                                      Inactive
-                                    </span>
-                                  )}
-                                <span>)</span>
-                              </span>
-                            )}
-                        </div>
-                        {item.slug && (
-                          <p className="mt-1 inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600">
-                            {item.slug}
-                          </p>
-                        )}
-                      </div>
-
-                      <span
-                        className={cn(
-                          "inline-flex shrink-0 items-center rounded-full px-3 py-1 text-xs font-semibold",
-                          is_public
-                            ? "bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-200"
-                            : "bg-violet-50 text-violet-700 ring-1 ring-inset ring-violet-200"
-                        )}
-                      >
-                        {is_public ? "Public" : "Private"}
-                      </span>
-                    </div>
-
-                    <div className="mt-5 space-y-3">
-                      <div className="flex items-center gap-3 rounded-xl bg-slate-50 px-3 py-2.5">
-                        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-white text-sky-600 shadow-sm">
-                          <Clock3 className="h-4 w-4" />
-                        </div>
-                        <div>
-                          <p className="text-xs font-medium text-slate-500">
-                            Duration
-                          </p>
-                          <p className="text-sm font-semibold text-slate-800">
-                            {format_duration(item.duration_minutes)}
-                          </p>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-3 rounded-xl bg-slate-50 px-3 py-2.5">
-                        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-white text-cyan-600 shadow-sm">
-                          {get_location_icon(item.location_type)}
-                        </div>
-                        <div>
-                          <p className="text-xs font-medium text-slate-500">
-                            Meeting type
-                          </p>
-                          <p className="text-sm font-semibold text-slate-800">
-                            {get_location_label(item.location_type)}
-                          </p>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-3 rounded-xl bg-slate-50 px-3 py-2.5">
-                        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-white text-emerald-600 shadow-sm">
-                          <Users className="h-4 w-4" />
-                        </div>
-                        <div>
-                          <p className="text-xs font-medium text-slate-500">
-                            Bookings
-                          </p>
-                          <p className="text-sm font-semibold text-slate-800">
-                            {item.bookings_count ?? 0} total
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="mt-5 flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        onClick={() => handleEdit(item)}
-                        className="inline-flex cursor-pointer items-center rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-                      >
-                        <Edit3 className="mr-2 h-4 w-4" />
-                        Edit
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => handleCopyLink(item)}
-                        disabled={loadingSlug || !item.slug}
-                        className={cn(
-                          "inline-flex items-center rounded-xl border px-3.5 py-2 text-sm font-semibold transition",
-                          loadingSlug || !item.slug
-                            ? "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400"
-                            : copiedId === item.id
-                            ? "cursor-pointer border-emerald-300 bg-emerald-600 text-white"
-                            : "cursor-pointer border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
-                        )}
-                        title={
-                          loadingSlug
-                            ? "Loading workspace..."
-                            : !item.slug
-                            ? "No slug available"
-                            : "Copy booking link"
-                        }
-                      >
-                        <Link2 className="mr-2 h-4 w-4" />
-                        {copiedId === item.id ? "Copied!" : "Copy Link"}
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => handleDuplicate(item)}
-                        className="inline-flex cursor-pointer items-center rounded-xl border border-sky-200 bg-sky-50 px-3.5 py-2 text-sm font-semibold text-sky-700 transition hover:bg-sky-100"
-                      >
-                        <Copy className="mr-2 h-4 w-4" />
-                        Duplicate
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteClick(item.id)}
-                        className="inline-flex cursor-pointer items-center rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2 text-sm font-semibold text-rose-700 transition hover:bg-rose-100"
-                      >
-                        <Trash2 className="mr-2 h-4 w-4" />
-                        Delete
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-
-            {/* Add New Card */}
-            <button
-              type="button"
-              onClick={handleNewEvent}
-              className="group flex min-h-[320px] cursor-pointer flex-col items-center justify-center rounded-[26px] border border-dashed border-slate-300 bg-white p-6 text-center shadow-sm transition hover:-translate-y-1 hover:border-sky-400 hover:bg-sky-50/40 hover:shadow-lg"
-            >
-              <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-slate-100 text-slate-600 transition group-hover:bg-sky-100 group-hover:text-sky-700">
-                <Plus className="h-7 w-7" />
+                ) : (
+                  <EventTypeFormLayout
+                    value={form}
+                    onChange={handleFormChange}
+                    editingId={null}
+                    formError={formError}
+                    submitting={submitting}
+                    onSubmit={handleSubmit}
+                    onCancel={handleCancel}
+                    show_service_provider_field={can_assign_event_type_owner}
+                    service_provider_options={event_type_service_provider_options}
+                    service_providers_loading={service_providers_loading}
+                    self_assign_option={event_type_self_assign_option}
+                    variant="panel"
+                    slug_error={slug_error}
+                    on_slug_blur={() => void handle_slug_blur()}
+                    on_slug_edited={() => {
+                      slug_touched_ref.current = true;
+                    }}
+                  />
+                )}
               </div>
-              <h3 className="mt-4 text-lg font-bold text-slate-900">
-                Create New Event Type
-              </h3>
-              <p className="mt-2 max-w-xs text-sm text-slate-500">
-                Add a new booking type for meetings, consultations, classes, or
-                custom appointments.
-              </p>
-            </button>
-          </div>
-
-          {/* Empty State */}
-          {filtered_items.length === 0 && items.length > 0 && (
-            <div className="rounded-[24px] border border-dashed border-slate-300 bg-white px-6 py-14 text-center shadow-sm">
-              <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-slate-100 text-slate-500">
-                <CalendarDays className="h-8 w-8" />
-              </div>
-              <h3 className="mt-4 text-xl font-bold text-slate-900">
-                No event types found
-              </h3>
-              <p className="mt-2 text-sm text-slate-500">
-                Try changing your search or filter, or create a new event type.
-              </p>
-            </div>
+            </>
           )}
-        </>
-      )}
+      </aside>
 
       {deleteConfirmId && (
         <ConfirmModal
@@ -1437,6 +1574,6 @@ export default function EventTypes() {
           </div>
         </div>
       )}
-    </section>
+    </>
   );
 }

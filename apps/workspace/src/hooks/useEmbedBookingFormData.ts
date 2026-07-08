@@ -14,6 +14,7 @@ import { CALENDAR_BUFFER_DAYS, CALENDAR_BUFFER_DAYS_BEFORE } from '@/src/constan
 import { userActsAsServiceProviderFromMetadata } from '@/lib/service_provider_role';
 import {
   filterBookableDepartments,
+  filterBookableEventTypes,
   filterEventTypesForServiceProvider,
   memberActsInDepartment,
 } from '@/src/utils/bookingFormUtils';
@@ -92,6 +93,7 @@ export function useEmbedBookingFormData({
     primaryColor?: string;
     accentColor?: string;
     timezone?: string;
+    tagline?: string;
   } | null>(null);
   const [workspaceOwnerAdminNotice, setWorkspaceOwnerAdminNotice] = useState<string | null>(null);
 
@@ -154,7 +156,9 @@ export function useEmbedBookingFormData({
 
   const bookableEventTypes = useMemo(() => {
     if (needsExplicitProvider && !effectiveProviderId) return [];
-    return filterEventTypesForServiceProvider(eventTypes, effectiveProviderId);
+    return filterBookableEventTypes(
+      filterEventTypesForServiceProvider(eventTypes, effectiveProviderId)
+    );
   }, [eventTypes, effectiveProviderId, needsExplicitProvider]);
 
   useEffect(() => {
@@ -171,7 +175,12 @@ export function useEmbedBookingFormData({
         const data: {
           settings?: {
             intake_form?: IntakeFormSettings;
-            general?: { primaryColor?: string; accentColor?: string; timezone?: string };
+            general?: {
+              primaryColor?: string;
+              accentColor?: string;
+              timezone?: string;
+              tagline?: string;
+            };
             meeting_options?: meeting_options_settings;
           };
         } = await res.json();

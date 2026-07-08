@@ -54,9 +54,10 @@ export async function GET(req: NextRequest) {
     if (slug) {
       const { data: row, error: slugError } = await supabase
         .from('event_types')
-        .select('id, title, slug, duration_minutes, owner_id, is_public, location_type')
+        .select('id, title, slug, duration_minutes, owner_id, is_public, location_type, status')
         .eq('workspace_id', workspaceIdResolved)
         .eq('slug', slug)
+        .eq('status', 'active')
         .maybeSingle();
 
       if (slugError) {
@@ -90,9 +91,10 @@ export async function GET(req: NextRequest) {
 
     let query = supabase
       .from('event_types')
-      .select('id, title, slug, duration_minutes, owner_id, is_public, location_type')
+      .select('id, title, slug, duration_minutes, owner_id, is_public, location_type, status')
       .eq('workspace_id', workspaceIdResolved)
-      .eq('is_public', true);
+      .eq('is_public', true)
+      .eq('status', 'active');
 
     if (serviceProviderId) {
       query = query.eq('owner_id', serviceProviderId);

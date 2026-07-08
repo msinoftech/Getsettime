@@ -913,8 +913,8 @@ export default function DepartmentsPage() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50">
-      <div className="mx-auto max-w-7xl px-4 py-6 md:px-6 xl:px-8">
+    <div className="min-h-screen">
+      <div className="mx-auto">
         <div className="space-y-6">
           {/* Top Header */}
           <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">

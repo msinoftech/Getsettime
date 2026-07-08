@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { LuCheck, LuChevronDown } from "react-icons/lu";
 import {
   EVENT_TYPE_LOCATION_OPTIONS,
@@ -10,6 +10,11 @@ import {
   serialize_event_type_location_types,
   type event_type_location_value,
 } from "@/src/types/event_type_location";
+import { normalize_event_type_slug_input } from "@/src/features/event-types/event_type_slug";
+import {
+  EVENT_TYPE_STATUS_OPTIONS,
+} from "@/src/features/event-types/event_type_status";
+import type { event_type_status } from "@/src/types/event_types";
 
 export {
   EVENT_TYPE_LOCATION_OPTIONS,
@@ -21,12 +26,15 @@ export {
 
 export type event_type_form_state = {
   title: string;
+  slug: string;
+  short_description: string;
   duration_hours: string;
   duration_minutes_part: string;
   buffer_before: string;
   buffer_after: string;
   location_types: event_type_location_value[];
   is_public: boolean;
+  status: event_type_status;
   /** Empty string = assign to the logged-in user (admin/manager only). */
   service_provider_id: string;
 };
@@ -177,6 +185,30 @@ export function LocationTypesMultiSelect({
   );
 }
 
+function PanelSection({
+  number,
+  title,
+  children,
+  is_last = false,
+}: {
+  number: number;
+  title: string;
+  children: ReactNode;
+  is_last?: boolean;
+}) {
+  return (
+    <section className={is_last ? "p-4" : "border-b border-slate-200 p-4"}>
+      <div className="mb-4 flex items-center gap-2.5">
+        <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-violet-600 text-xs font-bold text-white">
+          {number}
+        </span>
+        <h3 className="text-sm font-semibold text-slate-900">{title}</h3>
+      </div>
+      <div className="space-y-4">{children}</div>
+    </section>
+  );
+}
+
 type EventTypeFormLayoutProps = {
   value: event_type_form_state;
   onChange: (next: event_type_form_state) => void;
@@ -184,13 +216,18 @@ type EventTypeFormLayoutProps = {
   formError: string | null;
   successMessage?: string | null;
   submitting: boolean;
-  onSubmit: (e: React.FormEvent) => void;
+  onSubmit: (e: FormEvent) => void;
   onCancel: () => void;
   show_service_provider_field?: boolean;
   service_provider_options?: event_type_service_provider_option[];
   service_providers_loading?: boolean;
   /** Empty-value option for admins/managers who are not service providers. */
   self_assign_option?: { label: string } | null;
+  /** `panel` renders a compact sectioned layout for the right-side panel. */
+  variant?: "page" | "panel";
+  slug_error?: string | null;
+  on_slug_blur?: () => void;
+  on_slug_edited?: () => void;
 };
 
 export function EventTypeFormLayout({
@@ -206,6 +243,10 @@ export function EventTypeFormLayout({
   service_provider_options = [],
   service_providers_loading = false,
   self_assign_option = null,
+  variant = "page",
+  slug_error = null,
+  on_slug_blur,
+  on_slug_edited,
 }: EventTypeFormLayoutProps) {
   const patch = useCallback(
     (partial: Partial<event_type_form_state>) => {
@@ -240,7 +281,121 @@ export function EventTypeFormLayout({
 
   const total_min = total_duration_minutes(value.duration_hours, value.duration_minutes_part);
 
-  const digit_key_filter = (e: React.KeyboardEvent<HTMLInputElement>) => {
+  const duration_options = (() => {
+    const presets: number[] = [...DURATION_PRESETS];
+    if (total_min >= 1 && !presets.includes(total_min)) {
+      return [...presets, total_min].sort((a, b) => a - b);
+    }
+    return presets;
+  })();
+
+  const panel_select_class =
+    "w-full appearance-none rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 pr-9 text-sm text-slate-900 outline-none transition focus:border-violet-400 focus:bg-white disabled:cursor-not-allowed disabled:opacity-60";
+
+  const duration_dropdown_field = (
+    <label className="block">
+      <span className="mb-2 block text-sm font-medium text-slate-700">
+        Duration<span className="text-red-500">*</span>
+      </span>
+      <div className="relative">
+        <select
+          value={total_min >= 1 ? String(total_min) : ""}
+          onChange={(e) => {
+            const minutes = parseInt(e.target.value, 10);
+            if (Number.isFinite(minutes) && minutes >= 1) {
+              on_duration_preset(minutes);
+            }
+          }}
+          className={panel_select_class}
+          required
+          aria-invalid={!!formError && total_min < 1}
+        >
+          <option value="" disabled>
+            Select duration
+          </option>
+          {duration_options.map((minutes) => (
+            <option key={minutes} value={minutes}>
+              {minutes} mins
+            </option>
+          ))}
+        </select>
+        <LuChevronDown
+          className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500"
+          aria-hidden
+        />
+      </div>
+    </label>
+  );
+
+  const location_dropdown_field = (
+    <label className="block">
+      <span className="mb-2 block text-sm font-medium text-slate-700">
+        Location<span className="text-red-500">*</span>
+      </span>
+      <LocationTypesMultiSelect
+        value={value.location_types}
+        onChange={(location_types) => patch({ location_types })}
+      />
+    </label>
+  );
+
+  const slug_field = (
+    <label className="block">
+      <span className="mb-2 block text-sm font-medium text-slate-700">
+        Event URL slug<span className="text-red-500">*</span>
+      </span>
+      <div
+        className={`flex overflow-hidden rounded-xl border bg-slate-50 transition focus-within:bg-white ${
+          slug_error
+            ? "border-red-300 focus-within:border-red-400"
+            : "border-slate-200 focus-within:border-violet-400"
+        }`}
+      >
+        <span className="flex shrink-0 items-center border-r border-slate-200 bg-slate-100 px-3 text-sm text-slate-500">
+          /
+        </span>
+        <input
+          value={value.slug}
+          onChange={(e) => {
+            on_slug_edited?.();
+            patch({ slug: e.target.value });
+          }}
+          onBlur={() => {
+            const normalized = normalize_event_type_slug_input(value.slug);
+            if (normalized !== value.slug) {
+              patch({ slug: normalized });
+            }
+            on_slug_blur?.();
+          }}
+          placeholder="product-demo"
+          className="w-full bg-transparent px-3 py-2.5 text-sm text-slate-900 outline-none"
+          aria-invalid={!!slug_error}
+          aria-describedby={slug_error ? "event-type-slug-error" : undefined}
+          required
+        />
+      </div>
+      {slug_error ? (
+        <p id="event-type-slug-error" className="mt-1.5 text-sm text-red-600" role="alert">
+          {slug_error}
+        </p>
+      ) : null}
+    </label>
+  );
+
+  const short_description_field = (
+    <label className="block">
+      <span className="mb-2 block text-sm font-medium text-slate-700">Short description</span>
+      <textarea
+        value={value.short_description}
+        onChange={(e) => patch({ short_description: e.target.value })}
+        placeholder="Showcase our product and features to potential customers."
+        rows={3}
+        className="w-full resize-y rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-violet-400 focus:bg-white"
+      />
+    </label>
+  );
+
+  const digit_key_filter = (e: ReactKeyboardEvent<HTMLInputElement>) => {
     if (
       ["Backspace", "Delete", "Tab", "Escape", "Enter"].includes(e.key) ||
       (e.key === "a" && e.ctrlKey) ||
@@ -253,6 +408,180 @@ export function EventTypeFormLayout({
     }
     e.preventDefault();
   };
+
+  const service_provider_field = show_service_provider_field ? (
+    <label className="block">
+      <span className="mb-2 block text-sm font-medium text-slate-700">
+        Assigned to<span className="text-red-500">*</span>
+      </span>
+      <div className="relative">
+        <select
+          value={value.service_provider_id}
+          onChange={(e) => patch({ service_provider_id: e.target.value })}
+          disabled={service_providers_loading}
+          className={panel_select_class}
+        >
+          {service_providers_loading && !self_assign_option ? (
+            <option value="">Loading service providers…</option>
+          ) : null}
+          {self_assign_option ? (
+            <option value="">
+              {service_providers_loading
+                ? "Loading service providers…"
+                : self_assign_option.label}
+            </option>
+          ) : null}
+          {service_provider_options.map((option) => (
+            <option key={option.id} value={option.id}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+        <LuChevronDown
+          className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500"
+          aria-hidden
+        />
+      </div>
+    </label>
+  ) : null;
+
+  const form_actions = (
+    <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+      <button
+        type="button"
+        onClick={onCancel}
+        className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+      >
+        Cancel
+      </button>
+      <button
+        type="submit"
+        disabled={submitting}
+        className="rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-60"
+      >
+        {submitting
+          ? editingId
+            ? "Saving…"
+            : "Saving…"
+          : editingId
+            ? "Save Event Type"
+            : "Save Event Type"}
+      </button>
+    </div>
+  );
+
+  if (variant === "panel") {
+    return (
+      <form
+        onSubmit={onSubmit}
+        className="flex h-full min-h-0 flex-col"
+        aria-describedby={formError ? "event-type-form-error" : undefined}
+      >
+        <div className="flex-1 overflow-y-auto px-5 py-5">
+          <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+            <PanelSection number={1} title="Basic Details">
+              <label className="block">
+                <span className="mb-2 block text-sm font-medium text-slate-700">
+                  Event name<span className="text-red-500">*</span>
+                </span>
+                <input
+                  value={value.title}
+                  onChange={(e) => patch({ title: e.target.value })}
+                  placeholder="e.g. Sales Call"
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-violet-400 focus:bg-white"
+                  required
+                />
+              </label>
+              {slug_field}
+              {short_description_field}
+            </PanelSection>
+
+            <PanelSection number={2} title="Meeting Setup">
+              <div className="grid grid-cols-2 gap-4">
+                {duration_dropdown_field}
+                {location_dropdown_field}
+                {service_provider_field}
+              </div>
+            </PanelSection>
+
+            <PanelSection number={3} title="Visibility & Publishing" is_last>
+              <div className="space-y-4">
+                <div>
+                  <span className="mb-2 block text-sm font-medium text-slate-700">
+                    Event status
+                  </span>
+                  <div className="grid grid-cols-2 gap-2">
+                    {EVENT_TYPE_STATUS_OPTIONS.map((option) => {
+                      const selected = value.status === option.value;
+                      return (
+                        <button
+                          key={option.value}
+                          type="button"
+                          onClick={() => patch({ status: option.value })}
+                          className={`rounded-xl border px-3 py-2.5 text-left text-sm transition ${
+                            selected
+                              ? "border-violet-500 bg-violet-50 text-violet-700"
+                              : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-white"
+                          }`}
+                          aria-pressed={selected}
+                        >
+                          <span className="block font-semibold">{option.label}</span>
+                          <span className="mt-0.5 block text-xs text-slate-500">
+                            {option.description}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3">
+                  <div>
+                    <p className="text-sm font-medium text-slate-900">Visibility</p>
+                    <p className="text-xs text-slate-500">
+                      {value.is_public
+                        ? "Public on booking pages"
+                        : "Private — direct link only"}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={value.is_public}
+                    onClick={() => patch({ is_public: !value.is_public })}
+                    className={`flex h-7 w-12 shrink-0 items-center rounded-full p-1 transition-colors ${
+                      value.is_public ? "justify-end bg-violet-600" : "justify-start bg-slate-200"
+                    }`}
+                  >
+                    <span className="h-5 w-5 rounded-full bg-white shadow" />
+                  </button>
+                </div>
+              </div>
+            </PanelSection>
+          </div>
+
+          {formError && (
+            <p id="event-type-form-error" className="mt-4 text-sm text-red-600" role="alert">
+              {formError}
+            </p>
+          )}
+
+          {successMessage && (
+            <p
+              className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700"
+              role="status"
+            >
+              {successMessage}
+            </p>
+          )}
+        </div>
+
+        <div className="shrink-0 border-t border-slate-200 bg-white px-5 py-4">
+          {form_actions}
+        </div>
+      </form>
+    );
+  }
 
   return (
     <div className="rounded-2xl bg-slate-50 p-4 md:p-6">
@@ -355,6 +684,11 @@ export function EventTypeFormLayout({
                     onChange={(location_types) => patch({ location_types })}
                   />
                 </label>
+              </div>
+
+              <div className="mt-6 space-y-5">
+                {slug_field}
+                {short_description_field}
               </div>
 
               <div className="mt-6 rounded-[24px] border border-slate-200 bg-slate-50/80 p-4 md:p-5">
@@ -535,6 +869,9 @@ export function EventTypeFormLayout({
                 <h3 className="mt-3 text-2xl font-semibold break-words">
                   {value.title.trim() || "Your event title"}
                 </h3>
+                {value.short_description.trim() ? (
+                  <p className="mt-2 text-sm text-slate-400">{value.short_description.trim()}</p>
+                ) : null}
                 <div className="mt-4 space-y-3 text-sm text-slate-300">
                   <div className="flex items-center justify-between gap-2 rounded-2xl bg-white/5 px-4 py-3">
                     <span>Duration</span>

@@ -4,6 +4,11 @@ import { createClient, type SupabaseClient, type User } from '@supabase/supabase
 import { appendActivityLog } from '@/lib/activity-log';
 import { userActsAsServiceProviderFromMetadata } from '@/lib/service_provider_role';
 import { user_belongs_to_workspace } from '@/lib/team_members_workspace';
+import {
+  build_event_type_settings,
+  normalize_event_type_slug_input,
+} from '@/src/features/event-types/event_type_slug';
+import { parse_event_type_status } from '@/src/features/event-types/event_type_status';
 
 /**
  * Creates an authenticated Supabase client using the anon key (respects RLS)
@@ -225,48 +230,75 @@ function parse_is_public(value: unknown): boolean {
   return false;
 }
 
-function slugify_event_title(title: string): string {
-  return title.trim().toLowerCase().replace(/\s+/g, '-');
+function parse_event_type_slug(
+  value: unknown
+): { ok: true; value: string } | { ok: false; message: string } {
+  if (typeof value !== 'string' || !value.trim()) {
+    return { ok: false, message: 'Event URL slug is required.' };
+  }
+  const normalized = normalize_event_type_slug_input(value);
+  if (!normalized) {
+    return { ok: false, message: 'Event URL slug is invalid.' };
+  }
+  return { ok: true, value: normalized };
 }
 
-/**
- * Picks slug, then slug-1, slug-2, … until unused in the workspace (excluding one row on update).
- */
-async function resolve_unique_event_type_slug(
+function parse_short_description(value: unknown): string {
+  if (typeof value !== 'string') return '';
+  return value.trim();
+}
+
+async function assert_event_type_slug_available(
   supabase: SupabaseClient,
   workspaceId: number,
-  base_slug: string,
+  slug: string,
   exclude_event_type_id?: number
-): Promise<{ slug: string; error: string | null }> {
+): Promise<{ ok: true } | { ok: false; message: string }> {
   const { data: rows, error } = await supabase
     .from('event_types')
     .select('id, slug')
     .eq('workspace_id', workspaceId);
 
   if (error) {
-    return { slug: base_slug, error: error.message };
+    return { ok: false, message: error.message };
   }
 
-  const taken = new Set<string>();
-  for (const row of rows ?? []) {
+  const taken = (rows ?? []).some((row) => {
     if (
       exclude_event_type_id != null &&
       Number(row.id) === Number(exclude_event_type_id)
     ) {
-      continue;
+      return false;
     }
-    const s = row.slug;
-    if (typeof s === 'string' && s.length > 0) taken.add(s);
+    return typeof row.slug === 'string' && row.slug === slug;
+  });
+
+  if (taken) {
+    return {
+      ok: false,
+      message:
+        'This URL slug is already used by another event type in your workspace.',
+    };
   }
 
-  let candidate = base_slug;
-  let n = 0;
-  while (taken.has(candidate)) {
-    n += 1;
-    candidate = `${base_slug}-${n}`;
-  }
+  return { ok: true };
+}
 
-  return { slug: candidate, error: null };
+function merge_event_type_settings(
+  existing: unknown,
+  short_description: string
+): Record<string, unknown> | null {
+  const base =
+    existing && typeof existing === 'object'
+      ? { ...(existing as Record<string, unknown>) }
+      : {};
+  const trimmed = short_description.trim();
+  if (trimmed) {
+    base.short_description = trimmed;
+    return base;
+  }
+  delete base.short_description;
+  return Object.keys(base).length > 0 ? base : null;
 }
 
 export async function GET(req: NextRequest) {
@@ -371,11 +403,26 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json();
-    const { title, duration_minutes, buffer_before, buffer_after, location_type, is_public, owner_id } =
-      body;
+    const {
+      title,
+      slug,
+      short_description,
+      duration_minutes,
+      buffer_before,
+      buffer_after,
+      location_type,
+      is_public,
+      status,
+      owner_id,
+    } = body;
 
     if (!title || !title.trim()) {
       return NextResponse.json({ error: 'Title is required' }, { status: 400 });
+    }
+
+    const slugParsed = parse_event_type_slug(slug);
+    if (!slugParsed.ok) {
+      return NextResponse.json({ error: slugParsed.message }, { status: 400 });
     }
 
     const durationResult = parse_duration_minutes(duration_minutes);
@@ -396,6 +443,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: locationParsed.message }, { status: 400 });
     }
     const publicFlag = parse_is_public(is_public);
+    const statusFlag = parse_event_type_status(status);
 
     const workspaceId = user.user_metadata?.workspace_id;
     if (!workspaceId) {
@@ -407,11 +455,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Workspace ID not found' }, { status: 400 });
     }
 
-    const base_slug = slugify_event_title(title);
-    const { slug: unique_slug, error: slugError } = await resolve_unique_event_type_slug(supabase, wid, base_slug);
-    if (slugError) {
-      console.error('resolve_unique_event_type_slug:', slugError);
-      return NextResponse.json({ error: slugError }, { status: 500 });
+    const slugAvailability = await assert_event_type_slug_available(
+      supabase,
+      wid,
+      slugParsed.value
+    );
+    if (!slugAvailability.ok) {
+      return NextResponse.json({ error: slugAvailability.message }, { status: 400 });
     }
 
     const ownerResult = await resolveEventTypeOwnerId(user, wid, owner_id);
@@ -426,14 +476,15 @@ export async function POST(req: NextRequest) {
         workspace_id: wid,
         owner_id: ownerResult.ownerId,
         title: title.trim(),
-        slug: unique_slug,
+        slug: slugParsed.value,
         duration_minutes: durationResult.value,
         buffer_before: bufferBefore.value,
         buffer_after: bufferAfter.value,
         location_type: locationParsed.value,
         location_value: null,
         is_public: publicFlag,
-        settings: null,
+        status: statusFlag,
+        settings: build_event_type_settings(parse_short_description(short_description)),
       })
       .select()
       .single();
@@ -479,8 +530,19 @@ export async function PATCH(req: NextRequest) {
     }
 
     const body = await req.json();
-    const { id, title, duration_minutes, buffer_before, buffer_after, location_type, is_public, owner_id } =
-      body;
+    const {
+      id,
+      title,
+      slug,
+      short_description,
+      duration_minutes,
+      buffer_before,
+      buffer_after,
+      location_type,
+      is_public,
+      status,
+      owner_id,
+    } = body;
 
     if (!id) {
       return NextResponse.json({ error: 'Event type ID is required' }, { status: 400 });
@@ -488,6 +550,11 @@ export async function PATCH(req: NextRequest) {
 
     if (!title || !title.trim()) {
       return NextResponse.json({ error: 'Title is required' }, { status: 400 });
+    }
+
+    const slugParsed = parse_event_type_slug(slug);
+    if (!slugParsed.ok) {
+      return NextResponse.json({ error: slugParsed.message }, { status: 400 });
     }
 
     const durationPatch = parse_duration_minutes(duration_minutes);
@@ -508,6 +575,7 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ error: locationPatch.message }, { status: 400 });
     }
     const publicPatch = parse_is_public(is_public);
+    const statusFlag = parse_event_type_status(status);
 
     const workspaceId = user.user_metadata?.workspace_id;
     const wid = typeof workspaceId === 'number' ? workspaceId : Number(workspaceId);
@@ -515,17 +583,19 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ error: 'Workspace ID not found' }, { status: 400 });
     }
 
-    const base_slug = slugify_event_title(title);
     const idNum = typeof id === 'number' ? id : Number(id);
-    const { slug: unique_slug, error: slugError } = await resolve_unique_event_type_slug(
+    if (!Number.isFinite(idNum)) {
+      return NextResponse.json({ error: 'Invalid event type ID' }, { status: 400 });
+    }
+
+    const slugAvailability = await assert_event_type_slug_available(
       supabase,
       wid,
-      base_slug,
-      Number.isFinite(idNum) ? idNum : undefined
+      slugParsed.value,
+      idNum
     );
-    if (slugError) {
-      console.error('resolve_unique_event_type_slug (patch):', slugError);
-      return NextResponse.json({ error: slugError }, { status: 500 });
+    if (!slugAvailability.ok) {
+      return NextResponse.json({ error: slugAvailability.message }, { status: 400 });
     }
 
     const ownerResult = await resolveEventTypeOwnerId(user, wid, owner_id);
@@ -533,25 +603,30 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ error: ownerResult.message }, { status: 400 });
     }
 
+    const { data: beforeEventType } = await supabase
+      .from('event_types')
+      .select('id,title,duration_minutes,buffer_before,buffer_after,location_type,is_public,status,owner_id,settings')
+      .eq('id', id)
+      .single();
+
     const updatePayload: Record<string, unknown> = {
       title: title.trim(),
-      slug: unique_slug,
+      slug: slugParsed.value,
       duration_minutes: durationPatch.value,
       buffer_before: bufferBeforePatch.value,
       buffer_after: bufferAfterPatch.value,
       location_type: locationPatch.value,
       is_public: publicPatch,
+      status: statusFlag,
+      settings: merge_event_type_settings(
+        beforeEventType?.settings,
+        parse_short_description(short_description)
+      ),
     };
 
     if (userCanAssignEventTypeOwner(user)) {
       updatePayload.owner_id = ownerResult.ownerId;
     }
-
-    const { data: beforeEventType } = await supabase
-      .from('event_types')
-      .select('id,title,duration_minutes,buffer_before,buffer_after,location_type,is_public,owner_id')
-      .eq('id', id)
-      .single();
 
     // RLS automatically filters by workspace_id and owner_id from JWT
     const { data, error } = await supabase
@@ -584,6 +659,7 @@ export async function PATCH(req: NextRequest) {
         buffer_after: beforeEventType?.buffer_after,
         location_type: beforeEventType?.location_type,
         is_public: beforeEventType?.is_public,
+        status: beforeEventType?.status,
         owner_id: beforeEventType?.owner_id,
       },
       after_data: {
@@ -593,6 +669,7 @@ export async function PATCH(req: NextRequest) {
         buffer_after: data?.buffer_after,
         location_type: data?.location_type,
         is_public: data?.is_public,
+        status: data?.status,
         owner_id: data?.owner_id,
       },
     });

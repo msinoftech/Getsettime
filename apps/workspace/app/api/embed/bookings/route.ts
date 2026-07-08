@@ -283,7 +283,7 @@ export async function POST(req: NextRequest) {
     if (event_type_id) {
       const { data: event_type_access_row } = await supabase
         .from('event_types')
-        .select('id, slug, is_public')
+        .select('id, slug, is_public, status')
         .eq('id', event_type_id)
         .eq('workspace_id', workspace_id)
         .maybeSingle();
@@ -292,6 +292,13 @@ export async function POST(req: NextRequest) {
         return NextResponse.json(
           { error: 'Event type not found' },
           { status: 404 }
+        );
+      }
+
+      if (event_type_access_row.status === 'draft') {
+        return NextResponse.json(
+          { error: 'Event type is not available for booking' },
+          { status: 403 }
         );
       }
 

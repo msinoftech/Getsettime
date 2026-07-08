@@ -47,7 +47,7 @@ const DEFAULT_INTAKE_FIELD_META: Array<{
   { key: "file_upload", label: "File Upload", description: "Allow invitees to upload a file, PDF, or image", icon: "upload" },
 ];
 
-type IconName = FieldIcon | "search" | "plus" | "save" | "trash" | "edit" | "sparkles" | "grip" | "clipboard";
+type IconName = FieldIcon | "search" | "plus" | "save" | "trash" | "edit" | "sparkles" | "grip" | "clipboard" | "send" | "lock" | "info" | "arrowUpDown" | "users";
 
 function Icon({ name, className = "h-5 w-5" }: { name: IconName; className?: string }) {
   const common = {
@@ -73,8 +73,42 @@ function Icon({ name, className = "h-5 w-5" }: { name: IconName; className?: str
   if (name === "sparkles") return <svg {...common}><path d="M12 3l1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5L12 3Z" /><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8L19 15Z" /></svg>;
   if (name === "grip") return <svg {...common}><path d="M9 6h.01" /><path d="M15 6h.01" /><path d="M9 12h.01" /><path d="M15 12h.01" /><path d="M9 18h.01" /><path d="M15 18h.01" /></svg>;
   if (name === "clipboard") return <svg {...common}><path d="M9 4h6a2 2 0 0 1 2 2v1H7V6a2 2 0 0 1 2-2Z" /><path d="M7 6H5a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-2" /><path d="M8 13h8" /><path d="M8 17h5" /></svg>;
+  if (name === "send") return <svg {...common}><path d="m22 2-7 20-4-9-9-4 20-7z" /><path d="M22 2 11 13" /></svg>;
+  if (name === "lock") return <svg {...common}><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V8a4 4 0 0 1 8 0v3" /></svg>;
+  if (name === "info") return <svg {...common}><circle cx="12" cy="12" r="9" /><path d="M12 10v5" /><path d="M12 7h.01" /></svg>;
+  if (name === "arrowUpDown") return <svg {...common}><path d="m21 16-4 4-4-4" /><path d="M17 20V4" /><path d="m3 8 4-4 4 4" /><path d="M7 4v16" /></svg>;
+  if (name === "users") return <svg {...common}><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M22 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /></svg>;
 
   return <svg {...common}><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /></svg>;
+}
+
+function FormsStatCard({
+  icon,
+  label,
+  value,
+  helper,
+  iconClassName,
+}: {
+  icon: Extract<IconName, "clipboard" | "send" | "lock">;
+  label: string;
+  value: string | number;
+  helper: string;
+  iconClassName: string;
+}) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white px-4 py-4 shadow-sm">
+      <div className="flex items-start gap-3">
+        <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-xl ${iconClassName}`}>
+          <Icon name={icon} className="h-5 w-5" />
+        </div>
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-slate-900">{label}</p>
+          <p className="mt-1 text-3xl font-bold leading-none text-slate-950">{value}</p>
+          <p className="mt-1 text-xs font-medium text-slate-400">{helper}</p>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function fieldTypeLabel(fieldType: CustomField["field_type"]): string {
@@ -132,6 +166,8 @@ export default function RoutingForm({ dark = false }) {
   const [loading, setLoading] = useState(false);
   const [fileUploadSaving, setFileUploadSaving] = useState(false);
   const [alertMessage, setAlertMessage] = useState<string | null>(null);
+  const [draggedCustomFieldId, setDraggedCustomFieldId] = useState<string | null>(null);
+  const [dragOverCustomFieldId, setDragOverCustomFieldId] = useState<string | null>(null);
 
   // Fetch settings on mount
   useEffect(() => {
@@ -354,6 +390,19 @@ export default function RoutingForm({ dark = false }) {
     });
   };
 
+  const reorderCustomFields = (activeId: string, overId: string) => {
+    setIntakeFormSettings((prev) => {
+      const fromIndex = prev.custom_fields.findIndex((field) => field.id === activeId);
+      const toIndex = prev.custom_fields.findIndex((field) => field.id === overId);
+      if (fromIndex < 0 || toIndex < 0 || fromIndex === toIndex) return prev;
+
+      const custom_fields = [...prev.custom_fields];
+      const [moved] = custom_fields.splice(fromIndex, 1);
+      custom_fields.splice(toIndex, 0, moved);
+      return { ...prev, custom_fields };
+    });
+  };
+
   const filteredDefaultFieldMeta = useMemo(() => {
     const keyword = fieldSearch.trim().toLowerCase();
     if (!keyword) return DEFAULT_INTAKE_FIELD_META;
@@ -442,73 +491,73 @@ export default function RoutingForm({ dark = false }) {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 px-4 py-6 text-slate-900 sm:px-6 lg:px-8">
-      <div className="mx-auto max-w-7xl space-y-6">
-        <div className="overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-sm">
-          <div className="relative p-6 sm:p-7">
-            <div className="absolute right-0 top-0 h-36 w-36 rounded-bl-full bg-blue-50" />
-            <div className="relative flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
-              <div>
-                <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-blue-100 bg-blue-50 px-3 py-1 text-xs font-bold text-blue-700">
-                  <Icon name="sparkles" className="h-3.5 w-3.5" />
-                  Booking Flow Setup
-                </div>
-                <h1 className="text-2xl font-black tracking-tight text-slate-950 sm:text-3xl">
-                  Routing & Forms
-                </h1>
-                <p
-                  className={`mt-2 max-w-2xl text-sm leading-6 ${dark ? "text-white/70" : "text-slate-500"}`}
-                >
-                  Configure intake questions, file collection, required fields, and booking form visibility for your workspace.
-                </p>
-              </div>
+    <div className="min-h-screen text-slate-900">
+      <div className="mx-auto space-y-6">
+        <div className="rounded-2xl border border-slate-200 bg-white px-5 py-5 shadow-sm md:px-6">
+          <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <h1 className="text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">
+                Routing &amp; Forms
+              </h1>
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">
+                Configure intake, pre-check in, feedback, and security forms visible to your workspace.
+              </p>
+            </div>
 
-              <div className="relative w-full lg:w-80">
-                <Icon name="search" className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                <input
-                  value={fieldSearch}
-                  onChange={(event) => setFieldSearch(event.target.value)}
-                  placeholder="Search fields..."
-                  className="h-12 w-full rounded-2xl border border-slate-200 bg-slate-50 pl-11 pr-4 text-sm outline-none transition focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100"
-                  type="search"
-                  autoComplete="off"
-                />
-              </div>
+            <div className="relative w-full lg:w-80">
+              <Icon name="search" className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <input
+                value={fieldSearch}
+                onChange={(event) => setFieldSearch(event.target.value)}
+                placeholder="Search fields..."
+                className="h-11 w-full rounded-xl border border-slate-200 bg-slate-50 pl-11 pr-4 text-sm outline-none transition focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100"
+                type="search"
+                autoComplete="off"
+              />
             </div>
           </div>
         </div>
 
-        <div className="grid gap-4 md:grid-cols-3">
-          <div className="rounded-3xl border border-blue-100 bg-blue-50 p-5">
-            <p className="text-sm font-bold text-blue-700">Active Fields</p>
-            <p className="mt-2 text-3xl font-black text-blue-950">{enabledFieldsCount}</p>
-          </div>
-          <div className="rounded-3xl border border-emerald-100 bg-emerald-50 p-5">
-            <p className="text-sm font-bold text-emerald-700">Required Fields</p>
-            <p className="mt-2 text-3xl font-black text-emerald-950">{requiredFieldsCount}</p>
-          </div>
-          <div className="rounded-3xl border border-violet-100 bg-violet-50 p-5">
-            <p className="text-sm font-bold text-violet-700">Custom Fields</p>
-            <p className="mt-2 text-3xl font-black text-violet-950">{intakeFormSettings.custom_fields.length}</p>
-          </div>
+        <div className="grid gap-3 md:grid-cols-3">
+          <FormsStatCard
+            icon="clipboard"
+            iconClassName="bg-blue-600 text-white"
+            label="Active Forms"
+            value={enabledFieldsCount}
+            helper="Currently active"
+          />
+          <FormsStatCard
+            icon="send"
+            iconClassName="bg-emerald-500 text-white"
+            label="Required Fields"
+            value={requiredFieldsCount}
+            helper="Mandatory fields"
+          />
+          <FormsStatCard
+            icon="lock"
+            iconClassName="bg-violet-600 text-white"
+            label="Custom Fields"
+            value={intakeFormSettings.custom_fields.length}
+            helper="Created by you"
+          />
         </div>
 
-        <div className="grid gap-6 lg:grid-cols-[1.15fr_0.85fr]">
-          <form onSubmit={handleIntakeFormSubmit} className="space-y-6">
-            <div className="rounded-[32px] border border-slate-200 bg-white p-6 shadow-sm sm:p-7">
-              <div className="flex items-start gap-4">
-                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-600 text-white shadow-lg shadow-blue-200">
-                  <Icon name="clipboard" className="h-6 w-6" />
+        <form onSubmit={handleIntakeFormSubmit} className="space-y-6">
+          <div className="grid gap-6 lg:grid-cols-[1fr_1fr] lg:items-start">
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:p-6">
+              <div className="flex items-start gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
+                  <Icon name="clipboard" className="h-5 w-5" />
                 </div>
                 <div>
-                  <h2 className="text-xl font-black text-slate-950">Default Intake Fields</h2>
+                  <h2 className="text-lg font-semibold text-slate-900">Default Intake Fields</h2>
                   <p className="mt-1 text-sm leading-6 text-slate-500">
-                    Enable or disable the default fields shown during appointment booking.
+                    Enable or disable standard fields shown during appointment booking.
                   </p>
                 </div>
               </div>
 
-              <div className="mt-7 space-y-3">
+              <div className="mt-5 divide-y divide-slate-200 border-t border-slate-200">
                 {filteredDefaultFieldMeta.map((field) => {
                   const enabled = defaultFieldEnabled(field.key);
                   const isLocked = LOCKED_DEFAULT_INTAKE_FIELDS.has(field.key);
@@ -517,19 +566,19 @@ export default function RoutingForm({ dark = false }) {
                   return (
                     <div
                       key={field.key}
-                      className="flex items-center gap-4 rounded-3xl border border-slate-200 bg-slate-50 p-4"
+                      className="flex items-center gap-3 py-4"
                     >
-                      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-white text-blue-600 shadow-sm">
-                        <Icon name={field.icon} className="h-5 w-5" />
+                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
+                        <Icon name={field.icon} className="h-4 w-4" />
                       </div>
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2">
-                          <h3 className="font-black text-slate-800">{field.label}</h3>
+                          <h3 className="text-sm font-semibold text-slate-900">{field.label}</h3>
                           {isFileUpload && fileUploadSaving ? (
-                            <span className="text-xs font-semibold text-blue-600">Saving…</span>
+                            <span className="text-xs font-medium text-blue-600">Saving…</span>
                           ) : null}
                         </div>
-                        <p className="mt-1 text-sm text-slate-500">{field.description}</p>
+                        <p className="mt-0.5 text-sm text-slate-500">{field.description}</p>
                       </div>
                       <button
                         type="button"
@@ -537,10 +586,10 @@ export default function RoutingForm({ dark = false }) {
                         aria-label={isLocked ? `${field.label} is always enabled` : `Toggle ${field.label}`}
                         aria-pressed={enabled}
                         disabled={toggleDisabled}
-                        className={`relative h-8 w-14 shrink-0 rounded-full transition ${enabled ? "bg-blue-600" : "bg-slate-300"} ${isLocked ? "cursor-not-allowed opacity-20" : ""} ${isFileUpload && fileUploadSaving ? "cursor-wait opacity-60" : ""}`}
+                        className={`relative h-6 w-11 shrink-0 rounded-full transition ${enabled ? "bg-blue-600" : "bg-slate-300"} ${isLocked ? "cursor-not-allowed opacity-20" : ""} ${isFileUpload && fileUploadSaving ? "cursor-wait opacity-60" : ""}`}
                       >
                         <span
-                          className={`absolute top-1 h-6 w-6 rounded-full bg-white shadow transition ${enabled ? "left-7" : "left-1"}`}
+                          className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow transition ${enabled ? "left-6" : "left-1"}`}
                         />
                       </button>
                     </div>
@@ -549,161 +598,208 @@ export default function RoutingForm({ dark = false }) {
               </div>
             </div>
 
-            <div className="rounded-[32px] border border-slate-200 bg-white p-6 shadow-sm sm:p-7">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                <div>
-                  <h2 className="text-xl font-black text-slate-950">Custom Fields</h2>
-                  <p className="mt-1 text-sm leading-6 text-slate-500">
-                    Add extra questions such as patient ID, service notes, source, or preferred consultant.
-                  </p>
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:p-6 lg:sticky lg:top-6 lg:self-start">
+              <div className="flex items-start gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-600">
+                  <Icon name="file" className="h-5 w-5" />
                 </div>
+                <div>
+                  <h3 className="text-lg font-semibold text-slate-900">Live Form Preview</h3>
+                  <p className="mt-0.5 text-sm text-slate-500">Customer&apos;s visible fields</p>
+                </div>
+              </div>
+
+              <div className="mt-5 space-y-2.5">
+                {DEFAULT_INTAKE_FIELD_META.filter((row) => defaultFieldEnabled(row.key)).map((field) => (
+                  <div
+                    key={field.key}
+                    className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3"
+                  >
+                    <Icon name={field.icon} className="h-4 w-4 shrink-0 text-blue-600" />
+                    <span className="text-sm font-medium text-slate-800">{field.label}</span>
+                  </div>
+                ))}
+
+                {intakeFormSettings.custom_fields.map((field) => (
+                  <div
+                    key={field.id}
+                    className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3"
+                  >
+                    <Icon name="file" className="h-4 w-4 shrink-0 text-blue-600" />
+                    <span className="min-w-0 flex-1 text-sm font-medium text-slate-800">{field.label}</span>
+                    <div className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-2">
+                      {field.required && (
+                        <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-semibold text-blue-700">
+                          Required
+                        </span>
+                      )}
+                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600">
+                        {fieldTypeLabel(field.field_type)}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="mt-5 rounded-xl bg-blue-50 px-4 py-4">
+                <div className="flex items-start gap-3">
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-blue-100 text-blue-600">
+                    <Icon name="info" className="h-4 w-4" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold text-blue-900">Preview as a customer</p>
+                    <p className="mt-1 text-sm leading-6 text-blue-700">
+                      This is how the form appears before appointment confirmed and can be used for security checks.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="w-full lg:w-3/4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:p-6">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900">Custom Fields</h2>
+                <p className="mt-1 text-sm leading-6 text-slate-500">
+                  Add custom fields to collect additional information from your customers.
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="submit"
                   disabled={loading}
-                  className="inline-flex h-11 items-center justify-center gap-2 rounded-2xl bg-blue-600 px-4 text-sm font-bold text-white shadow-lg shadow-blue-200 transition hover:bg-blue-700 disabled:opacity-50"
+                  className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-blue-200 bg-white px-4 text-sm font-semibold text-blue-700 transition hover:bg-blue-50 disabled:opacity-50"
                 >
-                  <Icon name="save" className="h-4 w-4" />
-                  {loading ? "Saving..." : "Save Changes"}
+                  <Icon name="arrowUpDown" className="h-4 w-4" />
+                  {loading ? "Saving..." : "Save Order"}
                 </button>
-              </div>
-
-              <div className="mt-6 grid grid-cols-1 gap-3 md:grid-cols-[1fr_minmax(0,200px)_auto]">
-                <input
-                  type="text"
-                  value={newCustomLabel}
-                  onChange={(e) => setNewCustomLabel(e.target.value)}
-                  placeholder="Field name e.g. Patient ID"
-                  className="h-12 rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm outline-none transition focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100"
-                />
-                <select
-                  value={newCustomFieldType}
-                  onChange={(e) => setNewCustomFieldType(e.target.value as CustomField["field_type"])}
-                  className="h-12 min-w-0 rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm outline-none transition focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100"
-                >
-                  {CUSTOM_FIELD_TYPE_OPTIONS.map((opt) => (
-                    <option key={opt.value} value={opt.value}>
-                      {opt.label}
-                    </option>
-                  ))}
-                </select>
                 <button
                   type="button"
                   onClick={addCustomFieldInline}
-                  className="inline-flex h-12 items-center justify-center gap-2 rounded-2xl bg-blue-600 px-5 text-sm font-bold text-white shadow-lg shadow-blue-200 transition hover:bg-blue-700"
+                  className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white transition hover:bg-blue-700"
                 >
                   <Icon name="plus" className="h-4 w-4" />
                   Add Field
                 </button>
               </div>
+            </div>
 
-              <div className="mt-6 space-y-3">
-                {intakeFormSettings.custom_fields.length === 0 ? (
-                  <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-8 text-center">
-                    <p className="text-sm font-semibold italic text-slate-500">No custom fields added yet</p>
-                  </div>
-                ) : (
-                  intakeFormSettings.custom_fields.map((field) => (
-                    <div
-                      key={field.id}
-                      className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4"
+            <div className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-2">
+              <input
+                type="text"
+                value={newCustomLabel}
+                onChange={(e) => setNewCustomLabel(e.target.value)}
+                placeholder="Field Name (e.g. Patient ID)"
+                className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm outline-none transition focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
+              />
+              <select
+                value={newCustomFieldType}
+                onChange={(e) => setNewCustomFieldType(e.target.value as CustomField["field_type"])}
+                className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm outline-none transition focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
+              >
+                {CUSTOM_FIELD_TYPE_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {intakeFormSettings.custom_fields.length === 0 ? (
+              <div className="mt-4 flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-4 py-5 text-sm text-slate-500">
+                <Icon name="users" className="h-4 w-4 shrink-0 text-slate-400" />
+                Drag and drop to reorder fields
+              </div>
+            ) : (
+              <div className="mt-4 space-y-2">
+                {intakeFormSettings.custom_fields.map((field) => (
+                  <div
+                    key={field.id}
+                    onDragOver={(event) => {
+                      event.preventDefault();
+                      event.dataTransfer.dropEffect = "move";
+                      if (draggedCustomFieldId && draggedCustomFieldId !== field.id) {
+                        setDragOverCustomFieldId(field.id);
+                      }
+                    }}
+                    onDragLeave={() => {
+                      setDragOverCustomFieldId((current) => (current === field.id ? null : current));
+                    }}
+                    onDrop={(event) => {
+                      event.preventDefault();
+                      const fromId = event.dataTransfer.getData("text/plain") || draggedCustomFieldId;
+                      if (fromId && fromId !== field.id) {
+                        reorderCustomFields(fromId, field.id);
+                      }
+                      setDraggedCustomFieldId(null);
+                      setDragOverCustomFieldId(null);
+                    }}
+                    className={`flex items-center gap-3 rounded-xl border bg-white px-4 py-3 transition ${
+                      dragOverCustomFieldId === field.id
+                        ? "border-blue-300 ring-2 ring-blue-100"
+                        : "border-slate-200"
+                    } ${draggedCustomFieldId === field.id ? "opacity-50" : ""}`}
+                  >
+                    <button
+                      type="button"
+                      draggable
+                      onDragStart={(event) => {
+                        setDraggedCustomFieldId(field.id);
+                        event.dataTransfer.setData("text/plain", field.id);
+                        event.dataTransfer.effectAllowed = "move";
+                      }}
+                      onDragEnd={() => {
+                        setDraggedCustomFieldId(null);
+                        setDragOverCustomFieldId(null);
+                      }}
+                      className="flex h-9 w-9 shrink-0 cursor-grab items-center justify-center rounded-lg border border-transparent text-slate-400 transition hover:border-slate-200 hover:bg-slate-50 active:cursor-grabbing"
+                      aria-label={`Drag to reorder ${field.label}`}
                     >
-                      <Icon name="grip" className="h-4 w-4 shrink-0 text-slate-400" aria-hidden />
-                      <div className="min-w-0 flex-1">
-                        <h4 className="font-bold text-slate-800">{field.label}</h4>
-                        <p className="text-xs text-slate-500">{fieldTypeLabel(field.field_type)} field</p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => toggleCustomFieldRequired(field.id)}
-                        className={`shrink-0 rounded-full px-3 py-1 text-xs font-bold transition ${field.required ? "bg-blue-100 text-blue-700" : "bg-slate-200 text-slate-600"}`}
-                        aria-label={
-                          field.required ? "Mark optional" : "Mark required"
-                        }
-                      >
-                        {field.required ? "Required" : "Optional"}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleEditCustomField(field)}
-                        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-500 transition hover:text-blue-600"
-                        title="Edit field"
-                        aria-label="Edit custom field"
-                      >
-                        <Icon name="edit" className="h-4 w-4" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveCustomField(field.id)}
-                        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-red-100 bg-red-50 text-red-500 transition hover:bg-red-100"
-                        title="Remove field"
-                        aria-label="Delete custom field"
-                      >
-                        <Icon name="trash" className="h-4 w-4" />
-                      </button>
+                      <Icon name="grip" className="h-4 w-4" aria-hidden />
+                    </button>
+                    <div className="min-w-0 flex-1">
+                      <h4 className="text-sm font-semibold text-slate-900">{field.label}</h4>
+                      <p className="text-xs text-slate-500">{fieldTypeLabel(field.field_type)} field</p>
                     </div>
-                  ))
-                )}
-              </div>
-            </div>
-          </form>
-
-          <div className="rounded-[32px] border border-slate-200 bg-white p-6 shadow-sm sm:p-7 lg:sticky lg:top-6 lg:self-start">
-            <div className="flex items-center gap-3">
-              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100 text-slate-700">
-                <Icon name="file" className="h-5 w-5" />
-              </div>
-              <div>
-                <h3 className="font-black text-slate-950">Live Form Preview</h3>
-                <p className="text-sm text-slate-500">Customer-visible fields</p>
-              </div>
-            </div>
-
-            <div className="mt-6 space-y-3">
-              {DEFAULT_INTAKE_FIELD_META.filter((row) => defaultFieldEnabled(row.key)).map((field) => (
-                <div
-                  key={field.key}
-                  className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4"
-                >
-                  <Icon name={field.icon} className="h-4 w-4 shrink-0 text-blue-600" />
-                  <span className="text-sm font-bold text-slate-700">{field.label}</span>
-                </div>
-              ))}
-
-              {intakeFormSettings.custom_fields.map((field) => (
-                <div
-                  key={field.id}
-                  className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4"
-                >
-                  <Icon name="file" className="h-4 w-4 shrink-0 text-violet-600" />
-                  <span className="text-sm font-bold text-slate-700">{field.label}</span>
-                  <div className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-2">
-                    {field.required && (
-                      <span className="rounded-full bg-blue-100 px-2 py-1 text-xs font-bold text-blue-700">
-                        Required
-                      </span>
-                    )}
-                    <span className="rounded-full bg-slate-200 px-2 py-1 text-xs font-bold text-slate-600">
-                      {fieldTypeLabel(field.field_type)}
-                    </span>
+                    <button
+                      type="button"
+                      onClick={() => toggleCustomFieldRequired(field.id)}
+                      className={`shrink-0 rounded-full px-3 py-1 text-xs font-semibold transition ${field.required ? "bg-blue-100 text-blue-700" : "bg-slate-100 text-slate-600"}`}
+                      aria-label={field.required ? "Mark optional" : "Mark required"}
+                    >
+                      {field.required ? "Required" : "Optional"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleEditCustomField(field)}
+                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 transition hover:text-blue-600"
+                      title="Edit field"
+                      aria-label="Edit custom field"
+                    >
+                      <Icon name="edit" className="h-4 w-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveCustomField(field.id)}
+                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-red-100 bg-red-50 text-red-500 transition hover:bg-red-100"
+                      title="Remove field"
+                      aria-label="Delete custom field"
+                    >
+                      <Icon name="trash" className="h-4 w-4" />
+                    </button>
                   </div>
-                </div>
-              ))}
-            </div>
-
-            <div className="mt-6 rounded-3xl border border-blue-100 bg-blue-50 p-5">
-              <p className="text-sm font-black text-blue-950">Booking form is ready</p>
-              <p className="mt-1 text-sm leading-6 text-blue-700">
-                These fields will appear before appointment confirmation and can be saved to booking details.
-              </p>
-            </div>
+                ))}
+              </div>
+            )}
           </div>
-        </div>
+        </form>
 
         {/* Edit Custom Field Modal */}
         {showCustomFieldForm && editingCustomField && (
         <div className={`fixed inset-0 z-50 flex items-center justify-center px-4 py-6 transition-opacity duration-200 ${showCustomFieldForm ? 'pointer-events-auto opacity-100' : 'pointer-events-none opacity-0'}`}>
           <div className={`absolute inset-0 bg-black/40 transition-opacity duration-300 ${showCustomFieldForm ? 'opacity-100' : 'opacity-0'}`} aria-hidden="true" onClick={handleCustomFieldFormCancel}/>
-          <section className={`relative w-full max-w-3xl transform bg-white rounded-2xl shadow-2xl transition-all duration-300 ${showCustomFieldForm ? 'scale-100 opacity-100' : 'scale-95 opacity-0'}`}>
+          <section className={`relative w-full max-w-4xl transform bg-white rounded-2xl shadow-2xl transition-all duration-300 ${showCustomFieldForm ? 'scale-100 opacity-100' : 'scale-95 opacity-0'}`}>
             <div className={`flex items-center justify-between border-b border-gray-200 px-6 py-4`}>
               <div>
                 <h2 className={`text-lg font-semibold text-gray-800`}>Edit Custom Field</h2>

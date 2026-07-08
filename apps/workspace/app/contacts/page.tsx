@@ -560,8 +560,8 @@ export default function ContactsCreative() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 px-4 py-6 text-slate-900 sm:px-6 lg:px-8">
-      <div className="mx-auto max-w-7xl space-y-6">
+    <div className="min-h-screen text-slate-900">
+      <div className="mx-auto space-y-6">
         <div className="overflow-hidden rounded-3xl border border-indigo-100 bg-white shadow-sm">
           <div className="relative p-6 sm:p-8">
             <div className="absolute right-0 top-0 h-48 w-48 rounded-full bg-indigo-100/70 blur-3xl" />

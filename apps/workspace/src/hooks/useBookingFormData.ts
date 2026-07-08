@@ -15,6 +15,7 @@ import { userActsAsServiceProviderFromMetadata } from '@/lib/service_provider_ro
 import { serviceIdsFromUserServiceAssignments } from '@/src/utils/bookingServiceAssignments';
 import {
   filterBookableDepartments,
+  filterBookableEventTypes,
   filterEventTypesForServiceProvider,
   memberActsInDepartment,
 } from '@/src/utils/bookingFormUtils';
@@ -131,7 +132,9 @@ export function useBookingFormData({
 
   const bookableEventTypes = useMemo(() => {
     if (needsExplicitProvider && !effectiveProviderId) return [];
-    return filterEventTypesForServiceProvider(eventTypes, effectiveProviderId);
+    return filterBookableEventTypes(
+      filterEventTypesForServiceProvider(eventTypes, effectiveProviderId)
+    );
   }, [eventTypes, effectiveProviderId, needsExplicitProvider]);
 
   useEffect(() => {

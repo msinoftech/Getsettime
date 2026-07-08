@@ -2,6 +2,10 @@ import { createSupabaseClient, createSupabaseServerClient } from '@app/db';
 import { notFound, redirect } from 'next/navigation';
 import type { Metadata } from 'next';
 import EmbedBookingForm from '@/src/components/Booking/EmbedBookingForm';
+import {
+  is_valid_short_code,
+  resolve_short_link_by_code,
+} from '@/lib/short_link_service';
 
 interface PageProps {
   params: Promise<{ workspaceSlug: string }>;
@@ -143,6 +147,15 @@ export async function generateMetadata({
   const workspace = await getWorkspaceBySlug(workspaceSlug);
 
   if (!workspace) {
+    if (is_valid_short_code(workspaceSlug)) {
+      const target = await resolve_short_link_by_code(workspaceSlug);
+      if (target) {
+        return {
+          title: 'Book an appointment',
+          description: 'Schedule a booking',
+        };
+      }
+    }
     return {
       title: 'Workspace Not Found',
     };
@@ -170,6 +183,12 @@ export default async function EmbedBookingPage({ params, searchParams }: PagePro
   const query = await searchParams;
 
   if (!workspace) {
+    if (is_valid_short_code(workspaceSlug)) {
+      const target = await resolve_short_link_by_code(workspaceSlug);
+      if (target) {
+        redirect(target);
+      }
+    }
     notFound();
   }
 

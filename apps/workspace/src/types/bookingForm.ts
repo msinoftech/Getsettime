@@ -13,6 +13,7 @@ export interface EventType {
   is_public?: boolean | null;
   /** Single type or comma-separated (e.g. `video,in_person`). */
   location_type?: string | null;
+  status?: 'active' | 'draft' | null;
 }
 
 export type Department = Pick<

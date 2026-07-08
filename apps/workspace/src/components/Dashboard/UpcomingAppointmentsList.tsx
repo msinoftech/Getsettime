@@ -15,6 +15,9 @@ function badge_for_status(status: string | null | undefined): StatusBadge {
   if (raw === "confirmed") {
     return { label: "Confirmed", className: "bg-emerald-50 text-emerald-700" };
   }
+  if (raw === "reschedule") {
+    return { label: "Rescheduled", className: "bg-red-50 text-red-700" };
+  }
   if (raw === "cancelled") {
     return { label: "Cancelled", className: "bg-rose-50 text-rose-700" };
   }
@@ -42,7 +45,7 @@ function format_time(start_at: string | null): { time: string; period: string } 
 /** Active (pending/confirmed/null) and still in the future — matches the "Upcoming" stat. */
 function is_upcoming_booking(booking: Booking): boolean {
   const raw = String(booking.status ?? "").toLowerCase();
-  const active = raw === "" || raw === "pending" || raw === "confirmed";
+  const active = raw === "" || raw === "pending" || raw === "confirmed" || raw === "reschedule";
   const future = booking.start_at
     ? new Date(booking.start_at).getTime() > Date.now()
     : false;

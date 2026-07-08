@@ -551,8 +551,8 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
   }, []);
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-indigo-50/40 p-4 md:p-6">
-      <section className="mx-auto max-w-7xl space-y-5">
+    <div className="min-h-screen">
+      <section className="mx-auto space-y-5">
         {/* Hero header card */}
         <div className="overflow-hidden rounded-[28px] border border-slate-200/70 bg-white/90 shadow-[0_20px_60px_-20px_rgba(15,23,42,0.18)] backdrop-blur">
           <div className="flex flex-col gap-5 border-b border-slate-100 px-5 py-5 md:flex-row md:items-center md:justify-between md:px-7">

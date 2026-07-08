@@ -76,6 +76,7 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
   const isRescheduleMode = Boolean(rescheduleCode);
   const [rescheduleEventTypeId, setRescheduleEventTypeId] = useState<string | null>(null);
   const [rescheduleReady, setRescheduleReady] = useState(false);
+  const [rescheduleNotAllowed, setRescheduleNotAllowed] = useState(false);
   const [previousStartAt, setPreviousStartAt] = useState<string | null>(null);
   const [previousEndAt, setPreviousEndAt] = useState<string | null>(null);
   const [step, setStep] = useState(1);
@@ -539,6 +540,11 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
         const res = await fetch(`/api/booking-preview/${rescheduleCode}`);
         if (!res.ok) return;
         const json = await res.json();
+        if (json.allow_customer_reschedule === false) {
+          setRescheduleNotAllowed(true);
+          setRescheduleReady(true);
+          return;
+        }
         const etId = json.booking?.event_type_id as string | null;
         if (etId) setRescheduleEventTypeId(etId);
         if (json.booking?.start_at) setPreviousStartAt(json.booking.start_at);
@@ -826,6 +832,20 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
       : null;
   const admin_notice = provider_admin_notice ?? workspaceOwnerAdminNotice;
 
+  if (isRescheduleMode && rescheduleNotAllowed) {
+    return (
+      <div className="w-full max-w-2xl mx-auto px-6 py-12">
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-8 text-center shadow-sm">
+          <h2 className="text-lg font-semibold text-slate-900">Reschedule not available</h2>
+          <p className="mt-2 text-sm text-slate-600">
+            Online rescheduling is disabled for this workspace. Please contact the business
+            directly if you need to change your appointment.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="w-full max-w-7xl h-auto mx-auto px-6 sm:px-4 py-4 sm:py-6 lg:py-8">
       <div className="rounded-xl drop-shadow-xl overflow-hidden bg-gray-100 relative backdrop-blur-xl">
@@ -848,6 +868,7 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
         <div className="flex flex-col lg:grid lg:grid-cols-2 relative z-10">
           <BookingPreviewSidebar
             workspaceName={workspace.name}
+            workspaceTagline={generalSettings?.tagline}
             workspaceLogoUrl={workspace.logo_url ?? null}
             workspacePrimaryColor={workspacePrimaryColor}
             workspaceAccentColor={workspaceAccentColor}

@@ -31,6 +31,7 @@ import {
 
 interface BookingPreviewSidebarProps {
   workspaceName: string;
+  workspaceTagline?: string | null;
   workspaceLogoUrl: string | null;
   workspacePrimaryColor: string;
   workspaceAccentColor: string | null;
@@ -63,6 +64,7 @@ interface BookingPreviewSidebarProps {
 
 export function BookingPreviewSidebar({
   workspaceName,
+  workspaceTagline,
   workspaceLogoUrl,
   workspacePrimaryColor,
   workspaceAccentColor,
@@ -101,6 +103,7 @@ export function BookingPreviewSidebar({
   const accent = workspaceAccentColor || workspacePrimaryColor || DEFAULT_ACCENT_COLOR;
   const resolvedLogoSrc = resolve_workspace_logo_src(workspaceLogoUrl);
   const logoTreatAsRemote = workspace_logo_is_remote(resolvedLogoSrc);
+  const displayTagline = workspaceTagline?.trim() || '';
   const hasSelection = selectedDepartment || selectedProvider || selectedType;
   const showIntakeInPreview = step === 4 || step === 5;
   const customFieldRows =
@@ -161,6 +164,9 @@ export function BookingPreviewSidebar({
               <div className="min-w-0">
                 <div className="text-sm text-gray-600">Schedule with</div>
                 <div className="text-lg font-semibold capitalize">{workspaceName}</div>
+                {displayTagline ? (
+                  <p className="mt-0.5 text-sm text-gray-500 line-clamp-2">{displayTagline}</p>
+                ) : null}
               </div>
             </div>
           </div>

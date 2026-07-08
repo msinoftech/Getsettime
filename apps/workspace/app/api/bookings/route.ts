@@ -627,12 +627,24 @@ export async function POST(req: NextRequest) {
     if (event_type_id) {
       const { data: etloc } = await supabase
         .from('event_types')
-        .select('location_type')
+        .select('location_type, status')
         .eq('id', event_type_id)
         .eq('workspace_id', workspaceId)
         .maybeSingle();
+
+      if (!etloc) {
+        return NextResponse.json({ error: 'Event type not found' }, { status: 404 });
+      }
+
+      if (etloc.status === 'draft') {
+        return NextResponse.json(
+          { error: 'Event type is not available for booking' },
+          { status: 400 }
+        );
+      }
+
       eventTypeLocationTypeForBooking =
-        typeof etloc?.location_type === 'string' ? etloc.location_type : null;
+        typeof etloc.location_type === 'string' ? etloc.location_type : null;
     }
     const bookableMeetingKeys = list_bookable_meeting_option_keys(
       eventTypeLocationTypeForBooking,

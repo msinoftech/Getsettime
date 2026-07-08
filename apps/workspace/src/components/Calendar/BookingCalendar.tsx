@@ -227,8 +227,8 @@ export default function BookingCalendar() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-slate-50 p-4 md:p-6">
-      <div className="mx-auto max-w-7xl space-y-6">
+    <div className="min-h-screen">
+      <div className="mx-auto space-y-6">
         <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
           <CalendarManagementHeader
             onToday={goToToday}

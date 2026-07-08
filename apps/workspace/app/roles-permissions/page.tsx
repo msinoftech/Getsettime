@@ -188,8 +188,8 @@ export default function RolesPermissionsPage() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-slate-50 p-4 sm:p-6 lg:p-8">
-      <div className="mx-auto max-w-[1200px]">
+    <div className="min-h-screen">
+      <div className="mx-auto">
         <header className="mb-6 space-y-3">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
             <h1 className="text-2xl font-semibold text-slate-900">Roles &amp; permissions</h1>

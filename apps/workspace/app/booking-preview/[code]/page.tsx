@@ -178,6 +178,8 @@ interface ApiResponse {
   workspace_name: string | null;
   workspace_logo_url: string | null;
   workspace_contact?: workspace_contact_preview | null;
+  allow_customer_reschedule?: boolean;
+  allow_customer_cancellation?: boolean;
 }
 
 function resolvePhysicalAddress(
@@ -292,8 +294,12 @@ export default function BookingPreviewPage() {
     router.push(`/${data.workspace_slug}?reschedule=${code}`);
   };
 
-  const showActions =
+  const bookingIsActionable =
     data?.booking && !HIDDEN_ACTION_STATUSES.includes(data.booking.status?.toLowerCase() ?? '');
+  const showCancel =
+    !!bookingIsActionable && data?.allow_customer_cancellation !== false;
+  const showReschedule =
+    !!bookingIsActionable && data?.allow_customer_reschedule !== false;
 
   if (loading) {
     return (
@@ -354,7 +360,8 @@ export default function BookingPreviewPage() {
         services={services}
         intakeFormSettings={intakeForm}
         intakeFormRaw={intakeFormSettings}
-        showActions={!!showActions}
+        showCancel={showCancel}
+        showReschedule={showReschedule}
         onCancel={() => setShowCancelDialog(true)}
         onReschedule={handleReschedule}
       />
@@ -405,7 +412,8 @@ function BookingPreviewContent({
   services,
   intakeFormSettings,
   intakeFormRaw,
-  showActions,
+  showCancel,
+  showReschedule,
   onCancel,
   onReschedule,
 }: {
@@ -422,7 +430,8 @@ function BookingPreviewContent({
   services: Service[];
   intakeFormSettings: NormalizedIntakeForm | null;
   intakeFormRaw: Record<string, unknown> | null;
-  showActions: boolean;
+  showCancel: boolean;
+  showReschedule: boolean;
   onCancel: () => void;
   onReschedule: () => void;
 }) {
@@ -1125,10 +1134,14 @@ ${booking_preview_supplement_css()}
                       Join / Open Meeting Link
                     </a>
                   )}
-                  {showActions && (
+                  {(showReschedule || showCancel) && (
                     <>
-                      <ActionButton label="Reschedule" tone="warning" onClick={onReschedule} />
-                      <ActionButton label="Cancel" tone="danger" onClick={onCancel} />
+                      {showReschedule && (
+                        <ActionButton label="Reschedule" tone="warning" onClick={onReschedule} />
+                      )}
+                      {showCancel && (
+                        <ActionButton label="Cancel" tone="danger" onClick={onCancel} />
+                      )}
                     </>
                   )}
                 </div>

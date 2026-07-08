@@ -3,6 +3,7 @@ export type EventType = {
   title: string;
   duration_minutes?: number | null;
   owner_id?: string | null;
+  status?: 'active' | 'draft' | null;
 };
 
 export type Department = {

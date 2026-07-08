@@ -777,6 +777,7 @@ const MultiStepBookingForm = ({
         <div className="flex flex-col lg:grid lg:grid-cols-2 relative z-10">
           <BookingPreviewSidebar
             workspaceName={workspaceName}
+            workspaceTagline={general?.tagline}
             workspaceLogoUrl={workspaceLogoUrl}
             workspacePrimaryColor={workspacePrimaryColor}
             workspaceAccentColor={workspaceAccentColor}

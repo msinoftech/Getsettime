@@ -164,7 +164,7 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
                   className="h-8 w-auto object-contain"
                 />
                 {accountName && accountName !== "GetSetTime" && (
-                  <span className="text-xs sm:text-sm font-semibold text-gray-700 truncate max-w-[180px] pl-2">
+                  <span className="text-xs sm:text-sm font-semibold text-gray-700 truncate max-w-[180px]">
                     {accountName}
                   </span>
                 )}

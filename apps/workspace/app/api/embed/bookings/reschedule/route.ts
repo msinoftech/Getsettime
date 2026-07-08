@@ -23,6 +23,7 @@ import {
   resolveEffectiveDurationForBookingRequest,
   validateBookingEndAt,
 } from '@/lib/booking-effective-duration';
+import { load_customer_booking_rules_for_workspace } from '@/lib/customer-booking-rules';
 
 type DayName = 'Sun' | 'Mon' | 'Tue' | 'Wed' | 'Thu' | 'Fri' | 'Sat';
 
@@ -81,6 +82,17 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         { error: `Cannot reschedule a ${booking.status} booking` },
         { status: 400 }
+      );
+    }
+
+    const customer_rules = await load_customer_booking_rules_for_workspace(
+      supabase,
+      booking.workspace_id
+    );
+    if (!customer_rules.allow_customer_reschedule) {
+      return NextResponse.json(
+        { error: 'Customer reschedule is not allowed for this workspace.' },
+        { status: 403 }
       );
     }
 

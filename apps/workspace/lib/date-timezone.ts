@@ -84,6 +84,18 @@ export function getCalendarDateInTimezone(isoOrDate: string | Date, timezone: st
   return getLocalTimePartsInTimezone(iso, timezone).dateStr;
 }
 
+/** Display label for IANA timezone, e.g. "Asia/Kolkata (GMT+5:30)". */
+export function format_timezone_display_label(timezone?: string | null): string {
+  const tz = timezone?.trim();
+  if (!tz) return 'Not set';
+  try {
+    const abbr = getTimezoneAbbreviation(tz);
+    return abbr ? `${tz} (${abbr})` : tz;
+  } catch {
+    return tz;
+  }
+}
+
 /** Short timezone label (e.g. IST, EST). */
 export function getTimezoneAbbreviation(timezone: string, date?: Date): string {
   const d = date ?? new Date();

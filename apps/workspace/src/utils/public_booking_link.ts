@@ -182,6 +182,38 @@ export async function download_public_booking_qr(booking_url: string): Promise<b
   }
 }
 
+export async function fetch_or_create_short_public_url(
+  original_url: string
+): Promise<string | null> {
+  const trimmed = original_url.trim();
+  if (!trimmed) return null;
+
+  try {
+    const { supabase } = await import('@/lib/supabaseClient');
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    const token = session?.access_token;
+    if (!token) return null;
+
+    const response = await fetch('/api/short-links', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ original_url: trimmed }),
+    });
+
+    if (!response.ok) return null;
+
+    const payload = (await response.json()) as { short_url?: string };
+    return typeof payload.short_url === 'string' ? payload.short_url : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function copy_text_to_clipboard(text: string): Promise<boolean> {
   if (typeof window === 'undefined') return false;
   try {

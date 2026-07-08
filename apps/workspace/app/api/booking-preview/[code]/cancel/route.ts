@@ -12,6 +12,7 @@ import {
   is_whatsapp_admin_enabled,
   type workspace_notifications_settings,
 } from '@/lib/workspace-notification-flags';
+import { load_customer_booking_rules_for_workspace } from '@/lib/customer-booking-rules';
 
 const NON_CANCELLABLE_STATUSES = ['cancelled', 'completed'];
 
@@ -42,6 +43,17 @@ export async function POST(
       return NextResponse.json(
         { error: `Booking is already ${booking.status}` },
         { status: 400 }
+      );
+    }
+
+    const customer_rules = await load_customer_booking_rules_for_workspace(
+      supabase,
+      booking.workspace_id
+    );
+    if (!customer_rules.allow_customer_cancellation) {
+      return NextResponse.json(
+        { error: 'Customer cancellation is not allowed for this workspace.' },
+        { status: 403 }
       );
     }
 
