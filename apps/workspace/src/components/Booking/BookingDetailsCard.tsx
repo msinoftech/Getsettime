@@ -695,8 +695,10 @@ export function BookingDetailsCard({
     : '';
 
   const booking_status_label = booking.status || 'Pending';
-  const is_booking_cancelled =
-    (booking.status || '').trim().toLowerCase() === 'cancelled';
+  const booking_status_normalized = (booking.status || '').trim().toLowerCase();
+  const is_booking_cancelled = booking_status_normalized === 'cancelled';
+  const hide_booking_change_actions =
+    is_booking_cancelled || booking_status_normalized === 'completed';
 
   const handle_save_admin_notice = async () => {
     if (!onSaveAdminNotice) return;
@@ -1270,13 +1272,15 @@ export function BookingDetailsCard({
               <h2 className="text-sm font-bold uppercase tracking-[0.18em] text-slate-500">
                 Date &amp; Time
               </h2>
-              <button
-                type="button"
-                onClick={onReschedule}
-                className="text-sm font-medium text-indigo-600 hover:text-indigo-700 print:hidden"
-              >
-                Reschedule
-              </button>
+              {!hide_booking_change_actions && (
+                <button
+                  type="button"
+                  onClick={onReschedule}
+                  className="text-sm font-medium text-indigo-600 hover:text-indigo-700 print:hidden"
+                >
+                  Reschedule
+                </button>
+              )}
             </div>
 
             {previous_appointment_times && (
@@ -1491,32 +1495,34 @@ export function BookingDetailsCard({
                     />
                   )}
               </button>
-              <button
-                type="button"
-                onClick={onCancelBooking}
-                disabled={quickActionFeedback?.phase === 'loading'}
-                aria-busy={
-                  quickActionFeedback?.action === 'cancelled' &&
-                  quickActionFeedback.phase === 'loading'
-                }
-                className="flex min-h-[48px] items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-left text-sm font-medium text-red-700 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                <span>Cancel Booking</span>
-                {quickActionFeedback?.action === 'cancelled' &&
-                  quickActionFeedback.phase === 'loading' && (
-                    <LoaderIcon
-                      aria-hidden
-                      className="h-5 w-5 shrink-0 animate-spin text-red-600"
-                    />
-                  )}
-                {quickActionFeedback?.action === 'cancelled' &&
-                  quickActionFeedback.phase === 'success' && (
-                    <CircleCheck
-                      aria-hidden
-                      className="h-5 w-5 shrink-0 text-emerald-600"
-                    />
-                  )}
-              </button>
+              {!hide_booking_change_actions && (
+                <button
+                  type="button"
+                  onClick={onCancelBooking}
+                  disabled={quickActionFeedback?.phase === 'loading'}
+                  aria-busy={
+                    quickActionFeedback?.action === 'cancelled' &&
+                    quickActionFeedback.phase === 'loading'
+                  }
+                  className="flex min-h-[48px] items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-left text-sm font-medium text-red-700 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <span>Cancel Booking</span>
+                  {quickActionFeedback?.action === 'cancelled' &&
+                    quickActionFeedback.phase === 'loading' && (
+                      <LoaderIcon
+                        aria-hidden
+                        className="h-5 w-5 shrink-0 animate-spin text-red-600"
+                      />
+                    )}
+                  {quickActionFeedback?.action === 'cancelled' &&
+                    quickActionFeedback.phase === 'success' && (
+                      <CircleCheck
+                        aria-hidden
+                        className="h-5 w-5 shrink-0 text-emerald-600"
+                      />
+                    )}
+                </button>
+              )}
               <button
                 type="button"
                 onClick={onDeleteBooking}

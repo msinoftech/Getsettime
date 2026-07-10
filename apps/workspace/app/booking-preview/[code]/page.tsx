@@ -31,6 +31,26 @@ type BookingPreviewData = Omit<Booking, 'id' | 'workspace_id' | 'host_user_id'>;
 
 const HIDDEN_ACTION_STATUSES = ['cancelled', 'completed'];
 
+function normalize_booking_status(status: string | null | undefined): string {
+  return (status ?? '').trim().toLowerCase();
+}
+
+function is_booking_actionable_status(status: string | null | undefined): boolean {
+  const normalized = normalize_booking_status(status);
+  return normalized !== '' && !HIDDEN_ACTION_STATUSES.includes(normalized);
+}
+
+function is_booking_time_passed(
+  end_at: string | null | undefined,
+  start_at: string | null | undefined,
+): boolean {
+  const end_point = end_at ?? start_at;
+  if (!end_point) return false;
+  const end_ms = new Date(end_point).getTime();
+  if (Number.isNaN(end_ms)) return false;
+  return Date.now() > end_ms;
+}
+
 /** URL-encoded `{{1}}` sometimes pasted into booking links by mistake. */
 const BOOKING_CODE_PLACEHOLDER = '%7B%7B1%7D%7D';
 
@@ -295,11 +315,11 @@ export default function BookingPreviewPage() {
   };
 
   const bookingIsActionable =
-    data?.booking && !HIDDEN_ACTION_STATUSES.includes(data.booking.status?.toLowerCase() ?? '');
+    !!data?.booking && is_booking_actionable_status(data.booking.status);
   const showCancel =
-    !!bookingIsActionable && data?.allow_customer_cancellation !== false;
+    bookingIsActionable && data?.allow_customer_cancellation !== false;
   const showReschedule =
-    !!bookingIsActionable && data?.allow_customer_reschedule !== false;
+    bookingIsActionable && data?.allow_customer_reschedule !== false;
 
   if (loading) {
     return (
@@ -547,7 +567,14 @@ function BookingPreviewContent({
   );
 
   const statusLabel = formatStatusLabel(booking.status);
-  const statusLower = (booking.status || '').toLowerCase();
+  const statusLower = normalize_booking_status(booking.status);
+  const canShowBookingActions = is_booking_actionable_status(booking.status);
+  const bookingTimePassed = is_booking_time_passed(
+    booking.end_at,
+    booking.start_at,
+  );
+  const canShowNeedHelpBookingOptions =
+    canShowBookingActions && !bookingTimePassed;
   const joinUrl =
     resolve_meeting_join_url_from_booking(booking.location, booking.metadata) ?? null;
   const meetingOptionKey = parse_booking_location_meeting_option(booking.location);
@@ -1117,24 +1144,28 @@ ${booking_preview_supplement_css()}
                     disabled={!canDirections}
                     onClick={handleGetDirections}
                   />
-                  {showMeetConnectHint && (
-                    <p className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-center text-sm text-amber-900">
-                      You chose <strong>Google Meet</strong>. A join link will appear here once your host has
-                      connected Google Calendar. If you need the link sooner, call or email the workspace
-                      using the details above.
-                    </p>
+                  {canShowNeedHelpBookingOptions && (
+                    <>
+                      {showMeetConnectHint && (
+                        <p className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-center text-sm text-amber-900">
+                          You chose <strong>Google Meet</strong>. A join link will appear here once your host has
+                          connected Google Calendar. If you need the link sooner, call or email the workspace
+                          using the details above.
+                        </p>
+                      )}
+                      {joinUrl && (
+                        <a
+                          href={joinUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="rounded-xl border border-slate-900 bg-slate-900 px-4 py-3 text-center text-sm font-semibold text-white transition hover:bg-slate-800"
+                        >
+                          Join / Open Meeting Link
+                        </a>
+                      )}
+                    </>
                   )}
-                  {joinUrl && (
-                    <a
-                      href={joinUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="rounded-xl border border-slate-900 bg-slate-900 px-4 py-3 text-center text-sm font-semibold text-white transition hover:bg-slate-800"
-                    >
-                      Join / Open Meeting Link
-                    </a>
-                  )}
-                  {(showReschedule || showCancel) && (
+                  {canShowNeedHelpBookingOptions && (showReschedule || showCancel) && (
                     <>
                       {showReschedule && (
                         <ActionButton label="Reschedule" tone="warning" onClick={onReschedule} />

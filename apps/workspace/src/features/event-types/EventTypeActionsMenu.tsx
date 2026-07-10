@@ -45,6 +45,11 @@ export function EventTypeActionsMenu({
     if (!trigger) return;
 
     const rect = trigger.getBoundingClientRect();
+    if (rect.width === 0 && rect.height === 0) {
+      set_menu_position(null);
+      return;
+    }
+
     const space_below = window.innerHeight - rect.bottom;
     const space_above = rect.top;
     const open_below =

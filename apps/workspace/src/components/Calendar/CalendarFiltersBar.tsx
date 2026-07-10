@@ -1,23 +1,39 @@
 "use client";
 
-import Link from "next/link";
 import {
-  LuClipboardList as ClipboardList,
-  LuEye as Eye,
-  LuChevronLeft as ChevronLeft,
-  LuChevronRight as ChevronRight,
-  LuSearch as Search,
-  LuFilter as Filter,
-  LuDownload as Download,
+  LuBuilding2 as Building2,
+  LuChevronDown as ChevronDown,
+  LuMapPin as MapPin,
+  LuRefreshCw as RefreshCw,
+  LuShieldCheck as ShieldCheck,
+  LuUserRound as UserRound,
+  LuUserRoundPen as UserRoundPen,
+  LuWrench as Wrench,
 } from "react-icons/lu";
 
-export type CalendarStatusFilterOption = "all" | "confirmed" | "pending" | "cancelled";
+export type CalendarStatusFilterOption =
+  | "all"
+  | "confirmed"
+  | "pending"
+  | "cancelled"
+  | "completed"
+  | "reschedule"
+  | "no_show";
 
 type CalendarFiltersBarProps = {
   search: string;
   onSearchChange: (value: string) => void;
   statusFilter: CalendarStatusFilterOption;
   onStatusFilterChange: (value: CalendarStatusFilterOption) => void;
+  departmentFilter: string;
+  onDepartmentFilterChange: (value: string) => void;
+  serviceFilter: string;
+  onServiceFilterChange: (value: string) => void;
+  providerFilter: string;
+  onProviderFilterChange: (value: string) => void;
+  departmentOptions: Array<{ value: string; label: string }>;
+  serviceOptions: Array<{ value: string; label: string }>;
+  providerOptions: Array<{ value: string; label: string }>;
   monthLabel: string;
   onPreviousMonth: () => void;
   onNextMonth: () => void;
@@ -28,99 +44,118 @@ export function CalendarFiltersBar({
   onSearchChange,
   statusFilter,
   onStatusFilterChange,
-  monthLabel,
-  onPreviousMonth,
-  onNextMonth,
+  departmentFilter,
+  onDepartmentFilterChange,
+  serviceFilter,
+  onServiceFilterChange,
+  providerFilter,
+  onProviderFilterChange,
+  departmentOptions,
+  serviceOptions,
+  providerOptions,
+  monthLabel: _monthLabel,
+  onPreviousMonth: _onPreviousMonth,
+  onNextMonth: _onNextMonth,
 }: CalendarFiltersBarProps) {
   return (
-    <div className="rounded-[24px] border border-slate-200 bg-slate-50 p-4 md:p-5">
-      <div className="flex flex-col gap-4">
-        <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
-          <div className="flex flex-1 flex-col gap-3 md:flex-row">
-            <div className="relative flex-1">
-              <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-              <input
-                value={search}
-                onChange={(e) => onSearchChange(e.target.value)}
-                placeholder="Search customer, event type, or created by"
-                className="h-12 w-full rounded-2xl border border-slate-200 bg-white pl-11 pr-4 text-sm text-slate-700 outline-none placeholder:text-slate-400 focus:border-indigo-300"
-                type="search"
-              />
-            </div>
-
-            <div className="relative min-w-[180px]">
-              <Filter className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-              <select
-                value={statusFilter}
-                onChange={(e) =>
-                  onStatusFilterChange(
-                    e.target.value as CalendarStatusFilterOption,
-                  )
-                }
-                className="h-12 w-full appearance-none rounded-2xl border border-slate-200 bg-white pl-11 pr-4 text-sm text-slate-700 outline-none focus:border-indigo-300"
-              >
-                <option value="all">All statuses</option>
-                <option value="confirmed">Confirmed</option>
-                <option value="pending">Pending</option>
-                <option value="cancelled">Cancelled</option>
-              </select>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={onPreviousMonth}
-              className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-700 transition hover:bg-slate-100"
-              aria-label="Previous month"
-            >
-              <ChevronLeft className="h-5 w-5" aria-hidden />
-            </button>
-
-            <div className="min-w-[190px] rounded-2xl border border-slate-200 bg-white px-5 py-3 text-center text-base font-semibold text-slate-900">
-              {monthLabel}
-            </div>
-
-            <button
-              type="button"
-              onClick={onNextMonth}
-              className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-700 transition hover:bg-slate-100"
-              aria-label="Next month"
-            >
-              <ChevronRight className="h-5 w-5" aria-hidden />
-            </button>
-          </div>
+    <div className="rounded-xl border border-slate-200 bg-white p-2.5">
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="relative min-w-[160px] flex-1">
+          <Building2 className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+          <select
+            value={departmentFilter}
+            onChange={(e) => onDepartmentFilterChange(e.target.value)}
+            className="h-9 w-full appearance-none rounded-md border border-slate-200 bg-white pl-9 pr-8 text-xs font-semibold text-slate-700 outline-none"
+          >
+            <option value="all">All Departments</option>
+            {departmentOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+          <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
         </div>
 
-        <div className="flex flex-wrap gap-3">
-          <Link
-            href="/bookings"
-            className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+        <div className="relative min-w-[150px] flex-1">
+        <UserRoundPen className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+          <select
+            value={serviceFilter}
+            onChange={(e) => onServiceFilterChange(e.target.value)}
+            className="h-9 w-full appearance-none rounded-md border border-slate-200 bg-white pl-9 pr-8 text-xs font-semibold text-slate-700 outline-none"
           >
-            <ClipboardList className="h-4 w-4" aria-hidden />
-            All Bookings
-          </Link>
-
-          <button
-            type="button"
-            disabled
-            title="Coming soon"
-            className="inline-flex cursor-not-allowed items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-400 opacity-70"
-          >
-            <Eye className="h-4 w-4" aria-hidden />
-            Reports
-          </button>
-
-          <button
-            type="button"
-            disabled
-            title="Coming soon"
-            className="inline-flex cursor-not-allowed items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-400 opacity-70"
-          >
-            <Download className="h-4 w-4" aria-hidden />
-            Export
-          </button>
+            <option value="all">All Services</option>
+            {serviceOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+          <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
         </div>
+
+        <div className="relative min-w-[150px] flex-1">
+          <UserRound className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+          <select
+            value={providerFilter}
+            onChange={(e) => onProviderFilterChange(e.target.value)}
+            className="h-9 w-full appearance-none rounded-md border border-slate-200 bg-white pl-9 pr-8 text-xs font-semibold text-slate-700 outline-none"
+          >
+            <option value="all">All Providers</option>
+            {providerOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+          <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+        </div>
+
+        <div className="relative min-w-[150px] flex-1">
+          <ShieldCheck className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+          <select
+            value={statusFilter}
+            onChange={(e) =>
+              onStatusFilterChange(e.target.value as CalendarStatusFilterOption)
+            }
+            className="h-9 w-full appearance-none rounded-md border border-slate-200 bg-white pl-9 pr-8 text-xs font-semibold text-slate-700 outline-none"
+          >
+            <option value="all">All Statuses</option>
+            <option value="confirmed">Confirmed</option>
+            <option value="completed">Completed</option>
+            <option value="pending">Pending</option>
+            <option value="cancelled">Cancelled</option>
+            <option value="reschedule">Reschedule</option>
+            <option value="no_show">No Show</option>
+          </select>
+          <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+        </div>
+
+        <div className="relative min-w-[150px] flex-1">
+          <MapPin className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+          <select
+            className="h-9 w-full appearance-none rounded-md border border-slate-200 bg-white pl-9 pr-8 text-xs font-semibold text-slate-700 outline-none"
+            defaultValue="all-locations"
+          >
+            <option value="all-locations">All Locations</option>
+          </select>
+          <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+        </div>
+
+        <button
+          type="button"
+          onClick={() => {
+            onSearchChange("");
+            onStatusFilterChange("all");
+            onDepartmentFilterChange("all");
+            onServiceFilterChange("all");
+            onProviderFilterChange("all");
+          }}
+          className="inline-flex h-9 items-center gap-1.5 rounded-md px-2.5 text-xs font-semibold text-slate-500 hover:text-slate-700"
+        >
+          <RefreshCw className="h-3.5 w-3.5" aria-hidden />
+          Clear all
+        </button>
       </div>
     </div>
   );

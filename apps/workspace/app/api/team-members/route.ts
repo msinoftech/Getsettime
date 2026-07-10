@@ -236,6 +236,12 @@ export async function GET(req: NextRequest) {
           additional_roles,
           departments: deptIds,
           phone,
+          avatar_url:
+            typeof meta?.avatar_url === 'string' && meta.avatar_url.trim() !== ''
+              ? meta.avatar_url.trim()
+              : typeof meta?.picture === 'string' && meta.picture.trim() !== ''
+                ? meta.picture.trim()
+                : null,
           created_at: u.created_at,
           email_confirmed_at: u.email_confirmed_at,
           deactivated: u.user_metadata?.deactivated || false,
