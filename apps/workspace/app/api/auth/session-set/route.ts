@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { revokeOtherSessions } from '@/lib/auth-service';
 
 export async function POST(req: Request) {
   try {
@@ -10,7 +11,8 @@ export async function POST(req: Request) {
     // Get Supabase URL and anon key for token verification
     const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || '';
     const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
-    
+    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+
     if (!supabaseUrl || !supabaseAnonKey) {
       return NextResponse.json({ error: 'server configuration error' }, { status: 500 });
     }
@@ -29,6 +31,24 @@ export async function POST(req: Request) {
     if (userError || !user) {
       console.error('Token verification error:', userError);
       return NextResponse.json({ error: 'invalid token' }, { status: 401 });
+    }
+
+    if (supabaseServiceKey) {
+      const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {
+        auth: {
+          autoRefreshToken: false,
+          persistSession: false,
+        },
+      });
+      const { error: revokeError } = await revokeOtherSessions({
+        accessToken: token,
+        supabaseAdmin,
+      });
+      if (revokeError) {
+        console.warn('session-set: revoke other sessions failed (non-fatal):', revokeError);
+      }
+    } else {
+      console.warn('session-set: SUPABASE_SERVICE_ROLE_KEY missing; skipped revoke other sessions');
     }
 
     const meta = user.user_metadata || {};
@@ -58,4 +78,3 @@ export async function POST(req: Request) {
     }, { status: 500 });
   }
 }
-

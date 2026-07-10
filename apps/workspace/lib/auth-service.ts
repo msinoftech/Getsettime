@@ -1,5 +1,5 @@
 import { SupabaseClient } from '@supabase/supabase-js';
-import { randomBytes, randomUUID } from 'crypto';
+import { randomUUID } from 'crypto';
 
 export interface CreateSessionParams {
   email: string;
@@ -13,45 +13,73 @@ export interface SessionResult {
   refreshToken: string;
 }
 
+export interface RevokeOtherSessionsParams {
+  accessToken: string;
+  supabaseAdmin: SupabaseClient;
+}
+
 /**
- * Create a session for a user using temporary password flow.
- * Updating the password via admin API typically invalidates other refresh sessions for that user,
- * so older browsers lose valid tokens after a new Google/password session is issued here.
+ * Keep the current session and revoke all other sessions for the same user.
+ * Uses admin signOut scope "others" — never "global".
+ */
+export async function revokeOtherSessions(
+  params: RevokeOtherSessionsParams
+): Promise<{ error: string | null }> {
+  const { accessToken, supabaseAdmin } = params;
+
+  try {
+    const { error } = await supabaseAdmin.auth.admin.signOut(accessToken, 'others');
+    if (error) {
+      console.warn('Failed to revoke other sessions:', error);
+      return { error: error.message || 'Failed to revoke other sessions' };
+    }
+    return { error: null };
+  } catch (err) {
+    console.warn('revokeOtherSessions error:', err);
+    return {
+      error: err instanceof Error ? err.message : 'Unknown error',
+    };
+  }
+}
+
+/**
+ * Create a Supabase session without changing the user's password.
+ * Uses admin-generated magic link + verifyOtp, then revokes other sessions.
  */
 export async function createUserSession(
   params: CreateSessionParams
 ): Promise<{ data: SessionResult | null; error: string | null }> {
-  const { email, userId, supabaseAdmin, supabaseClient } = params;
+  const { email, supabaseAdmin, supabaseClient } = params;
 
   try {
-    // Generate temporary password
-    const tempPassword = `temp_${Date.now()}_${randomBytes(16).toString('hex')}`;
-
-    // Update user with temporary password
-    const { error: updateError } = await supabaseAdmin.auth.admin.updateUserById(userId, {
-      password: tempPassword,
-    });
-
-    if (updateError) {
-      console.error('Failed to set temporary password:', updateError);
-      return { data: null, error: 'Failed to create session' };
-    }
-
-    // Sign in with temporary password
-    const { data: signInData, error: signInError } = await supabaseClient.auth.signInWithPassword({
+    const { data: linkData, error: linkError } = await supabaseAdmin.auth.admin.generateLink({
+      type: 'magiclink',
       email,
-      password: tempPassword,
     });
 
-    if (signInError || !signInData.session) {
-      console.error('Sign in error:', signInError);
+    const tokenHash = linkData?.properties?.hashed_token;
+    if (linkError || !tokenHash) {
+      console.error('Failed to generate magic link for session:', linkError);
       return { data: null, error: 'Failed to create session' };
     }
+
+    const { data: otpData, error: otpError } = await supabaseClient.auth.verifyOtp({
+      token_hash: tokenHash,
+      type: 'email',
+    });
+
+    if (otpError || !otpData.session) {
+      console.error('verifyOtp error:', otpError);
+      return { data: null, error: 'Failed to create session' };
+    }
+
+    const accessToken = otpData.session.access_token;
+    await revokeOtherSessions({ accessToken, supabaseAdmin });
 
     return {
       data: {
-        accessToken: signInData.session.access_token,
-        refreshToken: signInData.session.refresh_token ?? '',
+        accessToken,
+        refreshToken: otpData.session.refresh_token ?? '',
       },
       error: null,
     };
