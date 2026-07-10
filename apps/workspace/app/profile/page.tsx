@@ -53,8 +53,6 @@ export default function ProfileCreative({ }) {
   });
   const [selectedDepartmentIds, setSelectedDepartmentIds] = useState<string[]>([]);
   const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>([]);
-  const [needsDepartmentFallback, setNeedsDepartmentFallback] = useState(false);
-  const [needsServiceFallback, setNeedsServiceFallback] = useState(false);
   const [syncingAssignments, setSyncingAssignments] = useState(false);
 
   const getAuthToken = useCallback(async () => {
@@ -68,17 +66,6 @@ export default function ProfileCreative({ }) {
     ids
       .map((id) => parseInt(id, 10))
       .filter((n) => Number.isFinite(n) && n > 0);
-
-  const normalize_ids = (value: unknown): string[] => {
-    if (!Array.isArray(value)) return [];
-    return Array.from(
-      new Set(
-        value
-          .map((item) => (typeof item === "string" || typeof item === "number" ? String(item).trim() : ""))
-          .filter((item) => item.length > 0)
-      )
-    );
-  };
 
   useEffect(() => {
     if (!user) return;
@@ -119,46 +106,18 @@ export default function ProfileCreative({ }) {
   useEffect(() => {
     if (!user || userDeptsLoading) return;
     const fromTable = deptIdsByUser.get(user.id);
-    if (fromTable && fromTable.size > 0) {
-      const ids = [...fromTable].sort((a, b) => a - b).map(String);
-      setSelectedDepartmentIds(ids);
-      setNeedsDepartmentFallback(false);
-      return;
-    }
-    const metadataDepartmentIds = normalize_ids(
-      (user.user_metadata ?? {}).department_ids
+    // Table is source of truth once loaded; missing key means no assignments.
+    // Do not fall back to user_metadata — it stays stale after removals and re-adds items.
+    setSelectedDepartmentIds(
+      fromTable ? [...fromTable].sort((a, b) => a - b).map(String) : []
     );
-    setSelectedDepartmentIds(metadataDepartmentIds);
-    setNeedsDepartmentFallback(metadataDepartmentIds.length === 0);
   }, [user, userDeptsLoading, deptIdsByUser]);
 
   useEffect(() => {
     if (!user || userServicesLoading) return;
     const fromTable = serviceIdsByUser.get(user.id);
-    if (fromTable && fromTable.size > 0) {
-      const ids = [...fromTable].sort().map(String);
-      setSelectedServiceIds(ids);
-      setNeedsServiceFallback(false);
-      return;
-    }
-    const metadataServiceIds = normalize_ids((user.user_metadata ?? {}).service_ids);
-    setSelectedServiceIds(metadataServiceIds);
-    setNeedsServiceFallback(metadataServiceIds.length === 0);
+    setSelectedServiceIds(fromTable ? [...fromTable].sort().map(String) : []);
   }, [user, userServicesLoading, serviceIdsByUser]);
-
-  useEffect(() => {
-    if (needsDepartmentFallback && !departmentsLoading && selectedDepartmentIds.length === 0 && departments.length > 0) {
-      setSelectedDepartmentIds([departments[0].id]);
-      setNeedsDepartmentFallback(false);
-    }
-  }, [departments, departmentsLoading, needsDepartmentFallback, selectedDepartmentIds.length]);
-
-  useEffect(() => {
-    if (needsServiceFallback && !servicesLoading && selectedServiceIds.length === 0 && services.length > 0) {
-      setSelectedServiceIds([services[0].id]);
-      setNeedsServiceFallback(false);
-    }
-  }, [needsServiceFallback, selectedServiceIds.length, services, servicesLoading]);
 
   const FEEDBACK_AUTO_DISMISS_MS = 5000;
 
@@ -519,28 +478,12 @@ export default function ProfileCreative({ }) {
     setShowPublic(metadata.show_public_profile !== false);
     const fromDeptTable = deptIdsByUser.get(user.id);
     const fromSvcTable = serviceIdsByUser.get(user.id);
-    const metadataDepartmentIds = normalize_ids(metadata.department_ids);
-    const metadataServiceIds = normalize_ids(metadata.service_ids);
     setSelectedDepartmentIds(
-      fromDeptTable && fromDeptTable.size > 0
-        ? [...fromDeptTable].sort((a, b) => a - b).map(String)
-        : metadataDepartmentIds.length > 0
-          ? metadataDepartmentIds
-          : departments.length > 0
-            ? [departments[0].id]
-            : []
+      fromDeptTable ? [...fromDeptTable].sort((a, b) => a - b).map(String) : []
     );
     setSelectedServiceIds(
-      fromSvcTable && fromSvcTable.size > 0
-        ? [...fromSvcTable].sort().map(String)
-        : metadataServiceIds.length > 0
-          ? metadataServiceIds
-          : services.length > 0
-            ? [services[0].id]
-            : []
+      fromSvcTable ? [...fromSvcTable].sort().map(String) : []
     );
-    setNeedsDepartmentFallback(false);
-    setNeedsServiceFallback(false);
     setSelectedImageFile(null);
     setSelectedImagePreview(null);
     setFeedback(null);
@@ -852,7 +795,7 @@ export default function ProfileCreative({ }) {
                                 {selectedDepartments.map((department) => (
                                   <span
                                     key={department.id}
-                                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium bg-indigo-100 text-indigo-800"
+                                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium border-2 border-indigo-500 bg-indigo-100 text-indigo-800"
                                   >
                                     {department.name}
                                     <button
@@ -873,24 +816,27 @@ export default function ProfileCreative({ }) {
                             {departmentsLoading ? (
                               <div className="text-sm text-slate-500">Loading departments...</div>
                             ) : availableDepartments.length > 0 ? (
-                              <div className="border border-slate-300 rounded-lg p-3 max-h-40 overflow-y-auto">
-                                <div className="space-y-2">
-                                  {availableDepartments.map((department) => (
-                                    <button
-                                      key={department.id}
-                                      type="button"
-                                      onClick={() => void add_department(department.id)}
-                                      disabled={syncingAssignments || isSaving}
-                                      className="w-full text-left px-3 py-2 rounded-md text-sm text-slate-700 hover:bg-indigo-50 hover:text-indigo-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
-                                    >
-                                      {department.name}
-                                    </button>
-                                  ))}
-                                </div>
+                              <div className="flex flex-wrap gap-2 max-h-40 overflow-y-auto border border-gray-300 py-2 px-2 rounded-xl">
+                                {availableDepartments.map((department) => (
+                                  <button
+                                    key={department.id}
+                                    type="button"
+                                    onClick={() => void add_department(department.id)}
+                                    disabled={syncingAssignments || isSaving}
+                                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium border border-dashed border-slate-300 bg-white text-slate-700 hover:border-indigo-400 hover:bg-indigo-50 hover:text-indigo-800 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                                  >
+                                    {department.name}
+                                    <span className="text-slate-400" aria-hidden>
+                                      +
+                                    </span>
+                                  </button>
+                                ))}
                               </div>
                             ) : (
-                              <div className="text-sm text-slate-500 border border-slate-300 rounded-lg p-3">
-                                No more departments available to add.
+                              <div className="text-sm text-slate-500">
+                                {departments.length === 0
+                                  ? "No departments available."
+                                  : "No more departments available to add."}
                               </div>
                             )}
                         </div>
@@ -910,7 +856,7 @@ export default function ProfileCreative({ }) {
                                 {selectedServices.map((service) => (
                                   <span
                                     key={service.id}
-                                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium bg-emerald-100 text-emerald-800"
+                                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium border-2 border-emerald-500 bg-emerald-100 text-emerald-800"
                                   >
                                     {service.name}
                                     <button
@@ -931,24 +877,27 @@ export default function ProfileCreative({ }) {
                             {servicesLoading ? (
                               <div className="text-sm text-slate-500">Loading services...</div>
                             ) : availableServices.length > 0 ? (
-                              <div className="border border-slate-300 rounded-lg p-3 max-h-40 overflow-y-auto">
-                                <div className="space-y-2">
-                                  {availableServices.map((service) => (
-                                    <button
-                                      key={service.id}
-                                      type="button"
-                                      onClick={() => void add_service(service.id)}
-                                      disabled={syncingAssignments || isSaving}
-                                      className="w-full text-left px-3 py-2 rounded-md text-sm text-slate-700 hover:bg-emerald-50 hover:text-emerald-800 transition disabled:opacity-50 disabled:cursor-not-allowed"
-                                    >
-                                      {service.name}
-                                    </button>
-                                  ))}
-                                </div>
+                              <div className="flex flex-wrap gap-2 max-h-40 overflow-y-auto border border-gray-300 py-2 px-2 rounded-xl">
+                                {availableServices.map((service) => (
+                                  <button
+                                    key={service.id}
+                                    type="button"
+                                    onClick={() => void add_service(service.id)}
+                                    disabled={syncingAssignments || isSaving}
+                                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium border border-dashed border-slate-300 bg-white text-slate-700 hover:border-emerald-400 hover:bg-emerald-50 hover:text-emerald-800 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                                  >
+                                    {service.name}
+                                    <span className="text-slate-400" aria-hidden>
+                                      +
+                                    </span>
+                                  </button>
+                                ))}
                               </div>
                             ) : (
-                              <div className="text-sm text-slate-500 border border-slate-300 rounded-lg p-3">
-                                No more services available to add.
+                              <div className="text-sm text-slate-500">
+                                {services.length === 0
+                                  ? "No services available."
+                                  : "No more services available to add."}
                               </div>
                             )}
                         </div>
