@@ -173,7 +173,7 @@ export default function EmergencyBookingForm() {
         if (res.ok) {
           const json = await res.json();
           const list = (json.departments || []) as Department[];
-          setDepartments(list.filter((d) => d.status !== "inactive"));
+          setDepartments(list.filter((d) => d.status === "active"));
         }
       } catch (err) {
         console.error("Error fetching departments:", err);

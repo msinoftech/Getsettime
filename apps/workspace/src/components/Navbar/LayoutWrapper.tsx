@@ -122,12 +122,12 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
   return (
     <WorkspaceSettingsProvider>
     <CreateBookingModalProvider>
-    <div className="flex min-h-screen relative w-full overflow-x-hidden">
+    <div className="flex h-screen relative w-full overflow-hidden">
       {isSidebarOpen && (
         <div className="fixed inset-0 bg-white/50 backdrop-blur-sm z-30 lg:hidden" onClick={closeSidebar} aria-hidden="true"/>
       )}
       <Sidebar isOpen={isSidebarOpen} onClose={closeSidebar} />
-      <div className="flex-1 flex flex-col w-full min-w-0 ml-0 lg:ml-64 transition-all duration-300">
+      <div className="flex-1 flex flex-col w-full min-w-0 min-h-0 ml-0 lg:ml-64 transition-all duration-300">
         <Topbar toggleSidebar={toggleSidebar} isSidebarOpen={isSidebarOpen} />
         <main className="relative flex min-h-0 flex-1 flex-col w-full overflow-x-hidden bg-gray-100">
           <div className="flex min-h-0 flex-1 flex-col overflow-y-auto p-4 lg:p-8">

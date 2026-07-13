@@ -308,8 +308,16 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Department name is required' }, { status: 400 });
     }
 
-    const normalizedStatus: 'active' | 'inactive' =
-      status === 'inactive' ? 'inactive' : 'active';
+    const allowedCreateStatuses = new Set([
+      'active',
+      'inactive',
+      'private',
+      'draft',
+    ]);
+    const normalizedStatus =
+      typeof status === 'string' && allowedCreateStatuses.has(status)
+        ? (status as 'active' | 'inactive' | 'private' | 'draft')
+        : 'active';
 
     const { data: existingWorkspaceDepts, error: existingErr } = await supabase
       .from('departments')
@@ -423,7 +431,7 @@ export async function PUT(req: NextRequest) {
       name?: string;
       description?: string | null;
       meta_data?: Record<string, unknown>;
-      status?: 'active' | 'inactive';
+      status?: 'active' | 'inactive' | 'private' | 'draft';
     } = {};
 
     if (name !== undefined) {
@@ -439,13 +447,26 @@ export async function PUT(req: NextRequest) {
     }
 
     if (status !== undefined) {
-      if (status !== 'active' && status !== 'inactive') {
+      const allowedStatuses = new Set([
+        'active',
+        'inactive',
+        'private',
+        'draft',
+      ]);
+      if (typeof status !== 'string' || !allowedStatuses.has(status)) {
         return NextResponse.json(
-          { error: "Invalid status; must be 'active' or 'inactive'" },
+          {
+            error:
+              "Invalid status; must be 'active', 'private', 'draft', or 'inactive'",
+          },
           { status: 400 }
         );
       }
-      updatePayload.status = status;
+      updatePayload.status = status as
+        | 'active'
+        | 'inactive'
+        | 'private'
+        | 'draft';
     }
 
     if (meta_data !== undefined) {

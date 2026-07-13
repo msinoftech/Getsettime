@@ -24,6 +24,7 @@ export type ServiceProvider = {
   departments?: number[];
   deactivated?: boolean;
   is_workspace_owner?: boolean;
+  avatar_url?: string | null;
   raw_user_meta_data?: {
     full_name?: string;
     name?: string;

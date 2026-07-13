@@ -13,6 +13,7 @@ import {
   LuEyeOff as EyeOff,
   LuGlobe as Globe,
 } from "react-icons/lu";
+import { Pagination, usePagination } from "@app/ui";
 import { supabase } from "@/lib/supabaseClient";
 import { useAuth } from "@/src/providers/AuthProvider";
 import { AlertModal } from "@/src/components/ui/AlertModal";
@@ -92,6 +93,8 @@ interface EventType {
   bookings_count?: number | null;
   owner_id?: string | null;
 }
+
+const EVENT_TYPES_PAGE_SIZE = 10;
 
 const CARD_GRADIENTS = [
   "from-cyan-500 to-sky-600",
@@ -988,6 +991,25 @@ export default function EventTypes() {
     });
   }, [items, search, visibility_filter, provider_filter, status_filter]);
 
+  const {
+    paginatedItems: paginated_items,
+    currentPage: event_types_page,
+    setCurrentPage: set_event_types_page,
+    totalPages: event_types_total_pages,
+    totalItems: event_types_total_items,
+    handlePageChange: handle_event_types_page_change,
+  } = usePagination(filtered_items, EVENT_TYPES_PAGE_SIZE);
+
+  useEffect(() => {
+    set_event_types_page(1);
+  }, [
+    search,
+    visibility_filter,
+    provider_filter,
+    status_filter,
+    set_event_types_page,
+  ]);
+
   const panel_open = showForm || editingId !== null;
   const panel_visible = panel_open || panel_animated_open;
 
@@ -1166,7 +1188,7 @@ export default function EventTypes() {
             ) : (
               <>
                 <EventTypeListMobileCards
-                  items={filtered_items}
+                  items={paginated_items}
                   open_menu_id={open_menu_id}
                   copied_id={copiedId}
                   loading_slug={loadingSlug}
@@ -1221,7 +1243,7 @@ export default function EventTypes() {
                       </tr>
                     </thead>
                     <tbody>
-                      {filtered_items.map((item) => {
+                      {paginated_items.map((item) => {
                         const is_public = !!item.is_public;
                         const status = parse_event_type_status(item.status);
                         const status_label = event_type_status_label(status);
@@ -1327,11 +1349,16 @@ export default function EventTypes() {
                   </table>
                 </div>
 
-                <div className="flex items-center justify-between border-t border-slate-200 px-4 py-3 text-sm text-slate-500">
-                  <span>
-                    Showing 1 to {filtered_items.length} of {filtered_items.length} event
-                    {filtered_items.length === 1 ? " type" : " types"}
-                  </span>
+                <div className="border-t border-slate-200 px-4 py-3">
+                  <Pagination
+                    currentPage={event_types_page}
+                    totalPages={event_types_total_pages}
+                    totalItems={event_types_total_items}
+                    itemsPerPage={EVENT_TYPES_PAGE_SIZE}
+                    onPageChange={handle_event_types_page_change}
+                    loading={loading || submitting}
+                    itemLabel="event types"
+                  />
                 </div>
               </>
             )}

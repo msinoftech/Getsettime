@@ -21,6 +21,7 @@ interface TeamMember {
   role?: string;
   additional_roles?: string[];
   phone?: string | null;
+  avatar_url?: string | null;
   raw_user_meta_data?: { full_name?: string; name?: string; phone?: string };
   is_workspace_owner?: boolean;
   deactivated?: boolean;
@@ -342,6 +343,10 @@ export function useServiceProviders() {
               departments,
               deactivated: Boolean(m.deactivated),
               is_workspace_owner: m.is_workspace_owner === true,
+              avatar_url:
+                typeof m.avatar_url === 'string' && m.avatar_url.trim() !== ''
+                  ? m.avatar_url.trim()
+                  : null,
               raw_user_meta_data: {
                 full_name: m.raw_user_meta_data?.full_name,
                 name: m.name,

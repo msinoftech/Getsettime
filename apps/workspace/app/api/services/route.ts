@@ -182,8 +182,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: msg }, { status: 400 });
     }
 
-    const normalizedStatus: 'active' | 'inactive' =
-      status === 'inactive' ? 'inactive' : 'active';
+    const allowedStatuses = new Set(['active', 'inactive', 'private', 'draft']);
+    const normalizedStatus =
+      typeof status === 'string' && allowedStatuses.has(status) ? status : 'active';
 
     const parsedDuration =
       typeof duration === 'number'
@@ -347,9 +348,13 @@ export async function PUT(req: NextRequest) {
     }
 
     if (status !== undefined) {
-      if (status !== 'active' && status !== 'inactive') {
+      const allowedStatuses = new Set(['active', 'inactive', 'private', 'draft']);
+      if (typeof status !== 'string' || !allowedStatuses.has(status)) {
         return NextResponse.json(
-          { error: "Invalid status; must be 'active' or 'inactive'" },
+          {
+            error:
+              "Invalid status; must be 'active', 'private', 'draft', or 'inactive'",
+          },
           { status: 400 }
         );
       }
