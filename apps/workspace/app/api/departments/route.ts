@@ -495,7 +495,7 @@ export async function PUT(req: NextRequest) {
         }
       }
 
-      // Merge meta_data: preserve existing keys; update services / service_providers when sent
+      // Merge meta_data: preserve existing keys; update known fields when sent
       const existingMetaData = (existing.meta_data as Record<string, unknown>) || {};
       const mergedMetaData: Record<string, unknown> = { ...existingMetaData };
       delete mergedMetaData.service_providers;
@@ -505,6 +505,12 @@ export async function PUT(req: NextRequest) {
           mergedMetaData.services = Array.isArray(parsedMetaData.services)
             ? parsedMetaData.services
             : [];
+        }
+        if ('color' in parsedMetaData) {
+          mergedMetaData.color =
+            typeof parsedMetaData.color === 'string' && parsedMetaData.color.trim()
+              ? parsedMetaData.color.trim()
+              : null;
         }
       }
 

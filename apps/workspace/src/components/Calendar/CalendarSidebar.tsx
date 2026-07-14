@@ -88,11 +88,6 @@ export function CalendarSidebar({
       : viewMode === "day"
         ? "Day Summary"
         : "Week Summary";
-  const scheduleTitle = scheduleDate.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-  });
-
   const summaryCards = [
     {
       key: "total",
@@ -145,6 +140,28 @@ export function CalendarSidebar({
     todayKey.getDate(),
   ).getTime();
   const startOfTomorrow = startOfToday + 24 * 60 * 60 * 1000;
+  const scheduleDateStart = new Date(
+    scheduleDate.getFullYear(),
+    scheduleDate.getMonth(),
+    scheduleDate.getDate(),
+  ).getTime();
+  const scheduleMonthDay = scheduleDate.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+  });
+  const scheduleTitle =
+    scheduleDateStart === startOfToday
+      ? "Today's Schedule"
+      : scheduleDateStart === startOfTomorrow
+        ? "Tomorrow's Schedule"
+        : `${scheduleMonthDay} Schedule`;
+  const scheduleEmptyLabel =
+    scheduleDateStart === startOfToday
+      ? "No appointments for today"
+      : scheduleDateStart === startOfTomorrow
+        ? "No appointments for tomorrow"
+        : `No appointments for ${scheduleMonthDay}`;
+
 
   const getRelativeDay = (
     at: string | null,
@@ -389,12 +406,12 @@ export function CalendarSidebar({
       {viewMode === "month" && (
         <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
           <h3 className="mb-3 text-xl font-semibold text-slate-900">
-            {scheduleTitle} Schedule
+            {scheduleTitle}
           </h3>
           <div className="space-y-3">
             {scheduleBookings.length === 0 && (
               <div className="rounded-lg border border-dashed border-slate-300 p-4 text-center text-xs text-slate-500">
-                No appointments for this day
+                {scheduleEmptyLabel}
               </div>
             )}
 

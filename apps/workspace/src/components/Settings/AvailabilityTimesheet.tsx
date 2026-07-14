@@ -1,7 +1,16 @@
 "use client";
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import {
+  LuClock as Clock,
+  LuPencil as Pencil,
+  LuPlus as Plus,
+  LuTrash2 as Trash2,
+  LuX as X,
+  LuChevronRight as ChevronRight,
+} from "react-icons/lu";
 import { AvailabilityGeneralSkeleton } from '@/src/components/ui/AvailabilityGeneralSkeleton';
+import { convertWallClockHHmm } from '@/src/utils/timezone';
 
 type DayName = "Mon" | "Tue" | "Wed" | "Thu" | "Fri" | "Sat" | "Sun";
 
@@ -22,6 +31,13 @@ export type availability_timesheet_save_feedback =
   | { type: "success" | "error"; text: string }
   | null;
 
+export type availability_timesheet_handle = {
+  applyMonFriPreset: () => void;
+  copyMondayToWeekdays: () => void;
+  saveChanges: () => Promise<void>;
+  isBusy: () => boolean;
+};
+
 interface AvailabilityTimesheetProps {
   onSave?: (data: Record<DayName, DaySchedule>) => void;
   /** When set, save success/error is reported here instead of the inline banner below the grid */
@@ -32,11 +48,23 @@ interface AvailabilityTimesheetProps {
   providerUserId?: string;
   /** When set, load/save under availability.providers[userId] via workspace settings API (workspace admin) */
   saveAsProviderId?: string;
-  /** Optional extra control(s) rendered in the header between summary and actions */
-  headerExtra?: React.ReactNode;
+  /** Notifies parent when the day-edit side panel opens/closes (for layout shift) */
+  onEditPanelOpenChange?: (open: boolean) => void;
+  /** Notifies parent when busy/saving state changes (for top toolbar buttons) */
+  onBusyChange?: (busy: boolean) => void;
+  /** IANA timezone times are stored/edited in (workspace or browser) */
+  sourceTimezone?: string;
+  /** IANA timezone used only for displaying table times (not persisted) */
+  displayTimezone?: string;
+}
+
+function classNames(...parts: Array<string | false | null | undefined>) {
+  return parts.filter(Boolean).join(" ");
 }
 
 const DAYS: DayName[] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const WEEKDAYS: DayName[] = ["Mon", "Tue", "Wed", "Thu", "Fri"];
+const WEEKEND_DAYS: DayName[] = ["Sat", "Sun"];
 
 const DAY_NAMES: Record<DayName, string> = {
   Mon: "Monday",
@@ -65,6 +93,39 @@ const formatTimeForDisplay = (time: string): string => {
   const period = hours >= 12 ? 'PM' : 'AM';
   const displayHours = hours % 12 || 12;
   return `${displayHours}:${minutes.toString().padStart(2, '0')} ${period}`;
+};
+
+const formatBreakRange = (start: string, end: string): string => {
+  const [startHours, startMins] = start.split(':').map(Number);
+  const [endHours, endMins] = end.split(':').map(Number);
+  const startPeriod = startHours >= 12 ? 'PM' : 'AM';
+  const endPeriod = endHours >= 12 ? 'PM' : 'AM';
+  const startDisplay = `${startHours % 12 || 12}:${startMins.toString().padStart(2, '0')}`;
+  const endDisplay = `${endHours % 12 || 12}:${endMins.toString().padStart(2, '0')}`;
+  if (startPeriod === endPeriod) {
+    return `${startDisplay} – ${endDisplay} ${endPeriod}`;
+  }
+  return `${startDisplay} ${startPeriod} – ${endDisplay} ${endPeriod}`;
+};
+
+const formatTimeForDisplayInZones = (
+  time: string,
+  sourceTimezone: string,
+  displayTimezone: string
+): string => {
+  const converted = convertWallClockHHmm(time, sourceTimezone, displayTimezone);
+  return formatTimeForDisplay(converted);
+};
+
+const formatBreakRangeInZones = (
+  start: string,
+  end: string,
+  sourceTimezone: string,
+  displayTimezone: string
+): string => {
+  const convertedStart = convertWallClockHHmm(start, sourceTimezone, displayTimezone);
+  const convertedEnd = convertWallClockHHmm(end, sourceTimezone, displayTimezone);
+  return formatBreakRange(convertedStart, convertedEnd);
 };
 
 const timeOptions = generateTimeOptions();
@@ -163,26 +224,23 @@ const getFilteredTimeOptions = (
   });
 };
 
-// Helper function to calculate hours between start and end time
-const calculateHours = (startTime: string, endTime: string): number => {
-  const [startHours, startMins] = startTime.split(':').map(Number);
-  const [endHours, endMins] = endTime.split(':').map(Number);
-  const startTotal = startHours * 60 + startMins;
-  const endTotal = endHours * 60 + endMins;
-  const diffMinutes = endTotal - startTotal;
-  // Handle case where end time is next day (shouldn't happen in this context, but just in case)
-  const totalMinutes = diffMinutes < 0 ? diffMinutes + 24 * 60 : diffMinutes;
-  return totalMinutes / 60;
-};
-
-export default function AvailabilityTimesheet({
-  onSave,
-  onSaveFeedback,
-  initialTimesheet,
-  providerUserId,
-  saveAsProviderId,
-  headerExtra,
-}: AvailabilityTimesheetProps) {
+const AvailabilityTimesheet = forwardRef<
+  availability_timesheet_handle,
+  AvailabilityTimesheetProps
+>(function AvailabilityTimesheet(
+  {
+    onSave,
+    onSaveFeedback,
+    initialTimesheet,
+    providerUserId,
+    saveAsProviderId,
+    onEditPanelOpenChange,
+    onBusyChange,
+    sourceTimezone = "UTC",
+    displayTimezone = "UTC",
+  },
+  ref
+) {
   const [schedules, setSchedules] = useState<Record<DayName, DaySchedule>>(buildDefaultSchedules);
 
   const [savedSchedules, setSavedSchedules] = useState<Record<DayName, DaySchedule>>(() =>
@@ -197,13 +255,45 @@ export default function AvailabilityTimesheet({
   const [daySaveFeedback, setDaySaveFeedback] = useState<
     Partial<Record<DayName, { type: 'success' | 'error'; text: string }>>
   >({});
-  const [copyConfirmDay, setCopyConfirmDay] = useState<DayName | null>(null);
-  const [copyConfirmLoading, setCopyConfirmLoading] = useState(false);
+  const [editingDay, setEditingDay] = useState<DayName | null>(null);
+  const [panelAnimatedOpen, setPanelAnimatedOpen] = useState(false);
+  const [panelSnapshot, setPanelSnapshot] = useState<DaySchedule | null>(null);
+  /** Full week snapshot taken before "Copy to other days" so Cancel can undo the copy */
+  const [preCopySnapshot, setPreCopySnapshot] = useState<Record<
+    DayName,
+    DaySchedule
+  > | null>(null);
+
+  const editPanelOpen = editingDay !== null;
+  const editPanelVisible = editPanelOpen || panelAnimatedOpen;
 
   const schedulesRef = useRef(schedules);
   schedulesRef.current = schedules;
 
   const partialTimesheetFingerprint = fingerprintPartialTimesheet(initialTimesheet ?? undefined);
+
+  useEffect(() => {
+    onEditPanelOpenChange?.(editPanelOpen);
+  }, [editPanelOpen, onEditPanelOpenChange]);
+
+  useEffect(() => {
+    if (!editPanelOpen) {
+      setPanelAnimatedOpen(false);
+      return;
+    }
+    const frame = requestAnimationFrame(() => {
+      requestAnimationFrame(() => setPanelAnimatedOpen(true));
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [editPanelOpen]);
+
+  useEffect(() => {
+    return () => {
+      onEditPanelOpenChange?.(false);
+    };
+    // Notify parent only on unmount so layout margin resets when leaving the tab
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional unmount-only cleanup
+  }, []);
 
   /* Intentionally depend on semantic timesheet fingerprint, not unstable object refs */
   /* eslint-disable react-hooks/exhaustive-deps -- loadAvailability merges once per fingerprint */
@@ -250,6 +340,65 @@ export default function AvailabilityTimesheet({
       });
     }
     return validationErrors;
+  };
+
+  /** Clamp breaks into the valid window (strictly after start / before end) so save is not blocked by auto-added slots. */
+  const clampBreaksForDay = (schedule: DaySchedule): DaySchedule => {
+    if (!schedule.enabled) return schedule;
+
+    const [startHours, startMins] = schedule.startTime.split(':').map(Number);
+    const [endHours, endMins] = schedule.endTime.split(':').map(Number);
+    const startTotal = startHours * 60 + startMins;
+    const endTotal = endHours * 60 + endMins;
+    const minBreakDuration = 30;
+    const earliestStart = startTotal + minBreakDuration;
+    const latestEnd = endTotal - minBreakDuration;
+
+    if (latestEnd - earliestStart < minBreakDuration) {
+      return { ...schedule, breaks: [] };
+    }
+
+    const toTime = (totalMinutes: number) => {
+      const hours = Math.floor(totalMinutes / 60) % 24;
+      const mins = totalMinutes % 60;
+      return `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}`;
+    };
+
+    const breaks = schedule.breaks
+      .map((breakTime) => {
+        const [bStartH, bStartM] = breakTime.start.split(':').map(Number);
+        const [bEndH, bEndM] = breakTime.end.split(':').map(Number);
+        let breakStartTotal = bStartH * 60 + bStartM;
+        let breakEndTotal = bEndH * 60 + bEndM;
+
+        if (breakStartTotal <= startTotal) {
+          breakStartTotal = earliestStart;
+        }
+        if (breakEndTotal >= endTotal) {
+          breakEndTotal = latestEnd;
+        }
+        if (breakEndTotal - breakStartTotal < minBreakDuration) {
+          breakEndTotal = Math.min(breakStartTotal + minBreakDuration, latestEnd);
+          if (breakEndTotal - breakStartTotal < minBreakDuration) {
+            breakStartTotal = Math.max(earliestStart, breakEndTotal - minBreakDuration);
+          }
+        }
+
+        return {
+          ...breakTime,
+          start: toTime(breakStartTotal),
+          end: toTime(breakEndTotal),
+        };
+      })
+      .filter((breakTime) => {
+        return (
+          isTimeAfter(breakTime.start, schedule.startTime) &&
+          isTimeAfter(schedule.endTime, breakTime.end) &&
+          isTimeAfter(breakTime.end, breakTime.start)
+        );
+      });
+
+    return { ...schedule, breaks };
   };
 
   const persistTimesheet = async (timesheet: Record<DayName, DaySchedule>) => {
@@ -443,26 +592,33 @@ export default function AvailabilityTimesheet({
     }
   };
 
-  const handleSave = async () => {
+  const handleSave = async (): Promise<boolean> => {
     setIsSaving(true);
     setSaveMessage(null);
     onSaveFeedback?.(null);
 
     try {
+      const clampedSchedules = {} as Record<DayName, DaySchedule>;
+      for (const day of DAYS) {
+        clampedSchedules[day] = clampBreaksForDay(schedules[day]);
+      }
+      setSchedules(cloneSchedules(clampedSchedules));
+
       const validationErrors: string[] = [];
       for (const day of DAYS) {
-        validationErrors.push(...validateDaySchedule(day, schedules[day]));
+        validationErrors.push(...validateDaySchedule(day, clampedSchedules[day]));
       }
 
       if (validationErrors.length > 0) {
         throw new Error(`Validation failed:\n${validationErrors.join('\n')}`);
       }
 
-      await persistTimesheet(schedules);
-      const frozen = cloneSchedules(schedules);
+      await persistTimesheet(clampedSchedules);
+      const frozen = cloneSchedules(clampedSchedules);
       setSavedSchedules(frozen);
       pushSaveFeedback({ type: 'success', text: 'Availability timesheet saved successfully!' }, 3000);
-      onSave?.(schedules);
+      onSave?.(clampedSchedules);
+      return true;
     } catch (error) {
       console.error('Error saving availability timesheet:', error);
       const errText =
@@ -470,25 +626,31 @@ export default function AvailabilityTimesheet({
           ? error.message
           : 'Failed to save availability timesheet. Please try again.';
       pushSaveFeedback({ type: 'error', text: errText }, 5000);
+      return false;
     } finally {
       setIsSaving(false);
     }
   };
 
-  const handleSaveDay = async (day: DayName) => {
+  const handleSaveDay = async (day: DayName): Promise<boolean> => {
     setSavingDay(day);
     pushDaySaveFeedback(day, null);
     onSaveFeedback?.(null);
 
     try {
-      const dayErrors = validateDaySchedule(day, schedules[day]);
+      const clampedDay = clampBreaksForDay(schedules[day]);
+      if (dayScheduleSignature(clampedDay) !== dayScheduleSignature(schedules[day])) {
+        setSchedules((prev) => ({ ...prev, [day]: cloneDaySchedule(clampedDay) }));
+      }
+
+      const dayErrors = validateDaySchedule(day, clampedDay);
       if (dayErrors.length > 0) {
         throw new Error(`Validation failed:\n${dayErrors.join('\n')}`);
       }
 
       const merged: Record<DayName, DaySchedule> = {
         ...savedSchedules,
-        [day]: cloneDaySchedule(schedules[day]),
+        [day]: cloneDaySchedule(clampedDay),
       };
 
       await persistTimesheet(merged);
@@ -504,8 +666,9 @@ export default function AvailabilityTimesheet({
       );
       onSave?.({
         ...schedules,
-        [day]: cloneDaySchedule(schedules[day]),
+        [day]: cloneDaySchedule(clampedDay),
       });
+      return true;
     } catch (error) {
       console.error('Error saving day availability:', error);
       const errText =
@@ -513,24 +676,10 @@ export default function AvailabilityTimesheet({
           ? error.message
           : 'Failed to save availability timesheet. Please try again.';
       pushDaySaveFeedback(day, { type: 'error', text: errText }, 5000);
+      return false;
     } finally {
       setSavingDay(null);
     }
-  };
-
-  const saveFullTimesheet = async (timesheet: Record<DayName, DaySchedule>) => {
-    const validationErrors: string[] = [];
-    for (const d of DAYS) {
-      validationErrors.push(...validateDaySchedule(d, timesheet[d]));
-    }
-    if (validationErrors.length > 0) {
-      throw new Error(`Validation failed:\n${validationErrors.join('\n')}`);
-    }
-    await persistTimesheet(timesheet);
-    const frozen = cloneSchedules(timesheet);
-    setSavedSchedules(frozen);
-    setSchedules(frozen);
-    onSave?.(timesheet);
   };
 
   const updateDaySchedule = (day: DayName, updates: Partial<DaySchedule>) => {
@@ -638,25 +787,36 @@ export default function AvailabilityTimesheet({
     const endTotal = endHours * 60 + endMins;
     const minBreakDuration = 30;
     const defaultBreakDuration = 60;
+    // Validation requires break start > day start and break end < day end
+    const earliestStart = startTotal + minBreakDuration;
+    const latestEnd = endTotal - minBreakDuration;
+
+    if (latestEnd - earliestStart < minBreakDuration) {
+      return;
+    }
+
+    const toTime = (totalMinutes: number) => {
+      const hours = Math.floor(totalMinutes / 60) % 24;
+      const mins = totalMinutes % 60;
+      return `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}`;
+    };
 
     let breakStartTotal: number;
     let breakEndTotal: number;
 
     if (daySchedule.breaks.length === 0) {
-      // No breaks yet: use middle of the day
       const midTotal = Math.floor((startTotal + endTotal) / 2);
-      breakStartTotal = midTotal;
-      breakEndTotal = Math.min(midTotal + defaultBreakDuration, endTotal - 30);
+      breakStartTotal = Math.max(midTotal, earliestStart);
+      breakEndTotal = Math.min(breakStartTotal + defaultBreakDuration, latestEnd);
     } else {
-      // Find next available slot after existing breaks
       const sortedBreaks = [...daySchedule.breaks].sort((a, b) => {
         const aStart = a.start.split(':').map(Number);
         const bStart = b.start.split(':').map(Number);
-        return (aStart[0] * 60 + aStart[1]) - (bStart[0] * 60 + bStart[1]);
+        return aStart[0] * 60 + aStart[1] - (bStart[0] * 60 + bStart[1]);
       });
 
       const gaps: Array<{ start: number; end: number }> = [];
-      let gapStart = startTotal;
+      let gapStart = earliestStart;
       for (const b of sortedBreaks) {
         const [bStartH, bStartM] = b.start.split(':').map(Number);
         const [bEndH, bEndM] = b.end.split(':').map(Number);
@@ -667,32 +827,34 @@ export default function AvailabilityTimesheet({
         }
         gapStart = Math.max(gapStart, bEndTotal);
       }
-      if (endTotal - 30 > gapStart) {
-        gaps.push({ start: gapStart, end: endTotal - 30 });
+      if (latestEnd > gapStart) {
+        gaps.push({ start: gapStart, end: latestEnd });
       }
 
       const validSlots = gaps.filter((g) => g.end - g.start >= minBreakDuration);
       const slot = validSlots.length > 0 ? validSlots[validSlots.length - 1] : undefined;
       if (slot) {
-        breakStartTotal = slot.start;
-        breakEndTotal = Math.min(slot.start + defaultBreakDuration, slot.end);
+        breakStartTotal = Math.max(slot.start, earliestStart);
+        breakEndTotal = Math.min(
+          breakStartTotal + defaultBreakDuration,
+          slot.end,
+          latestEnd
+        );
       } else {
-        // No gap large enough: fallback to middle of day (should rarely happen)
         const midTotal = Math.floor((startTotal + endTotal) / 2);
-        breakStartTotal = midTotal;
-        breakEndTotal = Math.min(midTotal + defaultBreakDuration, endTotal - 30);
+        breakStartTotal = Math.max(midTotal, earliestStart);
+        breakEndTotal = Math.min(breakStartTotal + defaultBreakDuration, latestEnd);
       }
     }
 
-    const breakStartHours = Math.floor(breakStartTotal / 60) % 24;
-    const breakStartMins = breakStartTotal % 60;
-    const breakEndHours = Math.floor(breakEndTotal / 60) % 24;
-    const breakEndMins = breakEndTotal % 60;
+    if (breakEndTotal - breakStartTotal < minBreakDuration) {
+      return;
+    }
 
     const newBreak: BreakTime = {
       id: `break-${Date.now()}-${Math.random()}`,
-      start: `${breakStartHours.toString().padStart(2, '0')}:${breakStartMins.toString().padStart(2, '0')}`,
-      end: `${breakEndHours.toString().padStart(2, '0')}:${breakEndMins.toString().padStart(2, '0')}`,
+      start: toTime(breakStartTotal),
+      end: toTime(breakEndTotal),
     };
     updateDaySchedule(day, {
       breaks: [...daySchedule.breaks, newBreak],
@@ -796,520 +958,599 @@ export default function AvailabilityTimesheet({
     setSchedules((prev) => buildSchedulesCopiedFromDay(sourceDay, prev));
   };
 
-  const handleCopyToAllClick = (sourceDay: DayName) => {
-    if (savingDay !== null || isSaving || copyConfirmLoading) return;
-    const dayDirty =
-      dayScheduleSignature(schedules[sourceDay]) !==
-      dayScheduleSignature(savedSchedules[sourceDay]);
-    if (!dayDirty) {
-      copyToAllDays(sourceDay);
+  const handlePanelCopyToOtherDays = (sourceDay: DayName) => {
+    if (savingDay !== null || isSaving) return;
+    setPreCopySnapshot((prev) => prev ?? cloneSchedules(schedules));
+    copyToAllDays(sourceDay);
+  };
+
+  const handleCancelPendingCopy = () => {
+    if (!preCopySnapshot) return;
+    setSchedules(cloneSchedules(preCopySnapshot));
+    setPreCopySnapshot(null);
+  };
+
+  const handleSavePendingCopyAllDays = async () => {
+    if (isSaving || savingDay !== null) return;
+    const ok = await handleSave();
+    if (!ok) return;
+    setPreCopySnapshot(null);
+    if (editingDay) {
+      setPanelSnapshot(cloneDaySchedule(schedulesRef.current[editingDay]));
+    }
+  };
+
+  const applyMonFriPreset = () => {
+    setSchedules((prev) => {
+      const updated = { ...prev };
+      WEEKDAYS.forEach((day) => {
+        updated[day] = {
+          enabled: true,
+          startTime: "09:00",
+          endTime: "17:00",
+          breaks: [],
+        };
+      });
+      WEEKEND_DAYS.forEach((day) => {
+        updated[day] = {
+          ...updated[day],
+          enabled: false,
+        };
+      });
+      return updated;
+    });
+  };
+
+  const copyMondayToWeekdays = () => {
+    setSchedules((prev) => {
+      const monday = prev.Mon;
+      const updated = { ...prev };
+      (["Tue", "Wed", "Thu", "Fri"] as DayName[]).forEach((day) => {
+        updated[day] = {
+          enabled: monday.enabled,
+          startTime: monday.startTime,
+          endTime: monday.endTime,
+          breaks: monday.breaks.map((breakTime) => ({
+            ...breakTime,
+            id: `break-${Date.now()}-${Math.random()}`,
+          })),
+        };
+      });
+      return updated;
+    });
+  };
+
+  const isBusy = isSaving || savingDay !== null;
+
+  useEffect(() => {
+    onBusyChange?.(isBusy);
+  }, [isBusy, onBusyChange]);
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      applyMonFriPreset,
+      copyMondayToWeekdays,
+      saveChanges: async () => {
+        await handleSave();
+      },
+      isBusy: () => isBusy,
+    }),
+    // Handlers close over latest state via schedules/isBusy reads inside
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- expose stable imperative API
+    [isBusy, schedules, savedSchedules, isSaving, savingDay]
+  );
+
+  const revertEditingDayIfNeeded = (day: DayName | null, snapshot: DaySchedule | null) => {
+    if (!day || !snapshot) return;
+    setSchedules((prev) => ({
+      ...prev,
+      [day]: cloneDaySchedule(snapshot),
+    }));
+  };
+
+  const openDayPanel = (day: DayName) => {
+    if (preCopySnapshot) {
+      const restored = cloneSchedules(preCopySnapshot);
+      setSchedules(restored);
+      setPreCopySnapshot(null);
+      setPanelSnapshot(cloneDaySchedule(restored[day]));
+      setEditingDay(day);
       return;
     }
-    setCopyConfirmDay(sourceDay);
-  };
-
-  const handleCopyConfirmOnlyDay = async () => {
-    const day = copyConfirmDay;
-    if (!day) return;
-    setCopyConfirmLoading(true);
-    try {
-      await handleSaveDay(day);
-    } finally {
-      setCopyConfirmLoading(false);
-      setCopyConfirmDay(null);
+    if (editingDay && editingDay !== day) {
+      revertEditingDayIfNeeded(editingDay, panelSnapshot);
     }
+    setPanelSnapshot(cloneDaySchedule(schedules[day]));
+    setEditingDay(day);
   };
 
-  const handleCopyConfirmAllDays = async () => {
-    const day = copyConfirmDay;
-    if (!day) return;
-    setCopyConfirmLoading(true);
-    setSavingDay(day);
-    pushDaySaveFeedback(day, null);
-    onSaveFeedback?.(null);
-
-    try {
-      const copied = buildSchedulesCopiedFromDay(day, schedules);
-      await saveFullTimesheet(copied);
-      pushDaySaveFeedback(
-        day,
-        {
-          type: 'success',
-          text: `${DAY_NAMES[day]} schedule copied and saved for all days!`,
-        },
-        3000
-      );
-    } catch (error) {
-      console.error('Error saving copied availability:', error);
-      const errText =
-        error instanceof Error
-          ? error.message
-          : 'Failed to save availability timesheet. Please try again.';
-      pushDaySaveFeedback(day, { type: 'error', text: errText }, 5000);
-    } finally {
-      setSavingDay(null);
-      setCopyConfirmLoading(false);
-      setCopyConfirmDay(null);
-    }
-  };
-
-  // Calculate enabled days count
-  const enabledDaysCount = Object.values(schedules).filter(schedule => schedule.enabled).length;
-
-  // Calculate total hours per week
-  const calculateTotalHoursPerWeek = (): number => {
-    let totalHours = 0;
-    Object.values(schedules).forEach((schedule) => {
-      if (schedule.enabled) {
-        const hours = calculateHours(schedule.startTime, schedule.endTime);
-        // Subtract break hours
-        const breakHours = schedule.breaks.reduce((total, breakTime) => {
-          return total + calculateHours(breakTime.start, breakTime.end);
-        }, 0);
-        totalHours += hours - breakHours;
+  const closeDayPanel = (revert: boolean) => {
+    if (revert) {
+      if (preCopySnapshot) {
+        setSchedules(cloneSchedules(preCopySnapshot));
+        setPreCopySnapshot(null);
+      } else {
+        revertEditingDayIfNeeded(editingDay, panelSnapshot);
       }
-    });
-    return Math.round(totalHours);
+    } else {
+      setPreCopySnapshot(null);
+    }
+    setEditingDay(null);
+    setPanelSnapshot(null);
   };
 
-  const totalHoursPerWeek = calculateTotalHoursPerWeek();
-
-  // Get timezone
-  const getTimezone = (): string => {
-    try {
-      return Intl.DateTimeFormat().resolvedOptions().timeZone;
-    } catch {
-      return 'UTC';
+  const handlePanelSave = async () => {
+    if (!editingDay) return;
+    if (preCopySnapshot) {
+      await handleSavePendingCopyAllDays();
+      closeDayPanel(false);
+      return;
+    }
+    const ok = await handleSaveDay(editingDay);
+    if (ok) {
+      closeDayPanel(false);
     }
   };
 
-  const timezone = getTimezone();
-
-  // Enable all days
-  const enableAllDays = () => {
-    setSchedules((prev) => {
-      const updated = { ...prev };
-      DAYS.forEach((day) => {
-        updated[day] = { ...updated[day], enabled: true };
-      });
-      return updated;
-    });
+  const handlePanelQuickAddBreak = () => {
+    if (!editingDay) return;
+    addBreak(editingDay);
   };
 
-  // Disable all days
-  const disableAllDays = () => {
-    setSchedules((prev) => {
-      const updated = { ...prev };
-      DAYS.forEach((day) => {
-        updated[day] = { ...updated[day], enabled: false };
-      });
-      return updated;
-    });
-  };
+  const panelFieldClass =
+    "w-full appearance-none rounded-xl border border-slate-200 bg-white py-2.5 pl-10 pr-9 text-sm text-slate-900 outline-none transition focus:border-indigo-400 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:opacity-60";
 
   if (isLoading) {
     return <AvailabilityGeneralSkeleton />;
   }
 
+  const editingSchedule = editingDay ? schedules[editingDay] : null;
+  const editingDayDirty =
+    editingDay != null &&
+    dayScheduleSignature(schedules[editingDay]) !==
+      dayScheduleSignature(savedSchedules[editingDay]);
+
   return (
-    <div className="rounded-xl">
-      {/* Header Bar */}
-      <div className="bg-[radial-gradient(circle_at_18%_0%,rgba(99,102,241,0.14),transparent_42%),radial-gradient(circle_at_92%_16%,rgba(16,185,129,0.10),transparent_45%)] relative overflow-hidden rounded-xl p-4 mb-6 shadow-sm border border-slate-200">
-      
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-          {/* Left Side - Info Tags and Description */}
-          <div className="flex flex-col gap-3">
-            <div className="flex flex-wrap items-center gap-2">
-              {/* Enabled Days Count */}
-              <span className="inline-flex items-center rounded-full px-3 py-1 text-xs font-medium ring-1 bg-emerald-50 text-emerald-700 ring-emerald-200">
-                {enabledDaysCount} enabled
-              </span>
-              {/* Total Hours Per Week */}
-              <span className="inline-flex items-center rounded-full px-3 py-1 text-xs font-medium ring-1 bg-slate-100 text-slate-700 ring-slate-200">
-                {totalHoursPerWeek}h / week
-              </span>
-              {/* Timezone */}
-              <span className="inline-flex items-center rounded-full px-3 py-1 text-xs font-medium ring-1 bg-slate-100 text-slate-700 ring-slate-200">
-                Time zone: {timezone}
-              </span>
-            </div>
-            {/* Description Text */}
-            <p className="text-sm text-slate-600">Toggle days on/off, adjust hours, and add breaks.</p>
-          </div>
+    <>
+      <div className="space-y-5">
+        <p className="text-sm text-slate-500">
+          Set your regular weekly availability. Click on a day to edit its hours and breaks.
+        </p>
 
-          {headerExtra ? (
-            <div className="w-full md:w-[360px] md:min-w-[360px] md:max-w-[360px] shrink-0">
-              {headerExtra}
-            </div>
-          ) : null}
-
-          {/* Right Side - Action Buttons */}
-          <div className="flex flex-wrap gap-3 items-center gap-3">
-            <button
-              type="button"
-              onClick={enableAllDays}
-              className="px-4 py-2 rounded-lg bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 transition-colors text-sm font-medium"
-            >
-              Enable all
-            </button>
-            <button
-              type="button"
-              onClick={disableAllDays}
-              className="px-4 py-2 rounded-lg bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 transition-colors text-sm font-medium"
-            >
-              Disable all
-            </button>
-            <button
-              type="button"
-              onClick={handleSave}
-              disabled={isSaving || savingDay !== null}
-              className={`px-6 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 transition-colors font-medium text-sm ${
-                isSaving || savingDay !== null ? 'opacity-50 cursor-not-allowed' : ''
-              }`}
-            >
-              {isSaving ? 'Saving...' : 'Save changes'}
-            </button>
+        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-slate-200 text-left text-sm">
+              <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                <tr>
+                  <th className="px-4 py-3 font-semibold">Day</th>
+                  <th className="px-4 py-3 font-semibold">Status</th>
+                  <th className="px-4 py-3 font-semibold">Working Hours</th>
+                  <th className="px-4 py-3 font-semibold">Breaks</th>
+                  <th className="px-4 py-3 font-semibold text-right">Action</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {DAYS.map((day) => {
+                  const schedule = schedules[day];
+                  const isEditing = editingDay === day;
+                  return (
+                    <tr
+                      key={day}
+                      className={classNames(
+                        "transition-colors",
+                        isEditing ? "bg-indigo-50/40" : "hover:bg-slate-50/80"
+                      )}
+                    >
+                      <td className="px-4 py-3.5">
+                        <button
+                          type="button"
+                          onClick={() => openDayPanel(day)}
+                          className="text-left text-sm font-semibold text-slate-900 hover:text-indigo-600"
+                        >
+                          {DAY_NAMES[day]}
+                        </button>
+                      </td>
+                      <td className="px-4 py-3.5">
+                        <span
+                          className={classNames(
+                            "inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold",
+                            schedule.enabled
+                              ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200"
+                              : "bg-slate-100 text-slate-500 ring-1 ring-slate-200"
+                          )}
+                        >
+                          {schedule.enabled ? "On" : "Off"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3.5 text-slate-700">
+                        {schedule.enabled
+                          ? `${formatTimeForDisplayInZones(schedule.startTime, sourceTimezone, displayTimezone)} – ${formatTimeForDisplayInZones(schedule.endTime, sourceTimezone, displayTimezone)}`
+                          : "—"}
+                      </td>
+                      <td className="px-4 py-3.5">
+                        {schedule.enabled && schedule.breaks.length > 0 ? (
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            {schedule.breaks.map((b) => (
+                              <span
+                                key={b.id}
+                                className="inline-flex rounded-md bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600"
+                              >
+                                {formatBreakRangeInZones(
+                                  b.start,
+                                  b.end,
+                                  sourceTimezone,
+                                  displayTimezone
+                                )}
+                              </span>
+                            ))}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                openDayPanel(day);
+                                addBreak(day);
+                              }}
+                              className="inline-flex h-6 w-6 items-center justify-center rounded-md border border-slate-200 text-slate-500 transition hover:bg-white hover:text-indigo-600"
+                              aria-label={`Add break on ${DAY_NAMES[day]}`}
+                            >
+                              <Plus className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm text-slate-400">
+                              {schedule.enabled ? "No breaks" : "—"}
+                            </span>
+                            {schedule.enabled ? (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  openDayPanel(day);
+                                  addBreak(day);
+                                }}
+                                className="inline-flex h-6 w-6 items-center justify-center rounded-md border border-slate-200 text-slate-500 transition hover:bg-white hover:text-indigo-600"
+                                aria-label={`Add break on ${DAY_NAMES[day]}`}
+                              >
+                                <Plus className="h-3.5 w-3.5" />
+                              </button>
+                            ) : null}
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-4 py-3.5 text-right">
+                        <button
+                          type="button"
+                          onClick={() => openDayPanel(day)}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50"
+                        >
+                          <Pencil className="h-3.5 w-3.5 text-slate-500" />
+                          Edit
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3 gap-6">
-        {DAYS.map((day) => {
-          const schedule = schedules[day];
-          const dayLetter = day[0];
-          const dayFullName = DAY_NAMES[day];
-          const dayDirty =
-            dayScheduleSignature(schedule) !== dayScheduleSignature(savedSchedules[day]);
-          
-          return (
-            <div key={day} className="bg-white rounded-xl p-4 overflow-hidden shadow-sm relative">
-              <div className="absolute z-0 inset-0 bg-[radial-gradient(circle_at_10%_0%,rgba(99,102,241,0.16),transparent_42%),radial-gradient(circle_at_95%_10%,rgba(16,185,129,0.10),transparent_45%)]"></div>
+      <aside
+        className={classNames(
+          "fixed top-16 right-0 bottom-0 z-30 flex w-full flex-col overflow-hidden border-l border-slate-200 bg-white shadow-2xl lg:w-[28rem]",
+          "transform transition-transform duration-300 ease-in-out will-change-transform",
+          panelAnimatedOpen
+            ? "translate-x-0"
+            : "pointer-events-none translate-x-full"
+        )}
+        aria-hidden={!editPanelVisible}
+      >
+        {editPanelVisible && editingDay && editingSchedule ? (
+          <>
+            <div className="flex shrink-0 items-center justify-between border-b border-slate-200 px-5 py-4">
+              <h2 className="text-lg font-bold text-slate-900">
+                Edit {DAY_NAMES[editingDay]} Availability
+              </h2>
+              <button
+                type="button"
+                onClick={() => closeDayPanel(true)}
+                className="cursor-pointer rounded-lg border border-slate-200 p-2 text-slate-500 transition hover:bg-slate-50 hover:text-slate-700"
+                aria-label="Close panel"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
 
-              {/* Header Section */}
-              <div className="flex flex-col gap-4 justify-between z-10 relative">
-                <div className="flex items-center gap-4">
-                  {/* Day Icon */}
-                  <div className="relative">
-                    <div className="w-12 h-12 rounded-xl bg-indigo-600 flex items-center justify-center">
-                      <span className="text-white text-xl font-bold">{dayLetter}</span>
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden overscroll-contain">
+              <div className="flex-1 overflow-y-auto px-5 py-5">
+                <div className="space-y-6">
+                  <div className="flex items-center justify-between gap-3 border-b border-slate-200 pb-5">
+                    <span className="text-sm font-medium text-slate-700">Available</span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        updateDaySchedule(editingDay, {
+                          enabled: !editingSchedule.enabled,
+                        })
+                      }
+                      className={classNames(
+                        "relative h-6 w-11 rounded-full transition",
+                        editingSchedule.enabled ? "bg-indigo-600" : "bg-slate-300"
+                      )}
+                      aria-pressed={editingSchedule.enabled}
+                      aria-label="Toggle available"
+                    >
+                      <span
+                        className={classNames(
+                          "absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition",
+                          editingSchedule.enabled ? "left-[22px]" : "left-0.5"
+                        )}
+                      />
+                    </button>
+                  </div>
+
+                  <div
+                    className={classNames(
+                      "border-b border-slate-200 pb-5",
+                      !editingSchedule.enabled && "opacity-50"
+                    )}
+                  >
+                    <p className="mb-3 text-sm font-semibold text-slate-800">Working Hours</p>
+                    <div className="grid grid-cols-2 gap-3">
+                      <label className="block">
+                        <span className="mb-1.5 block text-xs font-medium text-slate-500">
+                          Start Time
+                        </span>
+                        <div className="relative">
+                          <Clock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                          <select
+                            value={editingSchedule.startTime}
+                            onChange={(e) =>
+                              updateDaySchedule(editingDay, { startTime: e.target.value })
+                            }
+                            disabled={!editingSchedule.enabled}
+                            className={panelFieldClass}
+                          >
+                            {timeOptions.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                          <svg
+                            className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth={2}
+                              d="M19 9l-7 7-7-7"
+                            />
+                          </svg>
+                        </div>
+                      </label>
+                      <label className="block">
+                        <span className="mb-1.5 block text-xs font-medium text-slate-500">
+                          End Time
+                        </span>
+                        <div className="relative">
+                          <Clock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                          <select
+                            value={editingSchedule.endTime}
+                            onChange={(e) =>
+                              updateDaySchedule(editingDay, { endTime: e.target.value })
+                            }
+                            disabled={!editingSchedule.enabled}
+                            className={panelFieldClass}
+                          >
+                            {getFilteredTimeOptions(
+                              editingSchedule.startTime,
+                              undefined,
+                              true
+                            ).map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                          <svg
+                            className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth={2}
+                              d="M19 9l-7 7-7-7"
+                            />
+                          </svg>
+                        </div>
+                      </label>
                     </div>
-                    {schedule.enabled && (
-                      <div className="absolute top-0 -right-1 w-3 h-3 rounded-full bg-emerald-500"></div>
-                    )}
                   </div>
-                  
-                  <div>
-                    <h3 className="text-xl font-bold text-gray-800">{dayFullName}</h3>
-                    {schedule.enabled ? (
-                      <p className="text-sm text-slate-400 mt-1 flex items-center flex-wrap gap-2">
-                        <span className="rounded-full px-2.5 py-1 text-xs font-semibold ring-1 bg-emerald-500/10 text-emerald-700 ring-emerald-500/20">({Math.round(calculateHours(schedule.startTime, schedule.endTime))} hours)</span>
-                        
-                        <span className="rounded-full px-2.5 py-1 text-xs font-semibold ring-1 bg-zinc-900/5 text-zinc-700 ring-zinc-900/10">{formatTimeForDisplay(schedule.startTime)} - {formatTimeForDisplay(schedule.endTime)}</span>
-                      </p>
-                    ) : (
-                      <p className="rounded-full px-2.5 py-1 mt-1 text-xs font-semibold ring-1 bg-amber-500/10 text-amber-700 ring-amber-500/20">Not available</p>
-                    )}
-                  </div>
-                </div>
 
-                {/* Available Button */}
-                <div className="flex items-center justify-between gap-2">
-                  <div className={`text-xs ${!schedule.enabled ? 'text-slate-400' : 'text-zinc-500'}`}>
-                    {'Tip: Configure one day then "Copy to all" to apply the same settings to all days.'}
+                  <div className={classNames(!editingSchedule.enabled && "opacity-50")}>
+                    <p className="mb-3 text-sm font-semibold text-slate-800">Breaks</p>
+                    <div className="space-y-3">
+                      {editingSchedule.breaks.map((breakTime) => (
+                        <div
+                          key={breakTime.id}
+                          className="flex items-end gap-2"
+                        >
+                          <div className="relative min-w-0 flex-1">
+                            <select
+                              value={breakTime.start}
+                              onChange={(e) =>
+                                updateBreak(editingDay, breakTime.id, "start", e.target.value)
+                              }
+                              disabled={!editingSchedule.enabled}
+                              className="w-full appearance-none rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-indigo-400 disabled:cursor-not-allowed disabled:bg-slate-50"
+                            >
+                              {getFilteredTimeOptions(
+                                editingSchedule.startTime,
+                                editingSchedule.endTime,
+                                true
+                              ).map((option) => (
+                                <option key={option.value} value={option.value}>
+                                  {option.label}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <span className="mb-2.5 shrink-0 text-slate-400">–</span>
+                          <div className="relative min-w-0 flex-1">
+                            <select
+                              value={breakTime.end}
+                              onChange={(e) =>
+                                updateBreak(editingDay, breakTime.id, "end", e.target.value)
+                              }
+                              disabled={!editingSchedule.enabled}
+                              className="w-full appearance-none rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-indigo-400 disabled:cursor-not-allowed disabled:bg-slate-50"
+                            >
+                              {getFilteredTimeOptions(
+                                breakTime.start,
+                                editingSchedule.endTime,
+                                true
+                              ).map((option) => (
+                                <option key={option.value} value={option.value}>
+                                  {option.label}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => removeBreak(editingDay, breakTime.id)}
+                            disabled={!editingSchedule.enabled}
+                            className="mb-0.5 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-red-500 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40"
+                            aria-label="Remove break"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handlePanelQuickAddBreak}
+                      disabled={!editingSchedule.enabled}
+                      className="mt-3 inline-flex items-center gap-1.5 text-sm font-semibold text-indigo-600 transition hover:text-indigo-700 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      <Plus className="h-4 w-4" />
+                      Add Break
+                    </button>
                   </div>
+
                   <button
                     type="button"
-                    onClick={() => updateDaySchedule(day, { enabled: !schedule.enabled })}
-                    className={`group inline-flex items-center gap-2 rounded-full border px-2 py-1.5 transition ${ schedule.enabled ? 'border-emerald-300 bg-emerald-50' : 'border-slate-300 bg-slate-100'
-                    }`}>
-                    <span className={`relative h-5 w-9 rounded-full transition ${ schedule.enabled ? 'bg-emerald-500' : 'bg-slate-400' }`}>
-                      <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition ${ schedule.enabled ? 'left-[18px]' : 'left-0.5' }`}/>
+                    onClick={() => handlePanelCopyToOtherDays(editingDay)}
+                    disabled={
+                      !editingSchedule.enabled ||
+                      savingDay !== null ||
+                      isSaving
+                    }
+                    className="flex w-full items-center justify-between gap-3 rounded-xl border border-indigo-100 bg-indigo-50 px-4 py-3 text-left transition hover:bg-indigo-100/70 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <span>
+                      <span className="block text-sm font-semibold text-indigo-900">
+                        Copy to other days
+                      </span>
+                      <span className="mt-0.5 block text-xs text-indigo-700/80">
+                        Apply these hours and breaks to other days of the week.
+                      </span>
                     </span>
-                    <span className={`text-xs font-extrabold ${ schedule.enabled ? 'text-emerald-700' : 'text-slate-600' }`}>{schedule.enabled ? 'Available' : 'Off'}</span>
+                    <ChevronRight className="h-4 w-4 shrink-0 text-indigo-500" />
+                  </button>
+
+                  {preCopySnapshot ? (
+                    <div className="space-y-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3">
+                      <p className="text-xs text-slate-600">
+                        Hours and breaks were copied to all other days. Save to
+                        keep these changes, or cancel to undo the copy.
+                      </p>
+                      <div className="flex flex-col gap-2 sm:flex-row">
+                        <button
+                          type="button"
+                          onClick={handleCancelPendingCopy}
+                          disabled={isSaving || savingDay !== null}
+                          className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void handleSavePendingCopyAllDays()}
+                          disabled={isSaving || savingDay !== null}
+                          className="rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {isSaving ? "Saving..." : "Save changes for all days"}
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {daySaveFeedback[editingDay] ? (
+                    <div
+                      className={classNames(
+                        "rounded-lg border px-3 py-2 text-sm font-medium",
+                        daySaveFeedback[editingDay]?.type === "success"
+                          ? "border-green-200 bg-green-50 text-green-700"
+                          : "border-red-200 bg-red-50 text-red-700"
+                      )}
+                    >
+                      {daySaveFeedback[editingDay]?.text}
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+
+              <div className="shrink-0 border-t border-slate-200 bg-white px-5 py-4">
+                <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+                  <button
+                    type="button"
+                    onClick={() => closeDayPanel(true)}
+                    className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handlePanelSave()}
+                    disabled={
+                      savingDay === editingDay ||
+                      isSaving ||
+                      (!editingDayDirty && !preCopySnapshot)
+                    }
+                    className="rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {savingDay === editingDay ? "Saving..." : "Save"}
                   </button>
                 </div>
               </div>
-
-              <div className={`grid grid-cols-1 gap-8 z-10 relative ${!schedule.enabled ? 'opacity-50' : ''}`}>
-                {/* Visual Availability Clock - Left Side */}
-                <div className="flex items-center justify-center">
-                  {/* <VisualAvailabilityClock
-                    startTime={schedule.startTime}
-                    endTime={schedule.endTime}
-                    breaks={schedule.breaks}
-                  /> */}
-                </div>
-
-                {/* Controls - Right Side */}
-                <div className="space-y-4">
-                  {/* Time Settings */}
-                  <div className="rounded-lg grid grid-cols-2 gap-4">
-                    <div>
-                      <label className={`block text-sm font-medium mb-2 ${!schedule.enabled ? 'text-slate-400' : ''}`}>START</label>
-                      <div className="relative">
-                        <select 
-                          value={schedule.startTime} 
-                          onChange={(e) => updateDaySchedule(day, { startTime: e.target.value })} 
-                          disabled={!schedule.enabled}
-                          className={`w-full px-3 py-3 rounded bg-white border border-slate-200 rounded-2xl text-sm appearance-none pr-8 ${
-                            !schedule.enabled ? 'bg-slate-100 cursor-not-allowed' : ''
-                          }`}
-                        >
-                          {timeOptions.map((option) => (
-                            <option key={option.value} value={option.value} className="bg-white">
-                              {option.label}
-                            </option>
-                          ))}
-                        </select>
-                        <div className="absolute right-3 top-1/2 transform -translate-y-1/2 pointer-events-none">
-                          <svg className={`w-5 h-5 ${!schedule.enabled ? 'text-slate-300' : 'text-slate-400'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                          </svg>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div>
-                      <label className={`block text-sm font-medium mb-2 ${!schedule.enabled ? 'text-slate-400' : ''}`}>END</label>
-                      <div className="relative">
-                        <select
-                          value={schedule.endTime}
-                          onChange={(e) => updateDaySchedule(day, { endTime: e.target.value })}
-                          disabled={!schedule.enabled}
-                          className={`w-full px-3 py-3 rounded bg-white border border-slate-200 rounded-2xl text-sm appearance-none pr-8 ${
-                            !schedule.enabled ? 'bg-slate-100 cursor-not-allowed' : ''
-                          }`}
-                        >
-                          {getFilteredTimeOptions(schedule.startTime, undefined, true).map((option) => (
-                            <option key={option.value} value={option.value} className="bg-white">
-                              {option.label}
-                            </option>
-                          ))}
-                        </select>
-                        <div className="absolute right-3 top-1/2 transform -translate-y-1/2 pointer-events-none">
-                          <svg className={`w-5 h-5 ${!schedule.enabled ? 'text-slate-300' : 'text-slate-400'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                          </svg>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Breaks Section */}
-                  <div className="bg-white border border-slate-200 rounded-2xl p-3">
-                    <div className="flex items-center justify-between mb-3">
-                      <div>
-                        <p className={`block text-sm font-bold mb-1 ${!schedule.enabled ? 'text-slate-400' : 'text-gray-800'}`}>Breaks</p>
-                        <p className={`text-xs italic ${!schedule.enabled ? 'text-slate-300' : 'text-slate-500'}`}>Lunch or short pauses.</p>
-                      </div>
-                      <button 
-                        type="button" 
-                        onClick={() => addBreak(day)} 
-                        disabled={!schedule.enabled}
-                        className={`px-2 py-1 rounded-lg text-white transition-colors text-xs font-medium ${
-                          !schedule.enabled 
-                            ? 'bg-slate-400 cursor-not-allowed' 
-                            : 'bg-indigo-600 hover:bg-indigo-700'
-                        }`}
-                      >
-                        + Add
-                      </button>
-                    </div>
-
-                    {schedule.breaks.length === 0 ? (
-                      <p className={`text-xs italic ${!schedule.enabled ? 'text-slate-300' : 'text-slate-500'}`}>No breaks configured</p>
-                    ) : (
-                      <div className="space-y-2">
-                        {schedule.breaks.map((breakTime) => (
-                          <div
-                            key={breakTime.id}
-                            className="grid grid-cols-[1fr_1fr_auto] items-end gap-2"
-                          >
-                            <div className="relative flex-1">
-                              <label className={`block text-sm font-medium mb-2 ${!schedule.enabled ? 'text-slate-400' : ''}`}>FROM</label>
-                              <div className='relative'>
-                                <select
-                                  value={breakTime.start}
-                                  onChange={(e) =>
-                                    updateBreak(day, breakTime.id, 'start', e.target.value)
-                                  }
-                                  disabled={!schedule.enabled}
-                                  className={`w-full px-3 py-3 rounded bg-white border border-slate-200 rounded-2xl text-sm appearance-none pr-8 ${
-                                    !schedule.enabled ? 'bg-slate-100 cursor-not-allowed' : ''
-                                  }`}
-                                >
-                                  {getFilteredTimeOptions(schedule.startTime, schedule.endTime, true).map((option) => (
-                                    <option key={option.value} value={option.value} className="bg-white">
-                                      {option.label}
-                                    </option>
-                                  ))}
-                                </select>
-                                <div className="absolute right-2 top-1/2 transform -translate-y-1/2 pointer-events-none">
-                                  <svg className={`w-4 h-4 ${!schedule.enabled ? 'text-slate-300' : 'text-slate-400'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                                  </svg>
-                                </div>
-                              </div>
-                            </div>
-                            <div className="relative flex-1">
-                              <label className={`block text-sm font-medium mb-2 ${!schedule.enabled ? 'text-slate-400' : ''}`}>TO</label>
-                              <div className='relative'>
-                                <select
-                                  value={breakTime.end}
-                                  onChange={(e) =>
-                                    updateBreak(day, breakTime.id, 'end', e.target.value)
-                                  }
-                                  disabled={!schedule.enabled}
-                                  className={`w-full px-3 py-3 rounded bg-white border border-slate-200 rounded-2xl text-sm appearance-none pr-8 ${
-                                    !schedule.enabled ? 'bg-slate-100 cursor-not-allowed' : ''
-                                  }`}
-                                >
-                                  {getFilteredTimeOptions(breakTime.start, schedule.endTime, true).map((option) => (
-                                    <option key={option.value} value={option.value} className="bg-white">
-                                      {option.label}
-                                    </option>
-                                  ))}
-                                </select>
-                                <div className="absolute right-2 top-1/2 transform -translate-y-1/2 pointer-events-none">
-                                  <svg className={`w-4 h-4 ${!schedule.enabled ? 'text-slate-300' : 'text-slate-400'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                                  </svg>
-                                </div>
-                              </div>
-                            </div>
-                            <button 
-                              type="button" 
-                              onClick={() => removeBreak(day, breakTime.id)} 
-                              disabled={!schedule.enabled}
-                              className={`h-12 rounded-2xl border px-3 text-sm font-black transition ${
-                                !schedule.enabled 
-                                  ? 'border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed' 
-                                  : 'border-red-200 bg-red-50 text-red-700 hover:bg-red-100'
-                              }`}
-                            >
-                              ✕
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="mt-4 flex flex-wrap gap-y-4 gap-x-3 items-start sm:items-center justify-end">
-                    <div className="flex flex-wrap gap-2 items-center justify-end shrink-0">
-                      <button
-                        type="button"
-                        onClick={() => addBreak(day)}
-                        disabled={!schedule.enabled}
-                        className={`inline-flex items-center justify-center rounded-2xl border px-4 py-2.5 text-sm font-bold transition focus:outline-none focus:ring-4 ${
-                          !schedule.enabled
-                            ? 'border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed focus:ring-slate-100'
-                            : 'border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50 focus:ring-zinc-100'
-                        }`}
-                      >
-                        Quick add
-                      </button>
-                      {dayDirty && (
-                        <>
-                          <button
-                            type="button"
-                            onClick={() => handleCopyToAllClick(day)}
-                            disabled={savingDay !== null || isSaving || copyConfirmLoading}
-                            className={`inline-flex items-center justify-center rounded-2xl px-4 py-2.5 text-sm font-bold text-white transition bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed`}
-                          >
-                            Copy to all
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleSaveDay(day)}
-                            disabled={savingDay === day || isSaving}
-                            className="inline-flex items-center justify-center rounded-2xl px-4 py-2.5 text-sm font-bold text-white transition bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                          >
-                            {savingDay === day ? 'Saving...' : 'Save'}
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  </div>
-
-                  {daySaveFeedback[day] && (
-                    <div
-                      className={`mt-3 w-full rounded-lg border px-3 py-2 text-sm font-medium ${
-                        daySaveFeedback[day]?.type === 'success'
-                          ? 'bg-green-50 text-green-700 border-green-200'
-                          : 'bg-red-50 text-red-700 border-red-200'
-                      }`}
-                    >
-                      {daySaveFeedback[day]?.text}
-                    </div>
-                  )}
-                </div>
-              </div>
             </div>
-          );
-        })}
-      </div>
-
-      {copyConfirmDay !== null && (
-        <div
-          className="fixed inset-0 z-[100] flex items-center justify-center overflow-y-auto bg-black/40 p-4"
-          onClick={() => !copyConfirmLoading && setCopyConfirmDay(null)}
-        >
-          <div
-            className="relative bg-white rounded-xl shadow-2xl max-w-md w-full"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="p-6 border-b border-slate-200">
-              <h3 className="text-xl font-semibold text-slate-800">Save changes?</h3>
-            </div>
-            <div className="p-6">
-              <p className="text-slate-700 mb-4">Do you want to save changes for:</p>
-              <ul className="list-disc list-inside text-slate-700 space-y-1 mb-6">
-                <li>Only this day</li>
-                <li>All days</li>
-              </ul>
-              <div className="flex flex-col sm:flex-row sm:justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => !copyConfirmLoading && setCopyConfirmDay(null)}
-                  disabled={copyConfirmLoading}
-                  className="px-4 py-2 text-slate-700 bg-slate-100 rounded-lg hover:bg-slate-200 transition-colors disabled:opacity-50"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={handleCopyConfirmOnlyDay}
-                  disabled={copyConfirmLoading}
-                  className="px-4 py-2 rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-50 transition-colors disabled:opacity-50"
-                >
-                  {copyConfirmLoading ? 'Saving...' : 'Only this day'}
-                </button>
-                <button
-                  type="button"
-                  onClick={handleCopyConfirmAllDays}
-                  disabled={copyConfirmLoading}
-                  className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50"
-                >
-                  {copyConfirmLoading ? 'Saving...' : 'All days'}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+          </>
+        ) : null}
+      </aside>
 
       {saveMessage && !onSaveFeedback && (
         <div
           className={`mt-6 p-4 rounded-lg text-sm font-medium ${
             saveMessage.type === 'success'
-              ? 'bg-green-900/50 text-green-300 border border-green-700'
-              : 'bg-red-900/50 text-red-300 border border-red-700'
+              ? 'bg-green-50 text-green-700 border border-green-200'
+              : 'bg-red-50 text-red-700 border border-red-200'
           }`}
         >
           {saveMessage.text}
         </div>
       )}
-    </div>
+    </>
   );
-}
+});
+
+export default AvailabilityTimesheet;

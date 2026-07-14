@@ -1,81 +1,76 @@
-'use client';
+"use client";
 
 function SkeletonBar({ className }: { className?: string }) {
   return (
     <div
-      className={`rounded bg-slate-200 animate-pulse ${className ?? ''}`}
+      className={`animate-pulse rounded bg-slate-200 ${className ?? ""}`}
+      aria-hidden
     />
   );
 }
 
-const DAY_CARD_COUNT = 7;
+const DAY_ROW_COUNT = 7;
 
-function DayCardSkeleton() {
+function DayRowSkeleton() {
   return (
-    <div className="bg-white rounded-xl p-4 overflow-hidden shadow-sm border border-slate-100 relative">
-      <div className="absolute z-0 inset-0 bg-slate-50/80" aria-hidden />
-      <div className="flex flex-col gap-4 relative z-10">
-        <div className="flex items-center gap-4">
-          <SkeletonBar className="h-12 w-12 rounded-xl shrink-0" />
-          <div className="space-y-2 flex-1 min-w-0">
-            <SkeletonBar className="h-6 w-28" />
-            <SkeletonBar className="h-4 w-40" />
-          </div>
+    <tr className="border-b border-slate-100 last:border-b-0">
+      <td className="px-4 py-3.5">
+        <SkeletonBar className="h-4 w-20" />
+      </td>
+      <td className="px-4 py-3.5">
+        <SkeletonBar className="h-5 w-12 rounded-full" />
+      </td>
+      <td className="px-4 py-3.5">
+        <SkeletonBar className="h-4 w-36" />
+      </td>
+      <td className="px-4 py-3.5">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <SkeletonBar className="h-5 w-24 rounded-md" />
+          <SkeletonBar className="h-5 w-24 rounded-md" />
+          <SkeletonBar className="h-6 w-6 rounded-md" />
         </div>
-        <div className="flex items-center justify-between gap-2">
-          <SkeletonBar className="h-4 w-20" />
-          <SkeletonBar className="h-8 w-28 rounded-full" />
-        </div>
-        <div className="grid grid-cols-2 gap-4">
-          <div className="space-y-2">
-            <SkeletonBar className="h-4 w-12" />
-            <SkeletonBar className="h-12 w-full rounded-2xl" />
-          </div>
-          <div className="space-y-2">
-            <SkeletonBar className="h-4 w-10" />
-            <SkeletonBar className="h-12 w-full rounded-2xl" />
-          </div>
-        </div>
-        <div className="border border-slate-200 rounded-2xl p-3 space-y-3">
-          <div className="flex items-center justify-between">
-            <div className="space-y-1.5">
-              <SkeletonBar className="h-4 w-16" />
-              <SkeletonBar className="h-3 w-32" />
-            </div>
-            <SkeletonBar className="h-7 w-14 rounded-lg" />
-          </div>
-          <SkeletonBar className="h-3 w-36" />
-        </div>
-      </div>
-    </div>
+      </td>
+      <td className="px-4 py-3.5 text-right">
+        <SkeletonBar className="ml-auto h-8 w-16 rounded-lg" />
+      </td>
+    </tr>
   );
 }
 
 export function AvailabilityGeneralSkeleton() {
   return (
-    <div className="px-4 sm:px-6 pb-6">
-      <div className="rounded-xl relative overflow-hidden p-4 mb-6 shadow-sm border border-slate-200 bg-slate-50/50">
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-          <div className="flex flex-col gap-3">
-            <div className="flex flex-wrap items-center gap-2">
-              <SkeletonBar className="h-7 w-24 rounded-full" />
-              <SkeletonBar className="h-7 w-20 rounded-full" />
-              <SkeletonBar className="h-7 w-36 rounded-full" />
-            </div>
-            <SkeletonBar className="h-4 w-64 max-w-full" />
-          </div>
-          <div className="flex flex-wrap gap-3">
-            <SkeletonBar className="h-10 w-28 rounded-lg" />
-            <SkeletonBar className="h-10 w-28 rounded-lg" />
-            <SkeletonBar className="h-10 w-32 rounded-lg" />
-          </div>
-        </div>
-      </div>
+    <div className="space-y-5" aria-busy="true" aria-label="Loading availability">
+      <SkeletonBar className="h-4 w-full max-w-xl" />
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3 gap-6">
-        {Array.from({ length: DAY_CARD_COUNT }).map((_, i) => (
-          <DayCardSkeleton key={i} />
-        ))}
+      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-slate-200 text-left text-sm">
+            <thead className="bg-slate-50">
+              <tr>
+                <th className="px-4 py-3">
+                  <SkeletonBar className="h-3 w-10" />
+                </th>
+                <th className="px-4 py-3">
+                  <SkeletonBar className="h-3 w-14" />
+                </th>
+                <th className="px-4 py-3">
+                  <SkeletonBar className="h-3 w-24" />
+                </th>
+                <th className="px-4 py-3">
+                  <SkeletonBar className="h-3 w-14" />
+                </th>
+                <th className="px-4 py-3">
+                  <SkeletonBar className="ml-auto h-3 w-12" />
+                </th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {Array.from({ length: DAY_ROW_COUNT }).map((_, i) => (
+                <DayRowSkeleton key={i} />
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );

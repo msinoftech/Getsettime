@@ -466,7 +466,7 @@ export async function PUT(req: NextRequest) {
   }
 }
 
-// DELETE: Soft-delete a service so its doctor assignments can be restored later
+// DELETE: Soft-delete a service so its consultant assignments can be restored later
 export async function DELETE(req: NextRequest) {
   try {
     const result = createAuthenticatedClient(req);

@@ -8,11 +8,10 @@
       "esModuleInterop": true,
       "skipLibCheck": true,
       "jsx": "react-jsx",
-      "baseUrl": ".",
       "paths": {
-        "@app/ui": ["packages/ui"],
-        "@app/config": ["packages/config"],
-        "@app/db": ["packages/db"]
+        "@app/ui": ["./packages/ui"],
+        "@app/config": ["./packages/config"],
+        "@app/db": ["./packages/db"]
       }
     }
   }

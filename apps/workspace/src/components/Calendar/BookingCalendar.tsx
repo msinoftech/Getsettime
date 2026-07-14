@@ -394,12 +394,11 @@ export default function BookingCalendar() {
   );
 
   const scheduleDate = useMemo(() => {
-    const todayKey = toDateKey(today);
-    const todayInMonth = currentMonthBookings.some((booking) => {
-      if (!booking.start_at) return false;
-      return toDateKey(new Date(booking.start_at)) === todayKey;
-    });
-    if (todayInMonth) return new Date(today);
+    const viewingCurrentMonth =
+      viewDate.getFullYear() === today.getFullYear() &&
+      viewDate.getMonth() === today.getMonth();
+    // Prefer today when browsing the current month so the sidebar matches "today".
+    if (viewingCurrentMonth) return new Date(today);
     const first = currentMonthBookings.find((booking) => booking.start_at);
     if (first?.start_at) return new Date(first.start_at);
     return new Date(viewDate.getFullYear(), viewDate.getMonth(), 1);

@@ -15,14 +15,22 @@ import {
   isSameWeek,
   eachDayOfInterval,
 } from "date-fns";
+import { LuGlobe as Globe, LuClock as Clock, LuCopy as Copy, LuCalendarPlus as CalendarPlus, LuUsers as Users, LuChevronDown as ChevronDown } from "react-icons/lu";
 import AvailabilityTimesheet, {
   type availability_timesheet_save_feedback,
+  type availability_timesheet_handle,
 } from '@/src/components/Settings/AvailabilityTimesheet';
 import AlertMessage from '@/src/components/Auth/AlertMessage';
 import { AvailabilityGeneralSkeleton } from '@/src/components/ui/AvailabilityGeneralSkeleton';
 import { useWorkspaceSettings } from '@/src/hooks/useWorkspaceSettings';
 import { ROLE_SERVICE_PROVIDER, ROLE_WORKSPACE_ADMIN } from '@/src/constants/roles';
 import { resolveAvailabilityForServiceProvider } from '@/src/utils/availabilityResolution';
+import { CUSTOMER_TIMEZONE_OPTIONS } from '@/src/constants/timezone';
+import {
+  convertWallClockHHmm,
+  formatTimezoneSelectLabel,
+  getBrowserTimezone,
+} from '@/src/utils/timezone';
 import { supabase } from "@/lib/supabaseClient";
 
 type TabType = 'general' | 'availability';
@@ -42,7 +50,7 @@ interface ServiceProvider {
 }
 
 export default function Availability() {
-  const { settings, loading: settingsLoading, refetch: refetchWorkspaceSettings } = useWorkspaceSettings();
+  const { settings, loading: settingsLoading, refetch: refetchWorkspaceSettings, general } = useWorkspaceSettings();
   const [activeTab, setActiveTab] = useState<TabType>('general');
   const [currentDate, setCurrentDate] = useState(new Date());
   const [viewMode, setViewMode] = useState("week");
@@ -51,8 +59,26 @@ export default function Availability() {
   const [hoverDate, setHoverDate] = useState<Date | null>(null);
   const [hasSelectedDate, setHasSelectedDate] = useState(true);
   const calendarRef = useRef<HTMLDivElement>(null);
+  const timezoneMenuRef = useRef<HTMLDivElement>(null);
+  const [timezoneMenuOpen, setTimezoneMenuOpen] = useState(false);
+  const [displayTimezoneOverride, setDisplayTimezoneOverride] = useState<string | null>(null);
   const startWeek = startOfWeek(currentDate, { weekStartsOn: 1 });
   const weekDays = Array.from({ length: 7 }, (_, i) => addDays(startWeek, i));
+
+  const browserTimezone = useMemo(() => getBrowserTimezone(), []);
+  const sourceTimezone = useMemo(() => {
+    const workspaceTz =
+      typeof general?.timezone === "string" ? general.timezone.trim() : "";
+    return workspaceTz || browserTimezone;
+  }, [general?.timezone, browserTimezone]);
+  const displayTimezone = displayTimezoneOverride ?? sourceTimezone;
+
+  const timezoneOptions = useMemo(() => {
+    const set = new Set<string>([...CUSTOMER_TIMEZONE_OPTIONS, sourceTimezone, browserTimezone]);
+    return Array.from(set).sort((a, b) =>
+      formatTimezoneSelectLabel(a).localeCompare(formatTimezoneSelectLabel(b))
+    );
+  }, [sourceTimezone, browserTimezone]);
 
   const [hours, setHours] = useState<number[]>(() =>
     Array.from({ length: 12 }, (_, i) => i + 8)
@@ -81,6 +107,9 @@ export default function Availability() {
   /** Cached full availability from settings - used to re-derive when selectedProviderId changes without re-fetching */
   const [timesheetSaveFeedback, setTimesheetSaveFeedback] =
     useState<availability_timesheet_save_feedback>(null);
+  const [timesheetEditPanelOpen, setTimesheetEditPanelOpen] = useState(false);
+  const [timesheetBusy, setTimesheetBusy] = useState(false);
+  const timesheetRef = useRef<availability_timesheet_handle | null>(null);
   const [settingsAvailability, setSettingsAvailability] = useState<{
     timesheet: Record<DayName, DaySchedule> | null;
     individual: Record<string, boolean> | undefined;
@@ -88,9 +117,18 @@ export default function Availability() {
   } | null>(null);
 
   const formatHour = (hour: number) => {
-    const suffix = hour >= 12 ? "PM" : "AM";
-    const displayHour = hour % 12 === 0 ? 12 : hour % 12;
-    return `${displayHour.toString().padStart(2, "0")}:00 ${suffix}`;
+    const sourceHHmm = `${hour.toString().padStart(2, "0")}:00`;
+    const displayHHmm = convertWallClockHHmm(
+      sourceHHmm,
+      sourceTimezone,
+      displayTimezone
+    );
+    const [h, m] = displayHHmm.split(":").map(Number);
+    const suffix = h >= 12 ? "PM" : "AM";
+    const displayHour = h % 12 === 0 ? 12 : h % 12;
+    return `${displayHour.toString().padStart(2, "0")}:${(m || 0)
+      .toString()
+      .padStart(2, "0")} ${suffix}`;
   };
 
   // Helper function to create a unique key for day and hour
@@ -719,29 +757,49 @@ export default function Availability() {
     return eachDayOfInterval({ start, end });
   }, [calendarMonth]);
 
-  const renderTabNav = (compact?: boolean) => (
-    <nav className="flex shrink-0 border-b border-slate-200">
+  useEffect(() => {
+    if (!timezoneMenuOpen) return;
+    const onPointerDown = (event: MouseEvent) => {
+      if (
+        timezoneMenuRef.current &&
+        !timezoneMenuRef.current.contains(event.target as Node)
+      ) {
+        setTimezoneMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    return () => document.removeEventListener("mousedown", onPointerDown);
+  }, [timezoneMenuOpen]);
+
+  const renderTabNav = () => (
+    <nav className="flex shrink-0 gap-6 border-b border-slate-200">
       <button
         type="button"
-        onClick={() => setActiveTab('general')}
-        className={`${compact ? 'px-8 py-2.5 h-10' : 'px-8 py-2.5'} text-sm font-medium transition-colors whitespace-nowrap ${
-          activeTab === 'general'
-            ? 'text-white bg-indigo-600'
-            : 'text-slate-600 bg-white hover:text-slate-800 hover:bg-slate-50'
+        onClick={() => setActiveTab("general")}
+        className={`relative -mb-px pb-3 text-sm font-semibold transition-colors ${
+          activeTab === "general"
+            ? "text-indigo-600"
+            : "text-slate-500 hover:text-slate-800"
         }`}
       >
-        General
+        Weekly Hours
+        {activeTab === "general" ? (
+          <span className="absolute inset-x-0 -bottom-px h-0.5 rounded-full bg-indigo-600" />
+        ) : null}
       </button>
       <button
         type="button"
-        onClick={() => setActiveTab('availability')}
-        className={`${compact ? 'px-8 py-2.5 h-10' : 'px-8 py-2.5'} text-sm font-medium transition-colors whitespace-nowrap ${
-          activeTab === 'availability'
-            ? 'text-white bg-indigo-600'
-            : 'text-slate-600 bg-white hover:text-slate-800 hover:bg-slate-50'
+        onClick={() => setActiveTab("availability")}
+        className={`relative -mb-px pb-3 text-sm font-semibold transition-colors ${
+          activeTab === "availability"
+            ? "text-indigo-600"
+            : "text-slate-500 hover:text-slate-800"
         }`}
       >
         Availability
+        {activeTab === "availability" ? (
+          <span className="absolute inset-x-0 -bottom-px h-0.5 rounded-full bg-indigo-600" />
+        ) : null}
       </button>
     </nav>
   );
@@ -750,124 +808,202 @@ export default function Availability() {
     if (!isWorkspaceAdminUser) return null;
 
     return (
-      <div className="w-full sm:w-auto sm:min-w-[280px]">
+      <div className="flex flex-wrap items-center gap-3 sm:gap-4">
         <label
           htmlFor="availability-service-provider"
-          className="block text-xs font-medium text-slate-600 mb-1"
+          className="shrink-0 text-sm font-semibold text-slate-800"
         >
-          Service Provider
+          Provider
         </label>
-        <select
-          id="availability-service-provider"
-          value={selectedProviderId}
-          onChange={(e) => setSelectedProviderId(e.target.value)}
-          className="w-full px-3 py-2.5 sm:py-2 rounded-lg border border-slate-300 text-sm bg-white text-slate-700 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition"
-        >
-          <option value="">General Availability (All Providers)</option>
-          {serviceProviders.map((provider) => (
-            <option key={provider.id} value={provider.id}>
-              {provider.name} (Individual)
-            </option>
-          ))}
-        </select>
-        {/* {!selectedProviderId ? (
-          <p className="text-xs text-slate-500 mt-1">
-            General availability applies to all providers unless individually overridden
-          </p>
-        ) : (
-          <p className="text-xs text-slate-500 mt-1">
-            Individual overrides for this provider only
-          </p>
-        )} */}
-      </div>
-    );
-  };
-
-  const renderHeaderControls = () => {
-    if (isWorkspaceAdminUser && activeTab === 'general') {
-      return (
-        <div className="inline-grid grid-cols-[minmax(300px,380px)_auto] gap-x-6 gap-y-1.5 items-end shrink-0">
-          {/* <label
-            htmlFor="availability-service-provider"
-            className="col-start-1 row-start-1 text-xs font-medium text-slate-600"
-          >
-            Service Provider
-          </label>
+        <div className="relative min-w-[240px] flex-1 sm:max-w-md sm:flex-none">
+          <Users className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
           <select
             id="availability-service-provider"
             value={selectedProviderId}
             onChange={(e) => setSelectedProviderId(e.target.value)}
-            className="col-start-1 row-start-2 w-full h-10 px-3 rounded-lg border border-slate-300 text-sm bg-white text-slate-700 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition"
+            className="w-full appearance-none rounded-lg border border-slate-200 bg-white py-2.5 pl-10 pr-9 text-sm text-slate-700 outline-none transition focus:border-indigo-400 focus:ring-2 focus:ring-indigo-500/20"
           >
-            <option value="">General Availability (Workspace)</option>
+            <option value="">General Availability</option>
             {serviceProviders.map((provider) => (
               <option key={provider.id} value={provider.id}>
                 {provider.name}
               </option>
             ))}
-          </select> */}
-          <div className="col-start-2 row-start-2 self-end">{renderTabNav(true)}</div>
-          {/* <p className="col-start-1 row-start-3 text-xs text-slate-500 leading-snug">
-            {!selectedProviderId
-              ? 'General availability applies to all providers unless individually overridden'
-              : `Managing availability for ${serviceProviders.find((p) => p.id === selectedProviderId)?.name ?? 'selected provider'}`}
-          </p> */}
+          </select>
+          <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
         </div>
-      );
-    }
-
-    return renderTabNav();
+      </div>
+    );
   };
 
+  const layoutPanelOpen = activeTab === "general" && timesheetEditPanelOpen;
+
+  const outlineActionBtn =
+    "inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50";
+
   return (
-    <section className="space-y-6 mr-auto">
-      <header className="flex flex-wrap justify-between relative gap-3">
-        <div className="text-sm text-slate-500">
-          <h3 className="text-xl font-semibold text-slate-800">Availability Timesheet</h3>
-          <p className="text-xs text-slate-500">Manage your availability settings and schedule.</p>
+    <section
+      className={`mr-auto space-y-6 transition-[margin] duration-300 ease-in-out ${
+        layoutPanelOpen ? "hidden lg:block lg:mr-[28rem]" : ""
+      }`}
+    >
+      <header className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900 md:text-3xl">
+            Availability Settings
+          </h1>
+          <p className="mt-1 text-sm text-slate-500">
+            Manage your availability, breaks and exceptions
+          </p>
         </div>
-        <div className="w-full sm:w-auto flex justify-end">{renderHeaderControls()}</div>
-      </header>
-      
-      {/* Tabs */}
-      <div className="rounded-2xl border border-slate-100 overflow-hidden">
-        <div className="relative">
-          {activeTab === 'general' && (
-            <div className="mt-0 pt-6 space-y-4">
-              {timesheetSaveFeedback !== null && (
-                <AlertMessage
-                  type={timesheetSaveFeedback.type === 'success' ? 'success' : 'error'}
-                  message={timesheetSaveFeedback.text}
-                />
-              )}
-              {settingsLoading ? (
-                <AvailabilityGeneralSkeleton />
-              ) : (
-                <AvailabilityTimesheet
-                  key={
-                    isServiceProviderUser && currentUserId
-                      ? `sp-${currentUserId}`
-                      : isWorkspaceAdminUser && selectedProviderId
-                        ? `admin-provider-${selectedProviderId}`
-                        : 'workspace-general'
-                  }
-                  providerUserId={
-                    isServiceProviderUser && currentUserId ? currentUserId : undefined
-                  }
-                  saveAsProviderId={
-                    isWorkspaceAdminUser && selectedProviderId ? selectedProviderId : undefined
-                  }
-                  headerExtra={isWorkspaceAdminUser ? renderServiceProviderFilter() : null}
-                  initialTimesheet={generalInitialTimesheet}
-                  onSave={handleGeneralTimesheetSaved}
-                  onSaveFeedback={setTimesheetSaveFeedback}
-                />
-              )}
+        <div ref={timezoneMenuRef} className="relative shrink-0">
+          <button
+            type="button"
+            onClick={() => setTimezoneMenuOpen((open) => !open)}
+            aria-haspopup="listbox"
+            aria-expanded={timezoneMenuOpen}
+            className="inline-flex items-center gap-3 rounded-lg px-1 py-1 text-left transition hover:bg-slate-50"
+          >
+            <Globe className="h-5 w-5 shrink-0 text-slate-600" />
+            <span className="min-w-0">
+              <span className="block text-xs text-slate-500">Timezone</span>
+              <span className="block truncate text-sm font-medium text-slate-800">
+                {formatTimezoneSelectLabel(displayTimezone)}
+              </span>
+            </span>
+            <ChevronDown
+              className={`h-4 w-4 shrink-0 text-slate-500 transition-transform ${
+                timezoneMenuOpen ? "rotate-180" : ""
+              }`}
+            />
+          </button>
+          {timezoneMenuOpen ? (
+            <div
+              role="listbox"
+              className="absolute right-0 z-50 mt-2 max-h-72 w-72 overflow-y-auto rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl"
+            >
+              {timezoneOptions.map((tz) => {
+                const selected = tz === displayTimezone;
+                return (
+                  <button
+                    key={tz}
+                    type="button"
+                    role="option"
+                    aria-selected={selected}
+                    onClick={() => {
+                      setDisplayTimezoneOverride(tz);
+                      setTimezoneMenuOpen(false);
+                    }}
+                    className={`flex w-full items-center rounded-lg px-3 py-2 text-left text-sm transition ${
+                      selected
+                        ? "bg-indigo-50 font-semibold text-indigo-700"
+                        : "text-slate-700 hover:bg-slate-50"
+                    }`}
+                  >
+                    {formatTimezoneSelectLabel(tz)}
+                  </button>
+                );
+              })}
             </div>
+          ) : null}
+        </div>
+      </header>
+
+      <div className="space-y-4">
+        {renderServiceProviderFilter()}
+
+        <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab("general");
+                timesheetRef.current?.applyMonFriPreset();
+              }}
+              disabled={settingsLoading || timesheetBusy}
+              className={outlineActionBtn}
+            >
+              <Clock className="h-4 w-4 text-slate-500" />
+              Apply Mon-Fri 9AM–5PM
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab("general");
+                timesheetRef.current?.copyMondayToWeekdays();
+              }}
+              disabled={settingsLoading || timesheetBusy}
+              className={outlineActionBtn}
+            >
+              <Copy className="h-4 w-4 text-slate-500" />
+              Copy Monday to Weekdays
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab("availability")}
+              className={outlineActionBtn}
+            >
+              <CalendarPlus className="h-4 w-4 text-slate-500" />
+              Add Exception
+            </button>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTab("general");
+              void timesheetRef.current?.saveChanges();
+            }}
+            disabled={settingsLoading || timesheetBusy}
+            className="inline-flex items-center rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {timesheetBusy ? "Saving..." : "Save changes"}
+          </button>
+        </div>
+      </div>
+
+      <div className="space-y-5">
+        {renderTabNav()}
+
+        <div className={activeTab === "general" ? "space-y-4" : "hidden"}>
+          {timesheetSaveFeedback !== null && (
+            <AlertMessage
+              type={timesheetSaveFeedback.type === "success" ? "success" : "error"}
+              message={timesheetSaveFeedback.text}
+            />
           )}
+          {settingsLoading ? (
+            <AvailabilityGeneralSkeleton />
+          ) : (
+            <AvailabilityTimesheet
+              ref={timesheetRef}
+              key={
+                isServiceProviderUser && currentUserId
+                  ? `sp-${currentUserId}`
+                  : isWorkspaceAdminUser && selectedProviderId
+                    ? `admin-provider-${selectedProviderId}`
+                    : "workspace-general"
+              }
+              providerUserId={
+                isServiceProviderUser && currentUserId ? currentUserId : undefined
+              }
+              saveAsProviderId={
+                isWorkspaceAdminUser && selectedProviderId
+                  ? selectedProviderId
+                  : undefined
+              }
+              initialTimesheet={generalInitialTimesheet}
+              onSave={handleGeneralTimesheetSaved}
+              onSaveFeedback={setTimesheetSaveFeedback}
+              onEditPanelOpenChange={setTimesheetEditPanelOpen}
+              onBusyChange={setTimesheetBusy}
+              sourceTimezone={sourceTimezone}
+              displayTimezone={displayTimezone}
+            />
+          )}
+        </div>
 
           {activeTab === 'availability' && (
-            <div className="bg-white p-4 shadow-md space-y-4 sm:space-y-8">
+            <div className="space-y-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:space-y-6 sm:p-5">
               {/* Header */}
               <div className="flex flex-col sm:flex-row sm:flex-wrap items-start sm:items-center gap-3 sm:gap-2">
                 {/* Filters */}
@@ -926,8 +1062,6 @@ export default function Availability() {
                       </div>
                     )}
                   </div>
-
-                  {isWorkspaceAdminUser && renderServiceProviderFilter()}
                 </div>
               </div>
 
@@ -1199,7 +1333,6 @@ export default function Availability() {
               </div>
             </div>
           )}
-        </div>
       </div>
     </section>
   );

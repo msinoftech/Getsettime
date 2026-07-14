@@ -6,7 +6,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type ReactNode,
 } from "react";
 import {
   LuBoxes as Boxes,
@@ -14,7 +13,6 @@ import {
   LuCheck as Check,
   LuChevronDown as ChevronDown,
   LuFileText as FileText,
-  LuFilter as Filter,
   LuGlobe as Globe,
   LuInfo as Info,
   LuLock as Lock,
@@ -22,11 +20,11 @@ import {
   LuPlus as Plus,
   LuPower as Power,
   LuPowerOff as PowerOff,
-  LuSearch as Search,
   LuTrash2 as Trash2,
   LuUsers as Users,
   LuX as X,
 } from "react-icons/lu";
+import { FaUserDoctor } from "react-icons/fa6";
 import type { IconType } from "react-icons";
 import { Pagination, usePagination } from "@app/ui";
 import { supabase } from "@/lib/supabaseClient";
@@ -34,6 +32,24 @@ import { AlertModal } from "@/src/components/ui/AlertModal";
 import { ConfirmModal } from "@/src/components/ui/ConfirmModal";
 import { DepartmentSkeleton } from "@/src/components/ui/DepartmentSkeleton";
 import { PortalActionsMenu } from "@/src/components/ui/PortalActionsMenu";
+import { AddDepartmentPanel } from "@/src/features/departments/AddDepartmentPanel";
+import {
+  DepartmentFilters,
+  type department_status_filter,
+} from "@/src/features/departments/DepartmentFilters";
+import {
+  DEFAULT_DEPARTMENT_COLOR,
+  get_department_gradient,
+  parse_department_color,
+  type department_color_id,
+} from "@/src/features/departments/department_colors";
+import {
+  classNames,
+  DepartmentColorPicker,
+  PanelSection,
+  ProviderAvatar,
+  provider_initials,
+} from "@/src/features/departments/DepartmentPanelPrimitives";
 import { useServiceProviders, useUserDepartments } from "@/src/hooks/useBookingLookups";
 import { useAuth } from "@/src/providers/AuthProvider";
 import type { ServiceProvider } from "@/src/types/booking-entities";
@@ -41,7 +57,7 @@ import type { ServiceProvider } from "@/src/types/booking-entities";
 /** Public=active, Private=private, Draft=draft; inactive kept for legacy rows. */
 type DepartmentStatus = "active" | "private" | "draft" | "inactive";
 type VisibilityStatus = "active" | "private" | "draft";
-type DepartmentFilter = "all" | "active" | "private" | "draft";
+type DepartmentFilter = department_status_filter;
 
 const VISIBILITY_OPTIONS: {
   value: VisibilityStatus;
@@ -86,6 +102,8 @@ interface Department {
   flag: boolean;
   meta_data: {
     service_providers?: DepartmentServiceProviderMeta[];
+    color?: string | null;
+    services?: unknown[];
   } | null;
   created_at: string;
 }
@@ -108,27 +126,10 @@ type DoctorRow = {
 };
 
 const DELETE_CONFIRM_MESSAGE =
-  "Do you want to delete it? If you delete it then you need to again assign doctors. If you just want to hide this department, you can also deactivate it and it will hide from the booking form; you can activate it again anytime in the future.";
+  "Do you want to delete it? If you delete it then you need to again assign consultants. If you just want to hide this department, you can also deactivate it and it will hide from the booking form; you can activate it again anytime in the future.";
 
 const DESCRIPTION_MAX_LENGTH = 150;
 const DEPARTMENTS_PAGE_SIZE = 10;
-
-const CARD_GRADIENTS = [
-  "from-cyan-500 to-sky-600",
-  "from-violet-500 to-indigo-600",
-  "from-emerald-500 to-teal-600",
-  "from-amber-500 to-orange-600",
-  "from-rose-500 to-pink-600",
-  "from-blue-500 to-indigo-600",
-] as const;
-
-function classNames(...classes: Array<string | false | null | undefined>) {
-  return classes.filter(Boolean).join(" ");
-}
-
-function getCardGradient(id: number): string {
-  return CARD_GRADIENTS[Math.abs(id) % CARD_GRADIENTS.length];
-}
 
 function serviceProviderDisplayName(p: ServiceProvider): string {
   return (
@@ -139,80 +140,10 @@ function serviceProviderDisplayName(p: ServiceProvider): string {
   );
 }
 
-function providerInitials(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return "?";
-  const first = parts[0].replace(/^Dr\.?$/i, "");
-  if (parts.length === 1) return (first || parts[0]).slice(0, 2).toUpperCase();
-  const primary = first || parts[1] || "";
-  const secondary = parts[parts.length - 1] || "";
-  const a = primary.charAt(0);
-  const b = secondary.charAt(0);
-  return (a + b).toUpperCase() || parts[0].slice(0, 2).toUpperCase();
-}
-
 function resolveProviderAvatarUrl(p: ServiceProvider): string | null {
   const fromField = p.avatar_url?.trim();
   if (fromField) return fromField;
   return null;
-}
-
-function PanelSection({
-  number,
-  title,
-  children,
-  isLast = false,
-}: {
-  number: number;
-  title: string;
-  children: ReactNode;
-  isLast?: boolean;
-}) {
-  return (
-    <section className={isLast ? "p-4" : "border-b border-slate-200 p-4"}>
-      <div className="mb-4 flex items-center gap-2.5">
-        <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-violet-600 text-xs font-bold text-white">
-          {number}
-        </span>
-        <h3 className="text-sm font-semibold text-slate-900">{title}</h3>
-      </div>
-      <div className="space-y-4">{children}</div>
-    </section>
-  );
-}
-
-function ProviderAvatar({
-  name,
-  initials,
-  avatarUrl,
-  size = "md",
-}: {
-  name: string;
-  initials: string;
-  avatarUrl?: string | null;
-  size?: "sm" | "md";
-}) {
-  const sizeClass = size === "sm" ? "h-7 w-7 text-[10px]" : "h-9 w-9 text-sm";
-  if (avatarUrl) {
-    return (
-      // eslint-disable-next-line @next/next/no-img-element
-      <img
-        src={avatarUrl}
-        alt={name}
-        className={classNames(sizeClass, "shrink-0 rounded-full object-cover")}
-      />
-    );
-  }
-  return (
-    <span
-      className={classNames(
-        sizeClass,
-        "flex shrink-0 items-center justify-center rounded-full bg-blue-100 font-semibold text-blue-700"
-      )}
-    >
-      {initials}
-    </span>
-  );
 }
 
 export default function DepartmentsPage() {
@@ -239,21 +170,13 @@ export default function DepartmentsPage() {
 
   const [departmentSearch, setDepartmentSearch] = useState("");
   const [departmentFilter, setDepartmentFilter] = useState<DepartmentFilter>("all");
-  const [showFilterMenu, setShowFilterMenu] = useState(false);
+  const [serviceFilter, setServiceFilter] = useState("");
+  const [doctorFilter, setDoctorFilter] = useState("");
   const [rowMenuId, setRowMenuId] = useState<number | null>(null);
 
   const [showAddPanel, setShowAddPanel] = useState(false);
   const [showEditPanel, setShowEditPanel] = useState(false);
   const [panelAnimatedOpen, setPanelAnimatedOpen] = useState(false);
-
-  const [departmentName, setDepartmentName] = useState("");
-  const [departmentDescription, setDepartmentDescription] = useState("");
-  const [newAssignedDoctorIds, setNewAssignedDoctorIds] = useState<string[]>([]);
-  const [showNewDoctorsMenu, setShowNewDoctorsMenu] = useState(false);
-  const [newAssignedServiceIds, setNewAssignedServiceIds] = useState<string[]>([]);
-  const [showNewServicesMenu, setShowNewServicesMenu] = useState(false);
-  const [newDepartmentStatus, setNewDepartmentStatus] =
-    useState<VisibilityStatus>("active");
 
   const [editingDepartmentId, setEditingDepartmentId] = useState<number | null>(
     null
@@ -262,14 +185,14 @@ export default function DepartmentsPage() {
   const [editDepartmentDescription, setEditDepartmentDescription] = useState("");
   const [editDepartmentStatus, setEditDepartmentStatus] =
     useState<VisibilityStatus>("active");
+  const [editDepartmentColor, setEditDepartmentColor] =
+    useState<department_color_id>(DEFAULT_DEPARTMENT_COLOR);
   const [editAssignedDoctorIds, setEditAssignedDoctorIds] = useState<string[]>([]);
   const [showEditDoctorsMenu, setShowEditDoctorsMenu] = useState(false);
   const [editAssignedServiceIds, setEditAssignedServiceIds] = useState<string[]>(
     []
   );
   const [showEditServicesMenu, setShowEditServicesMenu] = useState(false);
-
-  const [suggestions, setSuggestions] = useState<string[]>([]);
 
   const [initialLoading, setInitialLoading] = useState(true);
   const [busyAction, setBusyAction] = useState(false);
@@ -337,45 +260,10 @@ export default function DepartmentsPage() {
     [getAuthToken]
   );
 
-  const fetchSuggestions = useCallback(async () => {
-    try {
-      const token = await getAuthToken();
-      if (!token) return;
-
-      const workspaceRes = await fetch("/api/workspace", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!workspaceRes.ok) return;
-
-      const workspaceData = await workspaceRes.json();
-      const adminProfessionsId: number | null =
-        workspaceData?.workspace?.admin_professions_id ?? null;
-      if (!adminProfessionsId) {
-        setSuggestions([]);
-        return;
-      }
-
-      const catalogRes = await fetch(
-        `/api/catalog/departments?profession_id=${adminProfessionsId}`,
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-      if (!catalogRes.ok) return;
-
-      const catalogData = await catalogRes.json();
-      const names: string[] = Array.isArray(catalogData?.departments)
-        ? catalogData.departments
-        : [];
-      setSuggestions(names);
-    } catch (error) {
-      console.error("Error fetching department suggestions:", error);
-    }
-  }, [getAuthToken]);
-
   useEffect(() => {
     fetchDepartments();
     fetchServices();
-    fetchSuggestions();
-  }, [fetchDepartments, fetchServices, fetchSuggestions]);
+  }, [fetchDepartments, fetchServices]);
 
   useEffect(() => {
     if (!isLoggedInServiceProvider || !currentUserId) return;
@@ -522,32 +410,6 @@ export default function DepartmentsPage() {
     assignedDeptIdsForEffectiveProvider,
   ]);
 
-  const suggestionAlreadyExists = useCallback(
-    (name: string) =>
-      departments.some((d) => d.name.toLowerCase() === name.toLowerCase()),
-    [departments]
-  );
-
-  const suggestionShowsAsSelected = useCallback(
-    (name: string) => {
-      if (isLoggedInServiceProvider) {
-        const dep = departments.find(
-          (d) => d.name.toLowerCase() === name.toLowerCase()
-        );
-        return (
-          dep != null && assignedDeptIdsForEffectiveProvider.has(dep.id)
-        );
-      }
-      return suggestionAlreadyExists(name);
-    },
-    [
-      isLoggedInServiceProvider,
-      departments,
-      assignedDeptIdsForEffectiveProvider,
-      suggestionAlreadyExists,
-    ]
-  );
-
   const getDepartmentDoctorCount = useCallback(
     (departmentId: number) => {
       const fromAssignments = doctors.filter((doctor) =>
@@ -583,16 +445,50 @@ export default function DepartmentsPage() {
 
   const searchedDepartments = useMemo(() => {
     const term = departmentSearch.trim().toLowerCase();
-    if (!term) return departmentsForList;
     return departmentsForList.filter((dep) => {
-      const nameMatch = dep.name.toLowerCase().includes(term);
-      const descMatch = (dep.description ?? "").toLowerCase().includes(term);
-      const doctorMatch = getDepartmentDoctors(dep.id).some((d) =>
-        d.name.toLowerCase().includes(term)
-      );
-      return nameMatch || descMatch || doctorMatch;
+      const matchesSearch =
+        term === "" ||
+        dep.name.toLowerCase().includes(term) ||
+        (dep.description ?? "").toLowerCase().includes(term) ||
+        getDepartmentDoctors(dep.id).some((d) =>
+          d.name.toLowerCase().includes(term)
+        );
+      const matchesService =
+        serviceFilter === "" ||
+        getDepartmentServices(dep.id).some((s) => s.id === serviceFilter);
+      const matchesDoctor =
+        doctorFilter === "" ||
+        getDepartmentDoctors(dep.id).some((d) => d.id === doctorFilter);
+      return matchesSearch && matchesService && matchesDoctor;
     });
-  }, [departmentsForList, departmentSearch, getDepartmentDoctors]);
+  }, [
+    departmentsForList,
+    departmentSearch,
+    serviceFilter,
+    doctorFilter,
+    getDepartmentDoctors,
+    getDepartmentServices,
+  ]);
+
+  const filterServiceOptions = useMemo(
+    () =>
+      [...workspaceServices]
+        .map((service) => ({ id: service.id, label: service.name }))
+        .sort((a, b) => a.label.localeCompare(b.label)),
+    [workspaceServices]
+  );
+
+  const filterDoctorOptions = useMemo(
+    () =>
+      [...doctors]
+        .map((doctor) => ({ id: doctor.id, label: doctor.name }))
+        .sort((a, b) => a.label.localeCompare(b.label)),
+    [doctors]
+  );
+
+  const showServiceFilter = filterServiceOptions.length > 0;
+  const showDoctorFilter =
+    !isLoggedInServiceProvider && filterDoctorOptions.length > 0;
 
   const {
     currentPage: departmentsPage,
@@ -605,7 +501,13 @@ export default function DepartmentsPage() {
 
   useEffect(() => {
     setDepartmentsPage(1);
-  }, [departmentSearch, departmentFilter, setDepartmentsPage]);
+  }, [
+    departmentSearch,
+    departmentFilter,
+    serviceFilter,
+    doctorFilter,
+    setDepartmentsPage,
+  ]);
 
   const callApi = useCallback(
     async (
@@ -731,34 +633,6 @@ export default function DepartmentsPage() {
     [doctors, linkUserToDepartment, unlinkUserFromDepartment, refetchUserDepartments]
   );
 
-  const assignSelfToDepartment = useCallback(
-    async (departmentId: number) => {
-      if (!isLoggedInServiceProvider || !currentUserId) return false;
-      if (assignedDeptIdsForEffectiveProvider.has(departmentId)) {
-        setSelectedDepartmentId(departmentId);
-        return true;
-      }
-
-      setBusyAction(true);
-      try {
-        const ok = await linkUserToDepartment(currentUserId, departmentId);
-        if (!ok) return false;
-        await refetchUserDepartments();
-        setSelectedDepartmentId(departmentId);
-        return true;
-      } finally {
-        setBusyAction(false);
-      }
-    },
-    [
-      isLoggedInServiceProvider,
-      currentUserId,
-      assignedDeptIdsForEffectiveProvider,
-      linkUserToDepartment,
-      refetchUserDepartments,
-    ]
-  );
-
   const syncDepartmentServices = useCallback(
     async (departmentId: number, nextServiceIds: string[]) => {
       const currentIds = workspaceServices
@@ -826,44 +700,42 @@ export default function DepartmentsPage() {
     [workspaceServices, getAuthToken, fetchServices]
   );
 
-  const resetAddForm = () => {
-    setDepartmentName("");
-    setDepartmentDescription("");
-    setNewAssignedDoctorIds([]);
-    setShowNewDoctorsMenu(false);
-    setNewAssignedServiceIds([]);
-    setShowNewServicesMenu(false);
-    setNewDepartmentStatus("active");
-  };
-
   const resetEditForm = () => {
     setEditingDepartmentId(null);
     setEditDepartmentName("");
     setEditDepartmentDescription("");
     setEditDepartmentStatus("active");
+    setEditDepartmentColor(DEFAULT_DEPARTMENT_COLOR);
     setEditAssignedDoctorIds([]);
     setShowEditDoctorsMenu(false);
     setEditAssignedServiceIds([]);
     setShowEditServicesMenu(false);
   };
 
-  const closeDepartmentPanel = () => {
-    setShowAddPanel(false);
+  const closeEditDepartmentPanel = () => {
     setShowEditPanel(false);
-    resetAddForm();
     resetEditForm();
   };
 
   const openAddDepartmentDrawer = () => {
-    resetEditForm();
-    setShowEditPanel(false);
-    resetAddForm();
+    closeEditDepartmentPanel();
     setShowAddPanel(true);
   };
 
+  const handleAddDepartmentCreated = useCallback(
+    async (created: { id: number; name: string }) => {
+      await Promise.all([
+        fetchDepartments({ selectId: created.id, silent: true }),
+        fetchServices(),
+        refetchUserDepartments(),
+      ]);
+      setShowAddPanel(false);
+    },
+    [fetchDepartments, fetchServices, refetchUserDepartments]
+  );
+
   const openEditDepartment = (department: Department) => {
     if (isLoggedInServiceProvider) return;
-    resetAddForm();
     setShowAddPanel(false);
     setEditingDepartmentId(department.id);
     setEditDepartmentName(department.name);
@@ -871,6 +743,10 @@ export default function DepartmentsPage() {
       (department.description ?? "").slice(0, DESCRIPTION_MAX_LENGTH)
     );
     setEditDepartmentStatus(toVisibilityStatus(department.status));
+    setEditDepartmentColor(
+      parse_department_color(department.meta_data?.color) ??
+        DEFAULT_DEPARTMENT_COLOR
+    );
     setEditAssignedDoctorIds(
       doctors
         .filter((d) => d.assignedDepartmentIds.includes(department.id))
@@ -886,132 +762,6 @@ export default function DepartmentsPage() {
     setRowMenuId(null);
     setSelectedDepartmentId(department.id);
     setShowEditPanel(true);
-  };
-
-  const createDepartment = useCallback(
-    async (
-      rawName: string,
-      opts?: {
-        description?: string;
-        doctorIds?: string[];
-        serviceIds?: string[];
-        status?: VisibilityStatus;
-      }
-    ): Promise<number | null> => {
-      const name = rawName.trim();
-      if (!name) return null;
-
-      const existing = departments.find(
-        (d) => d.name.toLowerCase() === name.toLowerCase()
-      );
-      if (existing) {
-        if (isLoggedInServiceProvider && currentUserId) {
-          await assignSelfToDepartment(existing.id);
-        } else {
-          setSelectedDepartmentId(existing.id);
-        }
-        return existing.id;
-      }
-
-      setBusyAction(true);
-      try {
-        const linkTarget =
-          isLoggedInServiceProvider && currentUserId
-            ? { id: currentUserId }
-            : serviceProviders.length === 1
-              ? serviceProviders[0]
-              : undefined;
-
-        const data = (await callApi("POST", {
-          name,
-          description: opts?.description?.trim() || null,
-          status: opts?.status ?? "active",
-        })) as {
-          department?: Department;
-          restored?: boolean;
-          reused?: boolean;
-        } | null;
-
-        if (!data?.department?.id) return null;
-
-        const deptId = data.department.id;
-
-        if (linkTarget) {
-          const alreadyLinked =
-            deptIdsByProvider.get(linkTarget.id)?.has(deptId) ?? false;
-          if (!alreadyLinked) {
-            const ok = await linkUserToDepartment(linkTarget.id, deptId);
-            if (!ok) {
-              setAlertMessage("Failed to link provider to department");
-            }
-          }
-          await refetchUserDepartments();
-        } else if (showFullDoctorFlow && opts?.doctorIds?.length) {
-          for (const userId of opts.doctorIds) {
-            await linkUserToDepartment(userId, deptId);
-          }
-          await refetchUserDepartments();
-        }
-
-        if (opts?.serviceIds?.length) {
-          const servicesOk = await syncDepartmentServices(
-            deptId,
-            opts.serviceIds
-          );
-          if (!servicesOk) {
-            await fetchDepartments({ selectId: deptId, silent: true });
-            return null;
-          }
-        }
-
-        await fetchDepartments({ selectId: deptId, silent: true });
-        return deptId;
-      } finally {
-        setBusyAction(false);
-      }
-    },
-    [
-      callApi,
-      departments,
-      fetchDepartments,
-      serviceProviders,
-      deptIdsByProvider,
-      refetchUserDepartments,
-      linkUserToDepartment,
-      isLoggedInServiceProvider,
-      currentUserId,
-      assignSelfToDepartment,
-      showFullDoctorFlow,
-      syncDepartmentServices,
-    ]
-  );
-
-  const handleSuggestionClick = useCallback(
-    async (name: string) => {
-      if (suggestionShowsAsSelected(name)) return;
-      const deptId = await createDepartment(name);
-      if (deptId != null && isLoggedInServiceProvider) {
-        setShowAddPanel(false);
-        setShowEditPanel(false);
-        setDepartmentName("");
-        setDepartmentDescription("");
-        setNewAssignedDoctorIds([]);
-        setShowNewDoctorsMenu(false);
-        setNewAssignedServiceIds([]);
-        setShowNewServicesMenu(false);
-      }
-    },
-    [suggestionShowsAsSelected, createDepartment, isLoggedInServiceProvider]
-  );
-
-  const handleSaveNewDepartment = async () => {
-    const deptId = await createDepartment(departmentName, {
-      description: departmentDescription,
-      doctorIds: newAssignedDoctorIds,
-      serviceIds: newAssignedServiceIds,
-      status: newDepartmentStatus,
-    });
-    if (deptId != null) closeDepartmentPanel();
   };
 
   const handleSaveEditedDepartment = async () => {
@@ -1036,6 +786,9 @@ export default function DepartmentsPage() {
         name: trimmedName,
         description: editDepartmentDescription.trim() || null,
         status: editDepartmentStatus,
+        meta_data: {
+          color: editDepartmentColor,
+        },
       });
 
       if (!data?.department) return;
@@ -1063,7 +816,7 @@ export default function DepartmentsPage() {
           d.id === editingDepartmentId ? { ...d, ...data.department } : d
         )
       );
-      closeDepartmentPanel();
+      closeEditDepartmentPanel();
     } finally {
       setBusyAction(false);
     }
@@ -1109,7 +862,7 @@ export default function DepartmentsPage() {
     if (data) {
       const removedId = deleteConfirmId;
       setDeleteConfirmId(null);
-      if (editingDepartmentId === removedId) closeDepartmentPanel();
+      if (editingDepartmentId === removedId) closeEditDepartmentPanel();
       await fetchDepartments({
         selectId:
           removedId === selectedDepartmentId
@@ -1122,11 +875,12 @@ export default function DepartmentsPage() {
     }
   };
 
-  const panelOpen = showAddPanel || showEditPanel;
-  const panelVisible = panelOpen || panelAnimatedOpen;
+  const editPanelOpen = showEditPanel;
+  const editPanelVisible = editPanelOpen || panelAnimatedOpen;
+  const layoutPanelOpen = showAddPanel || showEditPanel;
 
   useEffect(() => {
-    if (!panelOpen) {
+    if (!editPanelOpen) {
       setPanelAnimatedOpen(false);
       return;
     }
@@ -1134,25 +888,21 @@ export default function DepartmentsPage() {
       requestAnimationFrame(() => setPanelAnimatedOpen(true));
     });
     return () => cancelAnimationFrame(frame);
-  }, [panelOpen]);
+  }, [editPanelOpen]);
 
   useEffect(() => {
-    if (!rowMenuId && !showFilterMenu) return;
+    if (!rowMenuId) return;
     const onPointerDown = (event: MouseEvent) => {
       const target = event.target as HTMLElement | null;
       if (!target) return;
-      if (
-        target.closest("[data-portal-actions-menu]") ||
-        target.closest("[data-filter-menu]")
-      ) {
+      if (target.closest("[data-portal-actions-menu]")) {
         return;
       }
       setRowMenuId(null);
-      setShowFilterMenu(false);
     };
     document.addEventListener("mousedown", onPointerDown);
     return () => document.removeEventListener("mousedown", onPointerDown);
-  }, [rowMenuId, showFilterMenu]);
+  }, [rowMenuId]);
 
   if (initialLoading || spLoading || authLoading) {
     return <DepartmentSkeleton />;
@@ -1161,40 +911,18 @@ export default function DepartmentsPage() {
   const panelFieldClass =
     "w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-violet-400 focus:bg-white disabled:cursor-not-allowed disabled:opacity-60";
 
-  const selectedNewDoctors = doctors.filter((d) =>
-    newAssignedDoctorIds.includes(d.id)
-  );
   const selectedEditDoctors = doctors.filter((d) =>
     editAssignedDoctorIds.includes(d.id)
-  );
-  const selectedNewServices = workspaceServices.filter((s) =>
-    newAssignedServiceIds.includes(s.id)
   );
   const selectedEditServices = workspaceServices.filter((s) =>
     editAssignedServiceIds.includes(s.id)
   );
-
-  const toggleNewDoctor = (doctorId: string) => {
-    setNewAssignedDoctorIds((prev) =>
-      prev.includes(doctorId)
-        ? prev.filter((id) => id !== doctorId)
-        : [...prev, doctorId]
-    );
-  };
 
   const toggleEditDoctor = (doctorId: string) => {
     setEditAssignedDoctorIds((prev) =>
       prev.includes(doctorId)
         ? prev.filter((id) => id !== doctorId)
         : [...prev, doctorId]
-    );
-  };
-
-  const toggleNewService = (serviceId: string) => {
-    setNewAssignedServiceIds((prev) =>
-      prev.includes(serviceId)
-        ? prev.filter((id) => id !== serviceId)
-        : [...prev, serviceId]
     );
   };
 
@@ -1223,17 +951,14 @@ export default function DepartmentsPage() {
     VISIBILITY_OPTIONS.find((o) => o.value === editDepartmentStatus) ??
     VISIBILITY_OPTIONS[0];
   const EditVisibilityIcon = editVisibilityOption.Icon;
-  const newVisibilityOption =
-    VISIBILITY_OPTIONS.find((o) => o.value === newDepartmentStatus) ??
-    VISIBILITY_OPTIONS[0];
-  const NewVisibilityIcon = newVisibilityOption.Icon;
 
   return (
     <>
       <div
         className={classNames(
           "min-h-screen transition-[margin] duration-300 ease-in-out",
-          panelAnimatedOpen && "hidden lg:block lg:mr-[28rem]"
+          (layoutPanelOpen || panelAnimatedOpen) &&
+            "hidden lg:block lg:mr-[28rem]"
         )}
       >
         <div className="mx-auto space-y-5">
@@ -1298,7 +1023,7 @@ export default function DepartmentsPage() {
                   {showFullDoctorFlow ? assignedDoctorsCount : doctors.length}
                 </p>
                 <p className="text-sm text-slate-500">
-                  {showFullDoctorFlow ? "assigned doctors" : "doctors"}
+                  {showFullDoctorFlow ? "assigned consultants" : "consultants"}
                 </p>
               </div>
             </div>
@@ -1319,107 +1044,36 @@ export default function DepartmentsPage() {
           </div>
 
           <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:p-6">
-            <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-              <div>
-                <h2 className="text-lg font-semibold text-slate-900">
-                  All Departments
-                </h2>
-                <p className="mt-1 text-sm text-slate-500">
-                  {showFullDoctorFlow
-                    ? "Organize clinical departments and manage services and doctor assignments."
-                    : isLoggedInServiceProvider
-                      ? "Your assigned departments."
-                      : "Add, edit, activate, deactivate, and delete departments."}
-                </p>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2.5">
-                <div className="relative min-w-[200px] flex-1 sm:flex-none sm:w-64">
-                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                  <input
-                    value={departmentSearch}
-                    onChange={(e) => setDepartmentSearch(e.target.value)}
-                    placeholder="Search departments..."
-                    className="h-10 w-full rounded-xl border border-slate-200 bg-white pl-9 pr-3 text-sm outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
-                  />
-                </div>
-
-                <div className="relative" data-filter-menu>
-                  <button
-                    type="button"
-                    onClick={() => setShowFilterMenu((prev) => !prev)}
-                    className="inline-flex h-10 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
-                  >
-                    <Filter className="h-4 w-4" />
-                    Filter
-                    <ChevronDown className="h-3.5 w-3.5 text-slate-400" />
-                  </button>
-
-                  {showFilterMenu && (
-                    <div className="absolute right-0 top-12 z-20 w-44 rounded-xl border border-slate-200 bg-white p-2 shadow-lg">
-                      {(
-                        ["all", "active", "private", "draft"] as DepartmentFilter[]
-                      ).map((status) => (
-                          <button
-                            key={status}
-                            type="button"
-                            onClick={() => {
-                              setDepartmentFilter(status);
-                              setShowFilterMenu(false);
-                            }}
-                            className={classNames(
-                              "flex w-full items-center justify-between rounded-lg px-3 py-2 text-sm",
-                              departmentFilter === status
-                                ? "bg-blue-50 text-blue-700"
-                                : "text-slate-700 hover:bg-slate-50"
-                            )}
-                          >
-                            <span>
-                              {status === "all"
-                                ? "All"
-                                : status === "active"
-                                  ? "Public"
-                                  : status === "private"
-                                    ? "Private"
-                                    : "Draft"}
-                            </span>
-                            {departmentFilter === status && (
-                              <Check className="h-4 w-4" />
-                            )}
-                          </button>
-                        )
-                      )}
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            <div className="mb-4 flex gap-2 overflow-x-auto pb-1">
-              {(
-                ["all", "active", "private", "draft"] as DepartmentFilter[]
-              ).map((status) => (
-                  <button
-                    key={status}
-                    type="button"
-                    onClick={() => setDepartmentFilter(status)}
-                    className={classNames(
-                      "shrink-0 rounded-full border px-3.5 py-1.5 text-sm font-medium transition",
-                      departmentFilter === status
-                        ? "border-violet-500 bg-violet-50 text-violet-700"
-                        : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
-                    )}
-                  >
-                    {status === "all"
-                      ? "All"
-                      : status === "active"
-                        ? "Public"
-                        : status === "private"
-                          ? "Private"
-                          : "Draft"}
-                  </button>
-                )
-              )}
+            <div className="mb-4">
+              <DepartmentFilters
+                leading={
+                  <div>
+                    <h2 className="text-lg font-semibold text-slate-900">
+                      All Departments
+                    </h2>
+                    <p className="mt-1 text-sm text-slate-500">
+                      {showFullDoctorFlow
+                        ? "Organize clinical departments and manage services and consultant assignments."
+                        : isLoggedInServiceProvider
+                          ? "Your assigned departments."
+                          : "Add, edit, activate, deactivate, and delete departments."}
+                    </p>
+                  </div>
+                }
+                search={departmentSearch}
+                status_filter={departmentFilter}
+                service_filter={serviceFilter}
+                doctor_filter={doctorFilter}
+                service_options={filterServiceOptions}
+                doctor_options={filterDoctorOptions}
+                show_service_filter={showServiceFilter}
+                show_doctor_filter={showDoctorFilter}
+                result_count={searchedDepartments.length}
+                on_search_change={setDepartmentSearch}
+                on_status_filter_change={setDepartmentFilter}
+                on_service_filter_change={setServiceFilter}
+                on_doctor_filter_change={setDoctorFilter}
+              />
             </div>
 
             <div className="overflow-hidden rounded-xl border border-slate-200">
@@ -1431,7 +1085,7 @@ export default function DepartmentsPage() {
                         Department
                       </th>
                       <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
-                        Department doctors
+                        Department consultants
                       </th>
                       <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
                         Services
@@ -1484,10 +1138,10 @@ export default function DepartmentsPage() {
                               <div
                                 className={classNames(
                                   "mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br text-white",
-                                  getCardGradient(dep.id)
+                                  get_department_gradient(dep)
                                 )}
                               >
-                                <Building2 className="h-4 w-4" />
+                                <FaUserDoctor className="h-4 w-4" />
                               </div>
                               <div className="min-w-0">
                                 <p className="truncate text-sm font-semibold text-slate-900">
@@ -1526,7 +1180,7 @@ export default function DepartmentsPage() {
                                     >
                                       <ProviderAvatar
                                         name={doctor.name}
-                                        initials={providerInitials(doctor.name)}
+                                        initials={provider_initials(doctor.name)}
                                         avatarUrl={providerAvatarById.get(doctor.id)}
                                         size="sm"
                                       />
@@ -1668,7 +1322,7 @@ export default function DepartmentsPage() {
                   <span className="font-semibold text-slate-900">
                     {totalAssignments}
                   </span>{" "}
-                  total doctor-department assignments
+                  total consultant-department assignments
                 </p>
               </div>
               <div className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -1710,17 +1364,17 @@ export default function DepartmentsPage() {
             ? "translate-x-0"
             : "pointer-events-none translate-x-full"
         )}
-        aria-hidden={!panelVisible}
+        aria-hidden={!editPanelVisible}
       >
-        {panelVisible && (
+        {editPanelVisible && (
           <>
             <div className="flex shrink-0 items-center justify-between border-b border-slate-200 px-5 py-4">
               <h2 className="text-lg font-bold text-slate-900">
-                {showEditPanel ? "Edit Department" : "Add Department"}
+                Edit Department
               </h2>
               <button
                 type="button"
-                onClick={closeDepartmentPanel}
+                onClick={closeEditDepartmentPanel}
                 className="cursor-pointer rounded-lg border border-slate-200 p-2 text-slate-500 transition hover:bg-slate-50 hover:text-slate-700"
                 aria-label="Close panel"
               >
@@ -1729,700 +1383,373 @@ export default function DepartmentsPage() {
             </div>
 
             <div className="flex min-h-0 flex-1 flex-col overflow-hidden overscroll-contain">
-              {showEditPanel ? (
-                <div className="flex h-full min-h-0 flex-col">
-                  <div className="flex-1 overflow-y-auto px-5 py-5">
-                    <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
-                      <PanelSection number={1} title="Basic Details">
-                        <label className="block">
-                          <span className="mb-2 block text-sm font-medium text-slate-700">
-                            Department name<span className="text-red-500">*</span>
-                          </span>
-                          <input
-                            value={editDepartmentName}
-                            onChange={(e) => setEditDepartmentName(e.target.value)}
-                            placeholder="e.g. Cardiology"
-                            className={panelFieldClass}
+              <div className="flex h-full min-h-0 flex-col">
+                <div className="flex-1 overflow-y-auto px-5 py-5">
+                  <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+                    <PanelSection number={1} title="Basic Details">
+                      <label className="block">
+                        <span className="mb-2 block text-sm font-medium text-slate-700">
+                          Department name<span className="text-red-500">*</span>
+                        </span>
+                        <input
+                          value={editDepartmentName}
+                          onChange={(e) => setEditDepartmentName(e.target.value)}
+                          placeholder="e.g. Cardiology"
+                          className={panelFieldClass}
+                        />
+                      </label>
+                      <label className="block">
+                        <span className="mb-2 block text-sm font-medium text-slate-700">
+                          Short description
+                        </span>
+                        <div className="relative">
+                          <textarea
+                            value={editDepartmentDescription}
+                            onChange={(e) =>
+                              setEditDepartmentDescription(
+                                e.target.value.slice(0, DESCRIPTION_MAX_LENGTH)
+                              )
+                            }
+                            placeholder="Brief summary of this department"
+                            rows={3}
+                            maxLength={DESCRIPTION_MAX_LENGTH}
+                            className={classNames(
+                              panelFieldClass,
+                              "resize-none pb-7"
+                            )}
                           />
-                        </label>
-                        <label className="block">
-                          <span className="mb-2 block text-sm font-medium text-slate-700">
-                            Short description
+                          <span className="pointer-events-none absolute bottom-2.5 right-3 text-xs text-slate-400">
+                            {editDepartmentDescription.length}/
+                            {DESCRIPTION_MAX_LENGTH}
                           </span>
-                          <div className="relative">
-                            <textarea
-                              value={editDepartmentDescription}
-                              onChange={(e) =>
-                                setEditDepartmentDescription(
-                                  e.target.value.slice(0, DESCRIPTION_MAX_LENGTH)
-                                )
-                              }
-                              placeholder="Brief summary of this department"
-                              rows={3}
-                              maxLength={DESCRIPTION_MAX_LENGTH}
-                              className={classNames(
-                                panelFieldClass,
-                                "resize-none pb-7"
-                              )}
-                            />
-                            <span className="pointer-events-none absolute bottom-2.5 right-3 text-xs text-slate-400">
-                              {editDepartmentDescription.length}/
-                              {DESCRIPTION_MAX_LENGTH}
-                            </span>
-                          </div>
-                        </label>
-                      </PanelSection>
-
-                      {showOrganizationSection && (
-                        <PanelSection number={2} title="Organization">
-                          {showFullDoctorFlow &&
-                            editDepartmentStatus !== "active" && (
-                            <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs font-medium text-amber-700">
-                              <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                              <p>
-                                This department is not public. New doctor
-                                assignments are disabled until you set it to
-                                Public.
-                              </p>
-                            </div>
-                          )}
-                          {showFullDoctorFlow && (
-                            <div>
-                              <p className="mb-2 text-sm font-medium text-slate-700">
-                                Department doctors
-                              </p>
-                              <p className="mb-2 text-xs text-slate-500">
-                                Doctors who belong to this department.
-                              </p>
-                              {doctors.length === 0 ? (
-                                <p className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-500">
-                                  No doctors available yet.
-                                </p>
-                              ) : (
-                                <>
-                                  <div className="relative">
-                                    <button
-                                      type="button"
-                                      onClick={() =>
-                                        setShowEditDoctorsMenu((prev) => !prev)
-                                      }
-                                      disabled={editDepartmentStatus !== "active"}
-                                      className="flex w-full items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-left text-sm text-slate-700 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
-                                    >
-                                      <span>
-                                        {selectedEditDoctors.length === 0
-                                          ? "Select doctors"
-                                          : `${selectedEditDoctors.length} selected`}
-                                      </span>
-                                      <ChevronDown className="h-4 w-4 text-slate-400" />
-                                    </button>
-                                    {showEditDoctorsMenu && (
-                                      <div className="absolute left-0 right-0 top-12 z-20 max-h-56 overflow-y-auto rounded-xl border border-slate-200 bg-white p-2 shadow-lg">
-                                        {doctors.map((doctor) => {
-                                          const checked =
-                                            editAssignedDoctorIds.includes(
-                                              doctor.id
-                                            );
-                                          return (
-                                            <button
-                                              key={doctor.id}
-                                              type="button"
-                                              onClick={() =>
-                                                toggleEditDoctor(doctor.id)
-                                              }
-                                              className="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-sm hover:bg-slate-50"
-                                            >
-                                              <span
-                                                className={classNames(
-                                                  "flex h-4 w-4 shrink-0 items-center justify-center rounded border",
-                                                  checked
-                                                    ? "border-violet-600 bg-violet-600 text-white"
-                                                    : "border-slate-300"
-                                                )}
-                                              >
-                                                {checked && (
-                                                  <Check className="h-2.5 w-2.5" />
-                                                )}
-                                              </span>
-                                              <ProviderAvatar
-                                                name={doctor.name}
-                                                initials={providerInitials(
-                                                  doctor.name
-                                                )}
-                                                avatarUrl={doctor.avatarUrl}
-                                                size="sm"
-                                              />
-                                              <span className="min-w-0 truncate text-slate-800">
-                                                {doctor.name}
-                                              </span>
-                                            </button>
-                                          );
-                                        })}
-                                      </div>
-                                    )}
-                                  </div>
-                                  {selectedEditDoctors.length > 0 && (
-                                    <div className="mt-2 flex flex-wrap gap-2">
-                                      {selectedEditDoctors.map((doctor) => (
-                                        <span
-                                          key={doctor.id}
-                                          className="inline-flex items-center gap-1.5 rounded-full bg-violet-50 px-2.5 py-1 text-xs font-medium text-violet-800"
-                                        >
-                                          {doctor.name}
-                                          <button
-                                            type="button"
-                                            onClick={() =>
-                                              toggleEditDoctor(doctor.id)
-                                            }
-                                            className="rounded-full p-0.5 hover:bg-violet-100"
-                                            aria-label={`Remove ${doctor.name}`}
-                                          >
-                                            <X className="h-3 w-3" />
-                                          </button>
-                                        </span>
-                                      ))}
-                                    </div>
-                                  )}
-                                </>
-                              )}
-                            </div>
-                          )}
-
-                          <div>
-                            <p className="mb-2 text-sm font-medium text-slate-700">
-                              Services offered
-                              <span className="text-red-500">*</span>
-                            </p>
-                            <p className="mb-2 text-xs text-slate-500">
-                              Services available in this department.
-                            </p>
-                            {workspaceServices.length === 0 ? (
-                              <p className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-500">
-                                No services yet. Create services from the Services
-                                screen.
-                              </p>
-                            ) : (
-                              <>
-                                <div className="relative">
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      setShowEditServicesMenu((prev) => !prev)
-                                    }
-                                    className="flex w-full items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-left text-sm text-slate-700 transition hover:bg-white"
-                                  >
-                                    <span>
-                                      {selectedEditServices.length === 0
-                                        ? "Select services"
-                                        : `${selectedEditServices.length} selected`}
-                                    </span>
-                                    <ChevronDown className="h-4 w-4 text-slate-400" />
-                                  </button>
-                                  {showEditServicesMenu && (
-                                    <div className="absolute left-0 right-0 top-12 z-20 max-h-56 overflow-y-auto rounded-xl border border-slate-200 bg-white p-2 shadow-lg">
-                                      {workspaceServices.map((service) => {
-                                        const checked =
-                                          editAssignedServiceIds.includes(
-                                            service.id
-                                          );
-                                        return (
-                                          <button
-                                            key={service.id}
-                                            type="button"
-                                            onClick={() =>
-                                              toggleEditService(service.id)
-                                            }
-                                            className="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-sm hover:bg-slate-50"
-                                          >
-                                            <span
-                                              className={classNames(
-                                                "flex h-4 w-4 shrink-0 items-center justify-center rounded border",
-                                                checked
-                                                  ? "border-violet-600 bg-violet-600 text-white"
-                                                  : "border-slate-300"
-                                              )}
-                                            >
-                                              {checked && (
-                                                <Check className="h-2.5 w-2.5" />
-                                              )}
-                                            </span>
-                                            <span className="min-w-0 truncate text-slate-800">
-                                              {serviceOptionLabel(service)}
-                                            </span>
-                                          </button>
-                                        );
-                                      })}
-                                    </div>
-                                  )}
-                                </div>
-                                {selectedEditServices.length > 0 && (
-                                  <div className="mt-2 flex flex-wrap gap-2">
-                                    {selectedEditServices.map((service) => (
-                                      <span
-                                        key={service.id}
-                                        className="inline-flex items-center gap-1.5 rounded-full bg-violet-50 px-2.5 py-1 text-xs font-medium text-violet-800"
-                                      >
-                                        {service.name}
-                                        <button
-                                          type="button"
-                                          onClick={() =>
-                                            toggleEditService(service.id)
-                                          }
-                                          className="rounded-full p-0.5 hover:bg-violet-100"
-                                          aria-label={`Remove ${service.name}`}
-                                        >
-                                          <X className="h-3 w-3" />
-                                        </button>
-                                      </span>
-                                    ))}
-                                  </div>
-                                )}
-                              </>
-                            )}
-                          </div>
-
-                          <div className="flex items-start gap-2 rounded-xl border border-violet-100 bg-violet-50 px-3 py-2.5 text-xs text-violet-800">
-                            <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                            <p>
-                              Services are not automatically assigned to all
-                              department doctors. Doctors are assigned to specific
-                              services from the Services screen.
-                            </p>
-                          </div>
-                        </PanelSection>
-                      )}
-
-                      <PanelSection
-                        number={showOrganizationSection ? 3 : 2}
-                        title="Visibility"
-                        isLast
-                      >
-                        <div className="flex items-center justify-between gap-3">
-                          <span className="text-sm text-slate-700">Visibility</span>
-                          <div className="relative min-w-[9.5rem]">
-                            <EditVisibilityIcon className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
-                            <select
-                              value={editDepartmentStatus}
-                              onChange={(e) =>
-                                setEditDepartmentStatus(
-                                  e.target.value as VisibilityStatus
-                                )
-                              }
-                              aria-label="Visibility"
-                              className="w-full appearance-none rounded-xl border border-slate-200 bg-white py-2 pl-9 pr-8 text-sm text-slate-800 outline-none transition focus:border-violet-400"
-                            >
-                              {VISIBILITY_OPTIONS.map((option) => (
-                                <option key={option.value} value={option.value}>
-                                  {option.label}
-                                </option>
-                              ))}
-                            </select>
-                            <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
-                          </div>
                         </div>
-                        <p className="text-xs text-slate-500">
-                          Only Public departments appear on the booking form.
-                        </p>
-                      </PanelSection>
-                    </div>
-                  </div>
+                      </label>
+                    </PanelSection>
 
-                  <div className="shrink-0 border-t border-slate-200 bg-white px-5 py-4">
-                    <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
-                      <button
-                        type="button"
-                        onClick={closeDepartmentPanel}
-                        className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => void handleSaveEditedDepartment()}
-                        disabled={busyAction || !editDepartmentName.trim()}
-                        className="rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        {busyAction ? "Saving…" : "Save Department"}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <div className="flex h-full min-h-0 flex-col">
-                  <div className="flex-1 overflow-y-auto px-5 py-5">
-                    <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
-                      <PanelSection
-                        number={1}
-                        title="Basic Details"
-                        isLast={isLoggedInServiceProvider}
-                      >
-                        {!isLoggedInServiceProvider && (
-                          <>
-                            <label className="block">
-                              <span className="mb-2 block text-sm font-medium text-slate-700">
-                                Department name
-                                <span className="text-red-500">*</span>
-                              </span>
-                              <input
-                                value={departmentName}
-                                onChange={(e) => setDepartmentName(e.target.value)}
-                                placeholder="e.g. Cardiology"
-                                className={panelFieldClass}
-                              />
-                            </label>
-                            <label className="block">
-                              <span className="mb-2 block text-sm font-medium text-slate-700">
-                                Short description
-                              </span>
-                              <div className="relative">
-                                <textarea
-                                  value={departmentDescription}
-                                  onChange={(e) =>
-                                    setDepartmentDescription(
-                                      e.target.value.slice(0, DESCRIPTION_MAX_LENGTH)
-                                    )
-                                  }
-                                  placeholder="Brief summary of this department"
-                                  rows={3}
-                                  maxLength={DESCRIPTION_MAX_LENGTH}
-                                  className={classNames(
-                                    panelFieldClass,
-                                    "resize-none pb-7"
-                                  )}
-                                />
-                                <span className="pointer-events-none absolute bottom-2.5 right-3 text-xs text-slate-400">
-                                  {departmentDescription.length}/
-                                  {DESCRIPTION_MAX_LENGTH}
-                                </span>
-                              </div>
-                            </label>
-                          </>
-                        )}
-
-                        {suggestions.length > 0 && (
-                          <div>
-                            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                              Quick Suggestions
+                    {showOrganizationSection && (
+                      <PanelSection number={2} title="Organization">
+                        {showFullDoctorFlow &&
+                          editDepartmentStatus !== "active" && (
+                          <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs font-medium text-amber-700">
+                            <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                            <p>
+                              This department is not public. New consultant
+                              assignments are disabled until you set it to
+                              Public.
                             </p>
-                            <p className="mb-2 text-xs text-slate-500">
-                              {isLoggedInServiceProvider
-                                ? "Select a department to assign it to yourself."
-                                : "Click a suggestion to fill the department name."}
-                            </p>
-                            <div className="flex flex-wrap gap-2">
-                              {suggestions.map((item) => {
-                                const selected = suggestionShowsAsSelected(item);
-                                return (
-                                  <button
-                                    key={item}
-                                    type="button"
-                                    onClick={() => {
-                                      if (selected) return;
-                                      if (isLoggedInServiceProvider) {
-                                        void handleSuggestionClick(item);
-                                        return;
-                                      }
-                                      setDepartmentName(item);
-                                    }}
-                                    disabled={busyAction || selected}
-                                    className={classNames(
-                                      "rounded-full px-3 py-1.5 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-60",
-                                      selected
-                                        ? "border border-emerald-200 bg-emerald-50 text-emerald-700"
-                                        : departmentName === item
-                                          ? "border border-violet-300 bg-violet-50 text-violet-700"
-                                          : "border border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
-                                    )}
-                                  >
-                                    {selected ? "✓" : "+"} {item}
-                                  </button>
-                                );
-                              })}
-                            </div>
                           </div>
                         )}
-
-                        {isLoggedInServiceProvider && suggestions.length === 0 && (
-                          <p className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-500">
-                            No department suggestions available for your profession
-                            yet.
-                          </p>
-                        )}
-                      </PanelSection>
-
-                      {showOrganizationSection && (
-                        <PanelSection number={2} title="Organization">
-                          {showFullDoctorFlow && (
-                            <div>
-                              <p className="mb-2 text-sm font-medium text-slate-700">
-                                Department doctors
+                        {showFullDoctorFlow && (
+                          <div>
+                            <p className="mb-2 text-sm font-medium text-slate-700">
+                              Department consultants
+                            </p>
+                            <p className="mb-2 text-xs text-slate-500">
+                            Consultants who belong to this department.
+                            </p>
+                            {doctors.length === 0 ? (
+                              <p className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-500">
+                                No consultants available yet.
                               </p>
-                              <p className="mb-2 text-xs text-slate-500">
-                                Doctors who belong to this department.
-                              </p>
-                              {doctors.length === 0 ? (
-                                <p className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-500">
-                                  No doctors available yet.
-                                </p>
-                              ) : (
-                                <>
-                                  <div className="relative">
-                                    <button
-                                      type="button"
-                                      onClick={() =>
-                                        setShowNewDoctorsMenu((prev) => !prev)
-                                      }
-                                      className="flex w-full items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-left text-sm text-slate-700 transition hover:bg-white"
-                                    >
-                                      <span>
-                                        {selectedNewDoctors.length === 0
-                                          ? "Select doctors"
-                                          : `${selectedNewDoctors.length} selected`}
+                            ) : (
+                              <div className="relative">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setShowEditDoctorsMenu((prev) => !prev)
+                                  }
+                                  disabled={editDepartmentStatus !== "active"}
+                                  className="flex min-h-[42px] w-full items-center justify-between gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-left text-sm text-slate-700 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
+                                >
+                                  <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+                                    {selectedEditDoctors.length === 0 ? (
+                                      <span className="text-slate-500">
+                                        Select consultants
                                       </span>
-                                      <ChevronDown className="h-4 w-4 text-slate-400" />
-                                    </button>
-                                    {showNewDoctorsMenu && (
-                                      <div className="absolute left-0 right-0 top-12 z-20 max-h-56 overflow-y-auto rounded-xl border border-slate-200 bg-white p-2 shadow-lg">
-                                        {doctors.map((doctor) => {
-                                          const checked =
-                                            newAssignedDoctorIds.includes(
-                                              doctor.id
-                                            );
-                                          return (
-                                            <button
-                                              key={doctor.id}
-                                              type="button"
-                                              onClick={() =>
-                                                toggleNewDoctor(doctor.id)
-                                              }
-                                              className="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-sm hover:bg-slate-50"
-                                            >
-                                              <span
-                                                className={classNames(
-                                                  "flex h-4 w-4 shrink-0 items-center justify-center rounded border",
-                                                  checked
-                                                    ? "border-violet-600 bg-violet-600 text-white"
-                                                    : "border-slate-300"
-                                                )}
-                                              >
-                                                {checked && (
-                                                  <Check className="h-2.5 w-2.5" />
-                                                )}
-                                              </span>
-                                              <ProviderAvatar
-                                                name={doctor.name}
-                                                initials={providerInitials(
-                                                  doctor.name
-                                                )}
-                                                avatarUrl={doctor.avatarUrl}
-                                                size="sm"
-                                              />
-                                              <span className="min-w-0 truncate text-slate-800">
-                                                {doctor.name}
-                                              </span>
-                                            </button>
-                                          );
-                                        })}
-                                      </div>
-                                    )}
-                                  </div>
-                                  {selectedNewDoctors.length > 0 && (
-                                    <div className="mt-2 flex flex-wrap gap-2">
-                                      {selectedNewDoctors.map((doctor) => (
+                                    ) : (
+                                      selectedEditDoctors.map((doctor) => (
                                         <span
                                           key={doctor.id}
-                                          className="inline-flex items-center gap-1.5 rounded-full bg-violet-50 px-2.5 py-1 text-xs font-medium text-violet-800"
+                                          className="inline-flex max-w-full items-center gap-1.5 rounded-full bg-violet-50 px-2.5 py-1 text-xs font-medium text-violet-800"
+                                          onClick={(e) => e.stopPropagation()}
+                                          onMouseDown={(e) =>
+                                            e.stopPropagation()
+                                          }
                                         >
-                                          {doctor.name}
-                                          <button
-                                            type="button"
-                                            onClick={() =>
-                                              toggleNewDoctor(doctor.id)
-                                            }
+                                          <span className="min-w-0 truncate">
+                                            {doctor.name}
+                                          </span>
+                                          <span
+                                            role="button"
+                                            tabIndex={0}
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              toggleEditDoctor(doctor.id);
+                                            }}
+                                            onKeyDown={(e) => {
+                                              if (
+                                                e.key === "Enter" ||
+                                                e.key === " "
+                                              ) {
+                                                e.preventDefault();
+                                                e.stopPropagation();
+                                                toggleEditDoctor(doctor.id);
+                                              }
+                                            }}
                                             className="rounded-full p-0.5 hover:bg-violet-100"
                                             aria-label={`Remove ${doctor.name}`}
                                           >
                                             <X className="h-3 w-3" />
-                                          </button>
+                                          </span>
                                         </span>
-                                      ))}
-                                    </div>
-                                  )}
-                                </>
-                              )}
-                            </div>
-                          )}
-
-                          <div>
-                            <p className="mb-2 text-sm font-medium text-slate-700">
-                              Services offered
-                              <span className="text-red-500">*</span>
-                            </p>
-                            <p className="mb-2 text-xs text-slate-500">
-                              Services available in this department.
-                            </p>
-                            {workspaceServices.length === 0 ? (
-                              <p className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-500">
-                                No services yet. Create services from the Services
-                                screen.
-                              </p>
-                            ) : (
-                              <>
-                                <div className="relative">
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      setShowNewServicesMenu((prev) => !prev)
-                                    }
-                                    className="flex w-full items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-left text-sm text-slate-700 transition hover:bg-white"
-                                  >
-                                    <span>
-                                      {selectedNewServices.length === 0
-                                        ? "Select services"
-                                        : `${selectedNewServices.length} selected`}
-                                    </span>
-                                    <ChevronDown className="h-4 w-4 text-slate-400" />
-                                  </button>
-                                  {showNewServicesMenu && (
-                                    <div className="absolute left-0 right-0 top-12 z-20 max-h-56 overflow-y-auto rounded-xl border border-slate-200 bg-white p-2 shadow-lg">
-                                      {workspaceServices.map((service) => {
-                                        const checked =
-                                          newAssignedServiceIds.includes(
-                                            service.id
-                                          );
-                                        return (
-                                          <button
-                                            key={service.id}
-                                            type="button"
-                                            onClick={() =>
-                                              toggleNewService(service.id)
-                                            }
-                                            className="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-sm hover:bg-slate-50"
-                                          >
-                                            <span
-                                              className={classNames(
-                                                "flex h-4 w-4 shrink-0 items-center justify-center rounded border",
-                                                checked
-                                                  ? "border-violet-600 bg-violet-600 text-white"
-                                                  : "border-slate-300"
-                                              )}
-                                            >
-                                              {checked && (
-                                                <Check className="h-2.5 w-2.5" />
-                                              )}
-                                            </span>
-                                            <span className="min-w-0 truncate text-slate-800">
-                                              {serviceOptionLabel(service)}
-                                            </span>
-                                          </button>
+                                      ))
+                                    )}
+                                  </div>
+                                  <ChevronDown className="h-4 w-4 shrink-0 text-slate-400" />
+                                </button>
+                                {showEditDoctorsMenu && (
+                                  <div className="absolute left-0 right-0 top-full z-20 mt-1 max-h-56 overflow-y-auto rounded-xl border border-slate-200 bg-white p-2 shadow-lg">
+                                    {doctors.map((doctor) => {
+                                      const checked =
+                                        editAssignedDoctorIds.includes(
+                                          doctor.id
                                         );
-                                      })}
-                                    </div>
-                                  )}
-                                </div>
-                                {selectedNewServices.length > 0 && (
-                                  <div className="mt-2 flex flex-wrap gap-2">
-                                    {selectedNewServices.map((service) => (
-                                      <span
-                                        key={service.id}
-                                        className="inline-flex items-center gap-1.5 rounded-full bg-violet-50 px-2.5 py-1 text-xs font-medium text-violet-800"
-                                      >
-                                        {service.name}
+                                      return (
                                         <button
+                                          key={doctor.id}
                                           type="button"
                                           onClick={() =>
-                                            toggleNewService(service.id)
+                                            toggleEditDoctor(doctor.id)
                                           }
+                                          disabled={
+                                            editDepartmentStatus !== "active" &&
+                                            !checked
+                                          }
+                                          className="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                        >
+                                          <span
+                                            className={classNames(
+                                              "flex h-4 w-4 shrink-0 items-center justify-center rounded border",
+                                              checked
+                                                ? "border-violet-600 bg-violet-600 text-white"
+                                                : "border-slate-300"
+                                            )}
+                                          >
+                                            {checked && (
+                                              <Check className="h-2.5 w-2.5" />
+                                            )}
+                                          </span>
+                                          <ProviderAvatar
+                                            name={doctor.name}
+                                            initials={provider_initials(
+                                              doctor.name
+                                            )}
+                                            avatarUrl={doctor.avatarUrl}
+                                            size="sm"
+                                          />
+                                          <span className="min-w-0 truncate text-slate-800">
+                                            {doctor.name}
+                                          </span>
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        <div>
+                          <p className="mb-2 text-sm font-medium text-slate-700">
+                            Services offered
+                            <span className="text-red-500">*</span>
+                          </p>
+                          <p className="mb-2 text-xs text-slate-500">
+                            Services available in this department.
+                          </p>
+                          {workspaceServices.length === 0 ? (
+                            <p className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-500">
+                              No services yet. Create services from the Services
+                              screen.
+                            </p>
+                          ) : (
+                            <div className="relative">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setShowEditServicesMenu((prev) => !prev)
+                                }
+                                className="flex min-h-[42px] w-full items-center justify-between gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-left text-sm text-slate-700 transition hover:bg-white"
+                              >
+                                <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+                                  {selectedEditServices.length === 0 ? (
+                                    <span className="text-slate-500">
+                                      Select services
+                                    </span>
+                                  ) : (
+                                    selectedEditServices.map((service) => (
+                                      <span
+                                        key={service.id}
+                                        className="inline-flex max-w-full items-center gap-1.5 rounded-full bg-violet-50 px-2.5 py-1 text-xs font-medium text-violet-800"
+                                        onClick={(e) => e.stopPropagation()}
+                                        onMouseDown={(e) => e.stopPropagation()}
+                                      >
+                                        <span className="min-w-0 truncate">
+                                          {service.name}
+                                        </span>
+                                        <span
+                                          role="button"
+                                          tabIndex={0}
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            toggleEditService(service.id);
+                                          }}
+                                          onKeyDown={(e) => {
+                                            if (
+                                              e.key === "Enter" ||
+                                              e.key === " "
+                                            ) {
+                                              e.preventDefault();
+                                              e.stopPropagation();
+                                              toggleEditService(service.id);
+                                            }
+                                          }}
                                           className="rounded-full p-0.5 hover:bg-violet-100"
                                           aria-label={`Remove ${service.name}`}
                                         >
                                           <X className="h-3 w-3" />
-                                        </button>
+                                        </span>
                                       </span>
-                                    ))}
-                                  </div>
-                                )}
-                              </>
-                            )}
-                          </div>
-
-                          <div className="flex items-start gap-2 rounded-xl border border-violet-100 bg-violet-50 px-3 py-2.5 text-xs text-violet-800">
-                            <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                            <p>
-                              Services are not automatically assigned to all
-                              department doctors. Doctors are assigned to specific
-                              services from the Services screen.
-                            </p>
-                          </div>
-                        </PanelSection>
-                      )}
-
-                      {!isLoggedInServiceProvider && (
-                        <PanelSection
-                          number={showOrganizationSection ? 3 : 2}
-                          title="Visibility"
-                          isLast
-                        >
-                          <div className="flex items-center justify-between gap-3">
-                            <span className="text-sm text-slate-700">
-                              Visibility
-                            </span>
-                            <div className="relative min-w-[9.5rem]">
-                              <NewVisibilityIcon className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
-                              <select
-                                value={newDepartmentStatus}
-                                onChange={(e) =>
-                                  setNewDepartmentStatus(
-                                    e.target.value as VisibilityStatus
-                                  )
-                                }
-                                aria-label="Visibility"
-                                className="w-full appearance-none rounded-xl border border-slate-200 bg-white py-2 pl-9 pr-8 text-sm text-slate-800 outline-none transition focus:border-violet-400"
-                              >
-                                {VISIBILITY_OPTIONS.map((option) => (
-                                  <option key={option.value} value={option.value}>
-                                    {option.label}
-                                  </option>
-                                ))}
-                              </select>
-                              <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+                                    ))
+                                  )}
+                                </div>
+                                <ChevronDown className="h-4 w-4 shrink-0 text-slate-400" />
+                              </button>
+                              {showEditServicesMenu && (
+                                <div className="absolute left-0 right-0 top-full z-20 mt-1 max-h-56 overflow-y-auto rounded-xl border border-slate-200 bg-white p-2 shadow-lg">
+                                  {workspaceServices.map((service) => {
+                                    const checked =
+                                      editAssignedServiceIds.includes(
+                                        service.id
+                                      );
+                                    return (
+                                      <button
+                                        key={service.id}
+                                        type="button"
+                                        onClick={() =>
+                                          toggleEditService(service.id)
+                                        }
+                                        className="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-sm hover:bg-slate-50"
+                                      >
+                                        <span
+                                          className={classNames(
+                                            "flex h-4 w-4 shrink-0 items-center justify-center rounded border",
+                                            checked
+                                              ? "border-violet-600 bg-violet-600 text-white"
+                                              : "border-slate-300"
+                                          )}
+                                        >
+                                          {checked && (
+                                            <Check className="h-2.5 w-2.5" />
+                                          )}
+                                        </span>
+                                        <span className="min-w-0 truncate text-slate-800">
+                                          {serviceOptionLabel(service)}
+                                        </span>
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              )}
                             </div>
-                          </div>
-                          <p className="text-xs text-slate-500">
-                            Only Public departments appear on the booking form.
-                          </p>
-                        </PanelSection>
-                      )}
-                    </div>
-                  </div>
+                          )}
+                        </div>
 
-                  <div className="shrink-0 border-t border-slate-200 bg-white px-5 py-4">
-                    <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
-                      <button
-                        type="button"
-                        onClick={closeDepartmentPanel}
-                        className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-                      >
-                        {isLoggedInServiceProvider ? "Close" : "Cancel"}
-                      </button>
-                      {!isLoggedInServiceProvider && (
-                        <button
-                          type="button"
-                          onClick={() => void handleSaveNewDepartment()}
-                          disabled={busyAction || !departmentName.trim()}
-                          className="rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          {busyAction ? "Saving…" : "Save Department"}
-                        </button>
-                      )}
-                    </div>
+                        <div className="flex items-start gap-2 rounded-xl border border-violet-100 bg-violet-50 px-3 py-2.5 text-xs text-violet-800">
+                          <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                          <p>
+                            Services are not automatically assigned to all
+                            department consultants. Consultants are assigned to specific
+                            services from the Services screen.
+                          </p>
+                        </div>
+                      </PanelSection>
+                    )}
+
+                    <PanelSection
+                      number={showOrganizationSection ? 3 : 2}
+                      title="Visibility"
+                      isLast
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-sm text-slate-700">
+                          Visibility
+                        </span>
+                        <div className="relative min-w-[9.5rem]">
+                          <EditVisibilityIcon className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+                          <select
+                            value={editDepartmentStatus}
+                            onChange={(e) =>
+                              setEditDepartmentStatus(
+                                e.target.value as VisibilityStatus
+                              )
+                            }
+                            aria-label="Visibility"
+                            className="w-full appearance-none rounded-xl border border-slate-200 bg-white py-2 pl-9 pr-8 text-sm text-slate-800 outline-none transition focus:border-violet-400"
+                          >
+                            {VISIBILITY_OPTIONS.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                          <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+                        </div>
+                      </div>
+                      <p className="text-xs text-slate-500">
+                        Only Public departments appear on the booking form.
+                      </p>
+                      <DepartmentColorPicker
+                        value={editDepartmentColor}
+                        onChange={setEditDepartmentColor}
+                      />
+                    </PanelSection>
                   </div>
                 </div>
-              )}
+
+                <div className="shrink-0 border-t border-slate-200 bg-white px-5 py-4">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+                    <button
+                      type="button"
+                      onClick={closeEditDepartmentPanel}
+                      className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleSaveEditedDepartment()}
+                      disabled={busyAction || !editDepartmentName.trim()}
+                      className="rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {busyAction ? "Saving…" : "Save Department"}
+                    </button>
+                  </div>
+                </div>
+              </div>
             </div>
           </>
         )}
       </aside>
+
+      <AddDepartmentPanel
+        open={showAddPanel}
+        onClose={() => setShowAddPanel(false)}
+        onCreated={(created) => {
+          void handleAddDepartmentCreated(created);
+        }}
+      />
 
       {deleteConfirmId && (
         <ConfirmModal

@@ -6,7 +6,6 @@ import {
   LuCheck as Check,
   LuChevronDown as ChevronDown,
   LuFileText as FileText,
-  LuFilter as Filter,
   LuGlobe as Globe,
   LuInfo as Info,
   LuLayoutGrid as LayoutGrid,
@@ -29,6 +28,11 @@ import { ConfirmModal } from "@/src/components/ui/ConfirmModal";
 import { PortalActionsMenu } from "@/src/components/ui/PortalActionsMenu";
 import { ServiceSkeleton } from "@/src/components/ui/ServiceSkeleton";
 import { currencySymbol } from "@/src/constants/currency";
+import { AddDepartmentPanel } from "@/src/features/departments/AddDepartmentPanel";
+import {
+  ServiceFilters,
+  type service_status_filter,
+} from "@/src/features/services/ServiceFilters";
 import { useServiceProviders, useUserDepartments } from "@/src/hooks/useBookingLookups";
 import { useAuth } from "@/src/providers/AuthProvider";
 import type { ServiceProvider } from "@/src/types/booking-entities";
@@ -54,7 +58,7 @@ type DepartmentStatus = "active" | "inactive";
 /** Public=active, Private=private, Draft=draft; inactive kept for legacy rows. */
 type ServiceStatus = "active" | "private" | "draft" | "inactive";
 type VisibilityStatus = "active" | "private" | "draft";
-type StatusFilter = "all" | "active" | "private" | "draft";
+type StatusFilter = service_status_filter;
 type DoctorAssignMode = "all" | "specific";
 
 const VISIBILITY_OPTIONS: {
@@ -264,10 +268,12 @@ export default function ServicesPage() {
   const [serviceSearch, setServiceSearch] = useState("");
   const [doctorSearch, setDoctorSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
-  const [showStatusMenu, setShowStatusMenu] = useState(false);
+  const [doctorFilter, setDoctorFilter] = useState("");
+  const [durationFilter, setDurationFilter] = useState("");
 
   const [showAddServiceModal, setShowAddServiceModal] = useState(false);
   const [showEditServiceModal, setShowEditServiceModal] = useState(false);
+  const [showAddDepartmentPanel, setShowAddDepartmentPanel] = useState(false);
   const [panelAnimatedOpen, setPanelAnimatedOpen] = useState(false);
   const [showBookingImpact, setShowBookingImpact] = useState(false);
   const [rowMenuId, setRowMenuId] = useState<string | null>(null);
@@ -601,6 +607,8 @@ export default function ServicesPage() {
 
   const filteredServices = useMemo(() => {
     const term = serviceSearch.trim().toLowerCase();
+    const durationMinutes =
+      durationFilter === "" ? null : Number(durationFilter);
     return allDepartmentServices.filter((service) => {
       const matchesSearch =
         term === "" || service.name.toLowerCase().includes(term);
@@ -610,9 +618,58 @@ export default function ServicesPage() {
         (statusFilter === "draft" && service.status === "draft") ||
         (statusFilter === "private" &&
           (service.status === "private" || service.status === "inactive"));
-      return matchesSearch && matchesStatus;
+      const matchesDoctor =
+        doctorFilter === "" ||
+        (service.meta_data?.service_providers ?? []).some(
+          (p) => p.id === doctorFilter
+        );
+      const matchesDuration =
+        durationMinutes == null ||
+        !Number.isFinite(durationMinutes) ||
+        Number(service.duration) === durationMinutes;
+      return (
+        matchesSearch && matchesStatus && matchesDoctor && matchesDuration
+      );
     });
-  }, [allDepartmentServices, serviceSearch, statusFilter]);
+  }, [
+    allDepartmentServices,
+    serviceSearch,
+    statusFilter,
+    doctorFilter,
+    durationFilter,
+  ]);
+
+  const filterDoctorOptions = useMemo(() => {
+    const map = new Map<string, string>();
+    const departments =
+      selectedDepartment != null
+        ? [selectedDepartment]
+        : departmentsForList;
+    for (const department of departments) {
+      for (const doctor of doctorsForDepartment(department)) {
+        map.set(doctor.id, doctor.name);
+      }
+    }
+    return [...map.entries()]
+      .map(([id, label]) => ({ id, label }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [
+    selectedDepartment,
+    departmentsForList,
+    doctorsForDepartment,
+  ]);
+
+  const filterDurationOptions = useMemo(() => {
+    const unique = new Set<number>();
+    for (const service of scopedServices) {
+      const minutes = Number(service.duration);
+      if (Number.isFinite(minutes) && minutes > 0) unique.add(minutes);
+    }
+    return [...unique].sort((a, b) => a - b);
+  }, [scopedServices]);
+
+  const showDoctorFilter =
+    !isLoggedInServiceProvider && filterDoctorOptions.length > 0;
 
   const {
     paginatedItems: paginatedServices,
@@ -625,7 +682,14 @@ export default function ServicesPage() {
 
   useEffect(() => {
     setServicesPage(1);
-  }, [serviceSearch, statusFilter, selectedDepartmentId, setServicesPage]);
+  }, [
+    serviceSearch,
+    statusFilter,
+    doctorFilter,
+    durationFilter,
+    selectedDepartmentId,
+    setServicesPage,
+  ]);
 
   const filteredDoctors = useMemo(() => {
     const term = doctorSearch.trim().toLowerCase();
@@ -755,18 +819,31 @@ export default function ServicesPage() {
     setServiceSearch("");
     setDoctorSearch("");
     setStatusFilter("all");
-    setShowStatusMenu(false);
+    setDoctorFilter("");
+    setDurationFilter("");
     setRowMenuId(null);
   };
 
   const openAddServiceDrawer = () => {
     if (departmentsForList.length === 0) return;
+    setShowAddDepartmentPanel(false);
     resetEditForm();
     setShowEditServiceModal(false);
     resetAddForm();
     setNewFormDepartmentId(selectedDepartmentId ?? departmentsForList[0]?.id ?? null);
     setShowAddServiceModal(true);
   };
+
+  const handleAddDepartmentCreated = useCallback(
+    async (created: { id: number; name: string }) => {
+      await Promise.all([
+        loadAll({ silent: true, selectId: created.id }),
+        refetchUserDepartments(),
+      ]);
+      setShowAddDepartmentPanel(false);
+    },
+    [loadAll, refetchUserDepartments]
+  );
 
   const handleAddService = async () => {
     const name = newServiceName.trim();
@@ -794,7 +871,7 @@ export default function ServicesPage() {
       addFormDoctors.length > 0 &&
       assignedIds.length === 0
     ) {
-      setAlertMessage("Please select at least one doctor for this service.");
+      setAlertMessage("Please select at least one consultant for this service.");
       return;
     }
 
@@ -814,7 +891,7 @@ export default function ServicesPage() {
 
       const newService = data.service as Service;
 
-      // "all" → every department doctor; "specific" → only selected doctors.
+      // "all" → every department consultant; "specific" → only selected consultants.
       const ok = await syncServiceDoctorAssignments(newService.id, assignedIds);
       if (!ok) {
         setServices((prev) => [newService, ...prev]);
@@ -853,6 +930,7 @@ export default function ServicesPage() {
     setEditAssignedDoctorIds(assignedInPool);
     setShowEditAssignedMenu(false);
     setEditServiceStatus(toVisibilityStatus(service.status));
+    setShowAddDepartmentPanel(false);
     setShowAddServiceModal(false);
     resetAddForm();
     setShowEditServiceModal(true);
@@ -887,7 +965,7 @@ export default function ServicesPage() {
       editFormDoctors.length > 0 &&
       assignedIds.length === 0
     ) {
-      setAlertMessage("Please select at least one doctor for this service.");
+      setAlertMessage("Please select at least one consultant for this service.");
       return;
     }
 
@@ -904,8 +982,8 @@ export default function ServicesPage() {
 
       if (!data?.service) return;
 
-      // "all" → every department doctor; "specific" → only selected doctors
-      // (also removes any previously assigned doctors not in the next set).
+      // "all" → every department consultant; "specific" → only selected consultants
+      // (also removes any previously assigned consultants not in the next set).
       const ok = await syncServiceDoctorAssignments(editServiceId, assignedIds);
       if (!ok) return;
 
@@ -1097,28 +1175,30 @@ export default function ServicesPage() {
   }, [editAssignMode, editFormDoctors]);
 
   useEffect(() => {
-    if (!rowMenuId && !showStatusMenu) return;
+    if (!rowMenuId) return;
     const onPointerDown = (event: MouseEvent) => {
       const target = event.target as HTMLElement | null;
       if (!target) return;
-      if (
-        target.closest("[data-portal-actions-menu]") ||
-        target.closest("[data-filter-menu]")
-      ) {
+      if (target.closest("[data-portal-actions-menu]")) {
         return;
       }
       setRowMenuId(null);
-      setShowStatusMenu(false);
     };
     document.addEventListener("mousedown", onPointerDown);
     return () => document.removeEventListener("mousedown", onPointerDown);
-  }, [rowMenuId, showStatusMenu]);
+  }, [rowMenuId]);
 
   const closeServicePanel = () => {
     setShowAddServiceModal(false);
     setShowEditServiceModal(false);
     resetAddForm();
     resetEditForm();
+  };
+
+  const openAddDepartmentDrawer = () => {
+    if (isLoggedInServiceProvider) return;
+    closeServicePanel();
+    setShowAddDepartmentPanel(true);
   };
 
   if (initialLoading || authLoading) {
@@ -1144,7 +1224,8 @@ export default function ServicesPage() {
     <div
       className={classNames(
         "min-h-screen transition-[margin] duration-300 ease-in-out",
-        panelAnimatedOpen && "hidden lg:block lg:mr-[28rem]"
+        (showAddDepartmentPanel || panelAnimatedOpen) &&
+          "hidden lg:block lg:mr-[28rem]"
       )}
     >
       <div className="mx-auto space-y-5">
@@ -1169,6 +1250,17 @@ export default function ServicesPage() {
               <LayoutGrid className="h-4 w-4" />
               View booking impact
             </button>
+
+            {!isLoggedInServiceProvider && (
+              <button
+                type="button"
+                onClick={openAddDepartmentDrawer}
+                className="inline-flex h-10 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50"
+              >
+                <Building2 className="h-4 w-4" />
+                Add Department
+              </button>
+            )}
 
             <button
               type="button"
@@ -1210,80 +1302,40 @@ export default function ServicesPage() {
             </div>
             <div className="min-w-0">
               <p className="text-xl font-bold text-slate-900">{visibleDoctorsCount}</p>
-              <p className="text-sm text-slate-500">assigned doctors</p>
+              <p className="text-sm text-slate-500">assigned consultants</p>
             </div>
           </div>
         </div>
 
         {/* All Services */}
         <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:p-6">
-          <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-            <div>
-              <h2 className="text-lg font-semibold text-slate-900">All Services</h2>
-              <p className="mt-1 text-sm text-slate-500">
-                {selectedDepartment
-                  ? `Services under ${selectedDepartment.name} with doctor assignments.`
-                  : "Services across all departments with doctor assignments."}
-              </p>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2.5">
-              <div className="relative min-w-[200px] flex-1 sm:flex-none sm:w-64">
-                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                <input
-                  value={serviceSearch}
-                  onChange={(e) => setServiceSearch(e.target.value)}
-                  placeholder="Search services..."
-                  className="h-10 w-full rounded-xl border border-slate-200 bg-white pl-9 pr-3 text-sm outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
-                />
-              </div>
-
-              <div className="relative" data-filter-menu>
-                <button
-                  type="button"
-                  onClick={() => setShowStatusMenu((prev) => !prev)}
-                  className="inline-flex h-10 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
-                >
-                  <Filter className="h-4 w-4" />
-                  Filter
-                  <ChevronDown className="h-3.5 w-3.5 text-slate-400" />
-                </button>
-
-                {showStatusMenu && (
-                  <div className="absolute right-0 top-12 z-20 w-44 rounded-xl border border-slate-200 bg-white p-2 shadow-lg">
-                    {(["all", "active", "private", "draft"] as StatusFilter[]).map(
-                      (status) => (
-                      <button
-                        key={status}
-                        type="button"
-                        onClick={() => {
-                          setStatusFilter(status);
-                          setShowStatusMenu(false);
-                        }}
-                        className={classNames(
-                          "flex w-full items-center justify-between rounded-lg px-3 py-2 text-sm",
-                          statusFilter === status
-                            ? "bg-blue-50 text-blue-700"
-                            : "text-slate-700 hover:bg-slate-50"
-                        )}
-                      >
-                        <span>
-                          {status === "all"
-                            ? "All"
-                            : status === "active"
-                              ? "Public"
-                              : status === "private"
-                                ? "Private"
-                                : "Draft"}
-                        </span>
-                        {statusFilter === status && <Check className="h-4 w-4" />}
-                      </button>
-                    )
-                    )}
-                  </div>
-                )}
-              </div>
-            </div>
+          <div className="mb-4">
+            <ServiceFilters
+              leading={
+                <div>
+                  <h2 className="text-lg font-semibold text-slate-900">
+                    All Services
+                  </h2>
+                  <p className="mt-1 text-sm text-slate-500">
+                    {selectedDepartment
+                      ? `Services under ${selectedDepartment.name} with consultant assignments.`
+                      : "Services across all departments with consultant assignments."}
+                  </p>
+                </div>
+              }
+              search={serviceSearch}
+              status_filter={statusFilter}
+              doctor_filter={doctorFilter}
+              duration_filter={durationFilter}
+              doctor_options={filterDoctorOptions}
+              duration_options={filterDurationOptions}
+              show_doctor_filter={showDoctorFilter}
+              result_count={filteredServices.length}
+              on_search_change={setServiceSearch}
+              on_status_filter_change={setStatusFilter}
+              on_doctor_filter_change={setDoctorFilter}
+              on_duration_filter_change={setDurationFilter}
+            />
           </div>
 
           {/* Department tabs */}
@@ -1347,7 +1399,7 @@ export default function ServicesPage() {
                       Duration
                     </th>
                     <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
-                      Assigned Doctors
+                      Assigned Consultants
                     </th>
                     <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
                       Status
@@ -1523,7 +1575,7 @@ export default function ServicesPage() {
           </div>
         </section>
 
-        {/* Doctor-service assignment matrix */}
+        {/* Consultant-service assignment matrix */}
         {/* <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:p-6">
           <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div>
@@ -1848,14 +1900,14 @@ export default function ServicesPage() {
                         </div>
                       </PanelSection>
 
-                      <PanelSection number={3} title="Doctor Assignment">
+                      <PanelSection number={3} title="Consultant Assignment">
                         <div>
                           <p className="mb-2 text-sm text-slate-500">
-                            Department doctors (eligible pool from selected department)
+                            Department consultants (eligible pool from selected department)
                           </p>
                           {editFormDoctors.length === 0 ? (
                             <p className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-500">
-                              No doctors assigned to this department yet.
+                              No consultants assigned to this department yet.
                             </p>
                           ) : (
                             <div className="flex flex-wrap gap-2">
@@ -1912,7 +1964,7 @@ export default function ServicesPage() {
                                   <Check className="h-2.5 w-2.5" />
                                 )}
                               </span>
-                              All department doctors
+                              All department consultants
                             </button>
                             <button
                               type="button"
@@ -1939,14 +1991,14 @@ export default function ServicesPage() {
                                   <Check className="h-2.5 w-2.5" />
                                 )}
                               </span>
-                              Select specific doctors
+                              Select specific consultants
                             </button>
                           </div>
                           {editAssignMode === "all" && (
                             <p className="mt-2 text-xs text-slate-500">
                               {editFormDoctors.length === 0
-                                ? "No department doctors available to assign."
-                                : `All ${editFormDoctors.length} department doctor${editFormDoctors.length === 1 ? "" : "s"} will be assigned to this service.`}
+                                ? "No department consultants available to assign."
+                                : `All ${editFormDoctors.length} department consultant${editFormDoctors.length === 1 ? "" : "s"} will be assigned to this service.`}
                             </p>
                           )}
                         </div>
@@ -1954,7 +2006,7 @@ export default function ServicesPage() {
                         {editAssignMode === "specific" && (
                           <div className="relative">
                             <label className="mb-2 block text-sm font-medium text-slate-700">
-                              Assigned doctors<span className="text-red-500">*</span>
+                              Assigned consultants<span className="text-red-500">*</span>
                             </label>
                             <button
                               type="button"
@@ -1966,7 +2018,7 @@ export default function ServicesPage() {
                             >
                               <div className="flex min-w-0 flex-1 flex-wrap gap-1.5">
                                 {editAssignedDoctorIds.length === 0 ? (
-                                  <span className="text-slate-400">Select doctors</span>
+                                  <span className="text-slate-400">Select consultants</span>
                                 ) : (
                                   editAssignedDoctorIds.map((id) => {
                                     const doctor = editFormDoctors.find(
@@ -2057,13 +2109,11 @@ export default function ServicesPage() {
                         <div className="flex items-start gap-2 rounded-xl bg-violet-50 px-3 py-2.5 text-sm text-violet-800">
                           <Info className="mt-0.5 h-4 w-4 shrink-0" />
                           <p>
-                            Doctors are selected once in Department settings. Only
-                            department doctors can be assigned here.
+                            Consultants are selected once in Department settings. Only department consultants can be assigned here.
                           </p>
                         </div>
                         <p className="text-xs text-slate-500">
-                          Only selected doctors will appear on the booking page for this
-                          service.
+                          Only selected consultants will appear on the booking page for this service.
                         </p>
                       </PanelSection>
 
@@ -2245,14 +2295,14 @@ export default function ServicesPage() {
                         </div>
                       </PanelSection>
 
-                      <PanelSection number={3} title="Doctor Assignment">
+                      <PanelSection number={3} title="Consultant Assignment">
                         <div>
                           <p className="mb-2 text-sm text-slate-500">
-                            Department doctors (eligible pool from selected department)
+                            Department consultants (eligible pool from selected department)
                           </p>
                           {addFormDoctors.length === 0 ? (
                             <p className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-500">
-                              No doctors assigned to this department yet.
+                              No consultants assigned to this department yet.
                             </p>
                           ) : (
                             <div className="flex flex-wrap gap-2">
@@ -2309,7 +2359,7 @@ export default function ServicesPage() {
                                   <Check className="h-2.5 w-2.5" />
                                 )}
                               </span>
-                              All department doctors
+                              All department consultants
                             </button>
                             <button
                               type="button"
@@ -2336,14 +2386,14 @@ export default function ServicesPage() {
                                   <Check className="h-2.5 w-2.5" />
                                 )}
                               </span>
-                              Select specific doctors
+                              Select specific consultants
                             </button>
                           </div>
                           {newAssignMode === "all" && (
                             <p className="mt-2 text-xs text-slate-500">
                               {addFormDoctors.length === 0
-                                ? "No department doctors available to assign."
-                                : `All ${addFormDoctors.length} department doctor${addFormDoctors.length === 1 ? "" : "s"} will be assigned to this service.`}
+                                ? "No department consultants available to assign."
+                                : `All ${addFormDoctors.length} department consultant${addFormDoctors.length === 1 ? "" : "s"} will be assigned to this service.`}
                             </p>
                           )}
                         </div>
@@ -2351,7 +2401,7 @@ export default function ServicesPage() {
                         {newAssignMode === "specific" && (
                           <div className="relative">
                             <label className="mb-2 block text-sm font-medium text-slate-700">
-                              Assigned doctors<span className="text-red-500">*</span>
+                              Assigned consultants<span className="text-red-500">*</span>
                             </label>
                             <button
                               type="button"
@@ -2363,7 +2413,7 @@ export default function ServicesPage() {
                             >
                               <div className="flex min-w-0 flex-1 flex-wrap gap-1.5">
                                 {newAssignedDoctorIds.length === 0 ? (
-                                  <span className="text-slate-400">Select doctors</span>
+                                  <span className="text-slate-400">Select consultants</span>
                                 ) : (
                                   newAssignedDoctorIds.map((id) => {
                                     const doctor = addFormDoctors.find(
@@ -2454,12 +2504,12 @@ export default function ServicesPage() {
                         <div className="flex items-start gap-2 rounded-xl bg-violet-50 px-3 py-2.5 text-sm text-violet-800">
                           <Info className="mt-0.5 h-4 w-4 shrink-0" />
                           <p>
-                            Doctors are selected once in Department settings. Only
-                            department doctors can be assigned here.
+                          consultants are selected once in Department settings. Only
+                            department consultants can be assigned here.
                           </p>
                         </div>
                         <p className="text-xs text-slate-500">
-                          Only selected doctors will appear on the booking page for this
+                          Only selected consultants will appear on the booking page for this
                           service.
                         </p>
                       </PanelSection>
@@ -2536,7 +2586,7 @@ export default function ServicesPage() {
                     : " across all departments"}
                 </h3>
                 <p className="mt-1 text-sm text-slate-500">
-                  Review which services are bookable based on public visibility and assigned doctors.
+                  Review which services are bookable based on public visibility and assigned consultants.
                 </p>
               </div>
               <button
@@ -2560,7 +2610,7 @@ export default function ServicesPage() {
                         Status
                       </th>
                       <th className="border-b border-slate-200 px-4 py-3.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
-                        Assigned doctors
+                        Assigned consultants
                       </th>
                       <th className="border-b border-slate-200 px-4 py-3.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
                         Booking result
@@ -2605,7 +2655,7 @@ export default function ServicesPage() {
                               </div>
                             ) : (
                               <span className="text-sm text-slate-400">
-                                No doctors assigned
+                                No consultants assigned
                               </span>
                             )}
                           </td>
@@ -2646,7 +2696,7 @@ export default function ServicesPage() {
                   Bookable
                 </p>
                 <p className="mt-2 text-sm text-slate-700">
-                  Public service with at least one assigned doctor.
+                  Public service with at least one assigned consultant.
                 </p>
               </div>
               <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
@@ -2662,7 +2712,7 @@ export default function ServicesPage() {
                   Unavailable
                 </p>
                 <p className="mt-2 text-sm text-slate-700">
-                  Public service without doctors is not bookable.
+                  Public service without consultants is not bookable.
                 </p>
               </div>
             </div>
@@ -2685,6 +2735,14 @@ export default function ServicesPage() {
       {alertMessage && (
         <AlertModal message={alertMessage} onClose={() => setAlertMessage(null)} />
       )}
+
+      <AddDepartmentPanel
+        open={showAddDepartmentPanel}
+        onClose={() => setShowAddDepartmentPanel(false)}
+        onCreated={(created) => {
+          void handleAddDepartmentCreated(created);
+        }}
+      />
     </>
   );
 }

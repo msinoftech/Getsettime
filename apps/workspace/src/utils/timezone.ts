@@ -2,6 +2,10 @@
  * Centralized timezone management for booking forms and display.
  */
 import { getBrowserTimezone as getBrowserTzFromLocation } from '@app/location';
+import {
+  getLocalTimePartsInTimezone,
+  localDateTimeToUtcIso,
+} from '@/lib/date-timezone';
 
 const FALLBACK_TIMEZONE = 'UTC';
 
@@ -44,6 +48,52 @@ export function needsTimezoneConversion(providerTz: string, customerTz: string):
 
 export function isWorkspaceTimezoneConfigured(workspaceTimezone?: string | null): boolean {
   return Boolean(workspaceTimezone?.trim());
+}
+
+/** Display label like "(GMT-05:00) New York" for timezone dropdowns. */
+export function formatTimezoneSelectLabel(iana: string): string {
+  const tz = iana.trim() || "UTC";
+  let offset = "GMT";
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: tz,
+      timeZoneName: "longOffset",
+    }).formatToParts(new Date());
+    offset = parts.find((p) => p.type === "timeZoneName")?.value ?? "GMT";
+  } catch {
+    offset = "GMT";
+  }
+  const city = tz.includes("/")
+    ? (tz.split("/").pop() ?? tz).replace(/_/g, " ")
+    : tz;
+  return `(${offset}) ${city}`;
+}
+
+/**
+ * Convert a wall-clock HH:mm from one IANA timezone to another (display only).
+ * Uses a fixed mid-year date to reduce DST edge surprises.
+ */
+export function convertWallClockHHmm(
+  hhmm: string,
+  fromTimezone: string,
+  toTimezone: string
+): string {
+  const from = fromTimezone.trim();
+  const to = toTimezone.trim();
+  if (!hhmm || !from || !to || from === to) return hhmm;
+
+  const [hours, minutes] = hhmm.split(":").map((n) => parseInt(n, 10));
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return hhmm;
+
+  try {
+    const iso = localDateTimeToUtcIso("2024-06-15", hours, minutes, from);
+    const parts = getLocalTimePartsInTimezone(iso, to);
+    return `${parts.hours.toString().padStart(2, "0")}:${parts.minutes
+      .toString()
+      .padStart(2, "0")}`;
+  } catch {
+    return hhmm;
+  }
 }
 
 /**
