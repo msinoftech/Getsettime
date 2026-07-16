@@ -112,14 +112,19 @@ export function AddDepartmentPanel({
     []
   );
   const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [adminProfessionsId, setAdminProfessionsId] = useState<number | null>(
+    null
+  );
+  const [serviceSuggestions, setServiceSuggestions] = useState<string[]>([]);
 
   const [departmentName, setDepartmentName] = useState("");
   const [departmentDescription, setDepartmentDescription] = useState("");
   const [assignedDoctorIds, setAssignedDoctorIds] = useState<string[]>([]);
   const [showDoctorsMenu, setShowDoctorsMenu] = useState(false);
-  const [assignedServiceIds, setAssignedServiceIds] = useState<string[]>([]);
-  const [showServicesMenu, setShowServicesMenu] = useState(false);
-  const [showQuickSuggestions, setShowQuickSuggestions] = useState(false);
+  const [selectedServiceNames, setSelectedServiceNames] = useState<string[]>(
+    []
+  );
+  const [customServiceName, setCustomServiceName] = useState("");
   const [departmentStatus, setDepartmentStatus] =
     useState<VisibilityStatus>("active");
   const [departmentColor, setDepartmentColor] = useState<department_color_id>(
@@ -140,9 +145,9 @@ export function AddDepartmentPanel({
     setDepartmentDescription("");
     setAssignedDoctorIds([]);
     setShowDoctorsMenu(false);
-    setAssignedServiceIds([]);
-    setShowServicesMenu(false);
-    setShowQuickSuggestions(false);
+    setSelectedServiceNames([]);
+    setCustomServiceName("");
+    setServiceSuggestions([]);
     setDepartmentStatus("active");
     setDepartmentColor(DEFAULT_DEPARTMENT_COLOR);
   }, []);
@@ -185,6 +190,7 @@ export function AddDepartmentPanel({
         const workspaceData = await workspaceRes.json();
         const adminProfessionsId: number | null =
           workspaceData?.workspace?.admin_professions_id ?? null;
+        setAdminProfessionsId(adminProfessionsId);
         if (!adminProfessionsId) {
           setSuggestions([]);
         } else {
@@ -222,6 +228,51 @@ export function AddDepartmentPanel({
   useEffect(() => {
     if (!open) resetForm();
   }, [open, resetForm]);
+
+  const trimmedDepartmentName = departmentName.trim();
+  const matchedCatalogDepartment = useMemo(
+    () =>
+      suggestions.find(
+        (item) => item.toLowerCase() === trimmedDepartmentName.toLowerCase()
+      ) ?? null,
+    [suggestions, trimmedDepartmentName]
+  );
+
+  useEffect(() => {
+    if (!open) return;
+    if (!adminProfessionsId || !matchedCatalogDepartment) {
+      setServiceSuggestions([]);
+      return;
+    }
+
+    let cancelled = false;
+    const loadServiceSuggestions = async () => {
+      const token = await getAuthToken();
+      if (!token || cancelled) return;
+      try {
+        const res = await fetch(
+          `/api/catalog/services?profession_id=${adminProfessionsId}&department=${encodeURIComponent(
+            matchedCatalogDepartment
+          )}`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        if (!res.ok || cancelled) return;
+        const data = await res.json();
+        if (!cancelled) {
+          setServiceSuggestions(
+            Array.isArray(data?.services) ? (data.services as string[]) : []
+          );
+        }
+      } catch (error) {
+        console.error("Error loading service suggestions:", error);
+      }
+    };
+
+    void loadServiceSuggestions();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, adminProfessionsId, matchedCatalogDepartment, getAuthToken]);
 
   const doctors = useMemo<doctor_option[]>(() => {
     return serviceProviders.map((sp) => ({
@@ -267,21 +318,11 @@ export function AddDepartmentPanel({
   const selectedDoctors = doctors.filter((d) =>
     assignedDoctorIds.includes(d.id)
   );
-  const selectedServices = workspaceServices.filter((s) =>
-    assignedServiceIds.includes(s.id)
-  );
 
   const visibilityOption =
     VISIBILITY_OPTIONS.find((o) => o.value === departmentStatus) ??
     VISIBILITY_OPTIONS[0];
   const VisibilityIcon = visibilityOption.Icon;
-
-  const serviceOptionLabel = (service: workspace_service) => {
-    const deptId = Number(service.department_id);
-    if (!Number.isFinite(deptId)) return service.name;
-    const deptName = departments.find((d) => d.id === deptId)?.name;
-    return deptName ? `${service.name} (${deptName})` : service.name;
-  };
 
   const handleClose = () => {
     onClose();
@@ -315,16 +356,41 @@ export function AddDepartmentPanel({
     [getAuthToken]
   );
 
-  const syncDepartmentServices = useCallback(
-    async (departmentId: number, nextServiceIds: string[]) => {
-      const currentIds = workspaceServices
-        .filter((s) => Number(s.department_id) === departmentId)
-        .map((s) => s.id);
-      const nextSet = new Set(nextServiceIds);
-      const currentSet = new Set(currentIds);
-      const toAssign = nextServiceIds.filter((id) => !currentSet.has(id));
-      const toUnassign = currentIds.filter((id) => !nextSet.has(id));
-      if (toAssign.length === 0 && toUnassign.length === 0) return true;
+  const assignServiceToProviders = useCallback(
+    async (token: string, serviceId: string, providerIds: string[]) => {
+      for (const userId of providerIds) {
+        const res = await fetch("/api/user-services", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ user_id: userId, service_id: serviceId }),
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => null);
+          const message: string = err?.error || "";
+          // An already-existing assignment is fine; anything else is a failure.
+          if (!message.toLowerCase().includes("duplicate")) {
+            setAlertMessage(
+              message || `Failed to assign consultant to service (${res.status})`
+            );
+            return false;
+          }
+        }
+      }
+      return true;
+    },
+    []
+  );
+
+  const createDepartmentServices = useCallback(
+    async (
+      departmentId: number,
+      serviceNames: string[],
+      providerIds: string[]
+    ) => {
+      if (serviceNames.length === 0) return true;
 
       const token = await getAuthToken();
       if (!token) {
@@ -332,51 +398,63 @@ export function AddDepartmentPanel({
         return false;
       }
 
-      for (const serviceId of toAssign) {
-        const response = await fetch("/api/services", {
-          method: "PUT",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({
-            id: serviceId,
-            department_id: departmentId,
-          }),
-        });
-        if (!response.ok) {
-          const err = await response.json().catch(() => null);
-          setAlertMessage(
-            err?.error || `Failed to assign service (${response.status})`
-          );
+      for (const serviceName of serviceNames) {
+        const trimmedName = serviceName.trim();
+        if (!trimmedName) continue;
+
+        // Prefer an existing service already in this department; otherwise create.
+        const existingInDept = workspaceServices.find(
+          (s) =>
+            s.name.toLowerCase() === trimmedName.toLowerCase() &&
+            Number(s.department_id) === departmentId
+        );
+
+        let serviceId: string | null = existingInDept?.id ?? null;
+
+        if (!serviceId) {
+          const response = await fetch("/api/services", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              name: trimmedName,
+              department_id: departmentId,
+            }),
+          });
+          if (!response.ok) {
+            const err = await response.json().catch(() => null);
+            setAlertMessage(
+              err?.error || `Failed to create service (${response.status})`
+            );
+            return false;
+          }
+          const data = (await response.json().catch(() => null)) as {
+            service?: { id: string | number };
+          } | null;
+          serviceId =
+            data?.service?.id != null ? String(data.service.id) : null;
+        }
+
+        if (!serviceId) {
+          setAlertMessage(`Failed to resolve service id for "${trimmedName}"`);
           return false;
         }
-      }
 
-      for (const serviceId of toUnassign) {
-        const response = await fetch("/api/services", {
-          method: "PUT",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({
-            id: serviceId,
-            department_id: null,
-          }),
-        });
-        if (!response.ok) {
-          const err = await response.json().catch(() => null);
-          setAlertMessage(
-            err?.error || `Failed to unassign service (${response.status})`
+        if (providerIds.length > 0) {
+          const assigned = await assignServiceToProviders(
+            token,
+            serviceId,
+            providerIds
           );
-          return false;
+          if (!assigned) return false;
         }
       }
 
       return true;
     },
-    [workspaceServices, getAuthToken]
+    [workspaceServices, getAuthToken, assignServiceToProviders]
   );
 
   const assignSelfToDepartment = useCallback(
@@ -403,23 +481,13 @@ export function AddDepartmentPanel({
       opts?: {
         description?: string;
         doctorIds?: string[];
-        serviceIds?: string[];
+        serviceNames?: string[];
         status?: VisibilityStatus;
         color?: department_color_id;
       }
     ): Promise<created_department | null> => {
       const name = rawName.trim();
       if (!name) return null;
-
-      const existing = departments.find(
-        (d) => d.name.toLowerCase() === name.toLowerCase()
-      );
-      if (existing) {
-        if (isLoggedInServiceProvider && currentUserId) {
-          await assignSelfToDepartment(existing.id);
-        }
-        return { id: existing.id, name: existing.name };
-      }
 
       setBusyAction(true);
       try {
@@ -436,57 +504,82 @@ export function AddDepartmentPanel({
               ? serviceProviders[0]
               : undefined;
 
-        const response = await fetch("/api/departments", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({
-            name,
-            description: opts?.description?.trim() || null,
-            status: opts?.status ?? "active",
-            meta_data: {
-              color: opts?.color ?? DEFAULT_DEPARTMENT_COLOR,
-            },
-          }),
-        });
+        let deptId: number;
+        let deptName: string;
 
-        if (!response.ok) {
-          const err = await response.json().catch(() => null);
-          setAlertMessage(err?.error || `Request failed (${response.status})`);
-          return null;
+        const existing = departments.find(
+          (d) => d.name.toLowerCase() === name.toLowerCase()
+        );
+
+        if (existing) {
+          deptId = existing.id;
+          deptName = existing.name;
+          if (isLoggedInServiceProvider && currentUserId) {
+            await assignSelfToDepartment(existing.id);
+          }
+        } else {
+          const response = await fetch("/api/departments", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              name,
+              description: opts?.description?.trim() || null,
+              status: opts?.status ?? "active",
+              meta_data: {
+                color: opts?.color ?? DEFAULT_DEPARTMENT_COLOR,
+              },
+            }),
+          });
+
+          if (!response.ok) {
+            const err = await response.json().catch(() => null);
+            setAlertMessage(err?.error || `Request failed (${response.status})`);
+            return null;
+          }
+
+          const data = (await response.json().catch(() => null)) as {
+            department?: { id: number; name: string };
+          } | null;
+
+          if (!data?.department?.id) return null;
+          deptId = data.department.id;
+          deptName = data.department.name;
         }
 
-        const data = (await response.json().catch(() => null)) as {
-          department?: { id: number; name: string };
-        } | null;
+        // Resolve consultants the same way for department + service assignment.
+        let serviceProviderIds: string[] = [];
+        if (showFullDoctorFlow && opts?.doctorIds?.length) {
+          serviceProviderIds = opts.doctorIds;
+        } else if (linkTarget) {
+          serviceProviderIds = [linkTarget.id];
+        }
 
-        if (!data?.department?.id) return null;
-        const deptId = data.department.id;
-        const deptName = data.department.name;
-
-        if (linkTarget) {
+        for (const userId of serviceProviderIds) {
           const alreadyLinked =
-            deptIdsByProvider.get(linkTarget.id)?.has(deptId) ?? false;
+            deptIdsByProvider.get(userId)?.has(deptId) ?? false;
           if (!alreadyLinked) {
-            const ok = await linkUserToDepartment(linkTarget.id, deptId);
+            const ok = await linkUserToDepartment(userId, deptId);
             if (!ok) {
               setAlertMessage("Failed to link provider to department");
+              return { id: deptId, name: deptName };
             }
           }
-          await refetchUserDepartments();
-        } else if (showFullDoctorFlow && opts?.doctorIds?.length) {
-          for (const userId of opts.doctorIds) {
-            await linkUserToDepartment(userId, deptId);
-          }
+        }
+        if (serviceProviderIds.length > 0) {
           await refetchUserDepartments();
         }
 
-        if (opts?.serviceIds?.length) {
-          const servicesOk = await syncDepartmentServices(
+        const serviceNames = (opts?.serviceNames ?? [])
+          .map((n) => n.trim())
+          .filter(Boolean);
+        if (serviceNames.length > 0) {
+          const servicesOk = await createDepartmentServices(
             deptId,
-            opts.serviceIds
+            serviceNames,
+            serviceProviderIds
           );
           if (!servicesOk) {
             return { id: deptId, name: deptName };
@@ -509,7 +602,7 @@ export function AddDepartmentPanel({
       linkUserToDepartment,
       refetchUserDepartments,
       showFullDoctorFlow,
-      syncDepartmentServices,
+      createDepartmentServices,
     ]
   );
 
@@ -522,10 +615,19 @@ export function AddDepartmentPanel({
   };
 
   const handleSave = async () => {
+    const pendingCustom = customServiceName.trim();
+    const serviceNames = [...selectedServiceNames];
+    if (
+      pendingCustom &&
+      !serviceNames.some((n) => n.toLowerCase() === pendingCustom.toLowerCase())
+    ) {
+      serviceNames.push(pendingCustom);
+    }
+
     const created = await createDepartment(departmentName, {
       description: departmentDescription,
       doctorIds: assignedDoctorIds,
-      serviceIds: assignedServiceIds,
+      serviceNames,
       status: departmentStatus,
       color: departmentColor,
     });
@@ -542,12 +644,23 @@ export function AddDepartmentPanel({
     );
   };
 
-  const toggleService = (serviceId: string) => {
-    setAssignedServiceIds((prev) =>
-      prev.includes(serviceId)
-        ? prev.filter((id) => id !== serviceId)
-        : [...prev, serviceId]
+  const toggleServiceName = (name: string) => {
+    setSelectedServiceNames((prev) =>
+      prev.some((n) => n.toLowerCase() === name.toLowerCase())
+        ? prev.filter((n) => n.toLowerCase() !== name.toLowerCase())
+        : [...prev, name]
     );
+  };
+
+  const addCustomService = () => {
+    const name = customServiceName.trim();
+    if (!name) return;
+    setSelectedServiceNames((prev) =>
+      prev.some((n) => n.toLowerCase() === name.toLowerCase())
+        ? prev
+        : [...prev, name]
+    );
+    setCustomServiceName("");
   };
 
   const panelFieldClass =
@@ -605,64 +718,47 @@ export function AddDepartmentPanel({
 
                       {suggestions.length > 0 && (
                         <div>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setShowQuickSuggestions((prev) => !prev)
-                            }
-                            className="flex w-full items-center justify-between gap-2 text-left"
-                            aria-expanded={showQuickSuggestions}
-                          >
-                            <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                              Quick Suggestions
-                            </span>
-                            <ChevronDown
-                              className={classNames(
-                                "h-4 w-4 shrink-0 text-slate-400 transition-transform",
-                                showQuickSuggestions && "rotate-180"
-                              )}
-                            />
-                          </button>
-                          {showQuickSuggestions && (
-                            <div className="mt-2">
-                              <p className="mb-2 text-xs text-slate-500">
-                                {isLoggedInServiceProvider
-                                  ? "Select a department to assign it to yourself."
-                                  : "Click a suggestion to fill the department name."}
-                              </p>
-                              <div className="flex flex-wrap gap-2">
-                                {suggestions.map((item) => {
-                                  const selected =
-                                    suggestionShowsAsSelected(item);
-                                  return (
-                                    <button
-                                      key={item}
-                                      type="button"
-                                      onClick={() => {
-                                        if (selected) return;
-                                        if (isLoggedInServiceProvider) {
-                                          void handleSuggestionClick(item);
-                                          return;
-                                        }
-                                        setDepartmentName(item);
-                                      }}
-                                      disabled={busyAction || selected}
-                                      className={classNames(
-                                        "rounded-full px-3 py-1.5 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-60",
-                                        selected
-                                          ? "border border-emerald-200 bg-emerald-50 text-emerald-700"
-                                          : departmentName === item
-                                            ? "border border-violet-300 bg-violet-50 text-violet-700"
-                                            : "border border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
-                                      )}
-                                    >
-                                      {selected ? "✓" : "+"} {item}
-                                    </button>
-                                  );
-                                })}
-                              </div>
+                          <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                            Quick Suggestions
+                          </span>
+                          <div className="mt-2">
+                            <p className="mb-2 text-xs text-slate-500">
+                              {isLoggedInServiceProvider
+                                ? "Select a department to assign it to yourself."
+                                : "Click a suggestion to fill the department name."}
+                            </p>
+                            <div className="flex flex-wrap gap-2">
+                              {suggestions.map((item) => {
+                                const selected =
+                                  suggestionShowsAsSelected(item);
+                                return (
+                                  <button
+                                    key={item}
+                                    type="button"
+                                    onClick={() => {
+                                      if (selected) return;
+                                      if (isLoggedInServiceProvider) {
+                                        void handleSuggestionClick(item);
+                                        return;
+                                      }
+                                      setDepartmentName(item);
+                                    }}
+                                    disabled={busyAction || selected}
+                                    className={classNames(
+                                      "rounded-full px-3 py-1.5 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-60",
+                                      selected
+                                        ? "border border-emerald-200 bg-emerald-50 text-emerald-700"
+                                        : departmentName === item
+                                          ? "border border-violet-300 bg-violet-50 text-violet-700"
+                                          : "border border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
+                                    )}
+                                  >
+                                    {selected ? "✓" : "+"} {item}
+                                  </button>
+                                );
+                              })}
                             </div>
-                          )}
+                          </div>
                         </div>
                       )}
 
@@ -821,113 +917,108 @@ export function AddDepartmentPanel({
                         <div>
                           <p className="mb-2 text-sm font-medium text-slate-700">
                             Services offered
-                            <span className="text-red-500">*</span>
+                            <span className="ml-1 text-xs font-normal text-slate-400">
+                              (optional)
+                            </span>
                           </p>
                           <p className="mb-2 text-xs text-slate-500">
                             Services available in this department.
                           </p>
-                          {workspaceServices.length === 0 ? (
-                            <p className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-500">
-                              No services yet. Create services from the Services
-                              screen.
-                            </p>
-                          ) : (
-                            <div className="relative">
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  setShowServicesMenu((prev) => !prev)
-                                }
-                                className="flex min-h-[42px] w-full items-center justify-between gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-left text-sm text-slate-700 transition hover:bg-white"
-                              >
-                                <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
-                                  {selectedServices.length === 0 ? (
-                                    <span className="text-slate-500">
-                                      Select services
-                                    </span>
-                                  ) : (
-                                    selectedServices.map((service) => (
-                                      <span
-                                        key={service.id}
-                                        className="inline-flex max-w-full items-center gap-1.5 rounded-full bg-violet-50 px-2.5 py-1 text-xs font-medium text-violet-800"
-                                        onClick={(e) => e.stopPropagation()}
-                                        onMouseDown={(e) => e.stopPropagation()}
-                                      >
-                                        <span className="min-w-0 truncate">
-                                          {service.name}
-                                        </span>
-                                        <span
-                                          role="button"
-                                          tabIndex={0}
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            toggleService(service.id);
-                                          }}
-                                          onKeyDown={(e) => {
-                                            if (
-                                              e.key === "Enter" ||
-                                              e.key === " "
-                                            ) {
-                                              e.preventDefault();
-                                              e.stopPropagation();
-                                              toggleService(service.id);
-                                            }
-                                          }}
-                                          className="rounded-full p-0.5 hover:bg-violet-100"
-                                          aria-label={`Remove ${service.name}`}
-                                        >
-                                          <X className="h-3 w-3" />
-                                        </span>
-                                      </span>
-                                    ))
-                                  )}
-                                </div>
-                                <ChevronDown className="h-4 w-4 shrink-0 text-slate-400" />
-                              </button>
-                              {showServicesMenu && (
-                                <div className="absolute left-0 right-0 top-full z-20 mt-1 max-h-56 overflow-y-auto rounded-xl border border-slate-200 bg-white p-2 shadow-lg">
-                                  {workspaceServices.map((service) => {
-                                    const checked =
-                                      assignedServiceIds.includes(service.id);
-                                    return (
-                                      <button
-                                        key={service.id}
-                                        type="button"
-                                        onClick={() =>
-                                          toggleService(service.id)
-                                        }
-                                        className="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-sm hover:bg-slate-50"
-                                      >
-                                        <span
-                                          className={classNames(
-                                            "flex h-4 w-4 shrink-0 items-center justify-center rounded border",
-                                            checked
-                                              ? "border-violet-600 bg-violet-600 text-white"
-                                              : "border-slate-300"
-                                          )}
-                                        >
-                                          {checked && (
-                                            <Check className="h-2.5 w-2.5" />
-                                          )}
-                                        </span>
-                                        <span className="min-w-0 truncate text-slate-800">
-                                          {serviceOptionLabel(service)}
-                                        </span>
-                                      </button>
-                                    );
-                                  })}
-                                </div>
-                              )}
+
+                          {selectedServiceNames.length > 0 && (
+                            <div className="mb-3 flex flex-wrap gap-1.5">
+                              {selectedServiceNames.map((name) => (
+                                <span
+                                  key={name}
+                                  className="inline-flex max-w-full items-center gap-1.5 rounded-full bg-violet-50 px-2.5 py-1 text-xs font-medium text-violet-800"
+                                >
+                                  <span className="min-w-0 truncate">
+                                    {name}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleServiceName(name)}
+                                    className="rounded-full p-0.5 hover:bg-violet-100"
+                                    aria-label={`Remove ${name}`}
+                                  >
+                                    <X className="h-3 w-3" />
+                                  </button>
+                                </span>
+                              ))}
                             </div>
                           )}
+
+                          {serviceSuggestions.length > 0 ? (
+                            <div className="mb-3">
+                              <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                Quick Suggestions
+                              </span>
+                              <p className="mb-2 mt-1 text-xs text-slate-500">
+                                Click a suggestion to add it as a service.
+                              </p>
+                              <div className="flex flex-wrap gap-2">
+                                {serviceSuggestions.map((item) => {
+                                  const selected = selectedServiceNames.some(
+                                    (n) =>
+                                      n.toLowerCase() === item.toLowerCase()
+                                  );
+                                  return (
+                                    <button
+                                      key={item}
+                                      type="button"
+                                      onClick={() => toggleServiceName(item)}
+                                      disabled={busyAction}
+                                      className={classNames(
+                                        "rounded-full px-3 py-1.5 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-60",
+                                        selected
+                                          ? "border border-emerald-200 bg-emerald-50 text-emerald-700"
+                                          : "border border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
+                                      )}
+                                    >
+                                      {selected ? "✓" : "+"} {item}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          ) : (
+                            <p className="mb-3 rounded-xl border border-dashed border-slate-200 bg-slate-50 px-3 py-3 text-xs text-slate-500">
+                              {matchedCatalogDepartment
+                                ? "No service suggestions available for this department yet."
+                                : "Pick a department from the quick suggestions to see matching service suggestions."}
+                            </p>
+                          )}
+
+                          <div className="flex gap-2">
+                            <input
+                              value={customServiceName}
+                              onChange={(e) =>
+                                setCustomServiceName(e.target.value)
+                              }
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  e.preventDefault();
+                                  addCustomService();
+                                }
+                              }}
+                              placeholder="Add a custom service"
+                              className={panelFieldClass}
+                            />
+                            <button
+                              type="button"
+                              onClick={addCustomService}
+                              disabled={busyAction || !customServiceName.trim()}
+                              className="shrink-0 rounded-xl border border-violet-200 bg-violet-50 px-4 py-2 text-sm font-semibold text-violet-700 transition hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              Add
+                            </button>
+                          </div>
                         </div>
 
                         <div className="flex items-start gap-2 rounded-xl border border-violet-100 bg-violet-50 px-3 py-2.5 text-xs text-violet-800">
                           <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                           <p>
-                            Services are not automatically assigned to all
-                            department consultants. Consultants are assigned to specific
-                            services from the Services screen.
+                            Selected services are created with this department and automatically assigned to the selected consultants.
                           </p>
                         </div>
                       </PanelSection>

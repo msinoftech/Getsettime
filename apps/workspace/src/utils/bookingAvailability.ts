@@ -1,4 +1,5 @@
 import type { AvailabilitySettings, Booking, EventType } from '@/src/types/bookingForm';
+import type { date_exception } from '@/src/types/date_exceptions';
 import {
   resolveEffectiveBookingDurationMinutes,
   type ServiceDurationCatalogItem,
@@ -20,10 +21,18 @@ function buildAvailabilityInputsKey(
   effectiveDuration: number,
   providerTimezone?: string | null,
   viewerTimezone?: string | null,
-  selectedServiceIds: string[] = []
+  selectedServiceIds: string[] = [],
+  dateExceptions: date_exception[] = [],
+  providerId?: string | null
 ): string {
   const bookingSig = existingBookings
     .map((b) => `${b.id}:${b.start_at}:${b.end_at ?? ''}`)
+    .join('|');
+  const exceptionSig = dateExceptions
+    .map(
+      (e) =>
+        `${e.id}:${e.exception_date}:${e.availability_type}:${e.start_time}:${e.end_time}:${e.provider_id}:${e.repeat_yearly}`
+    )
     .join('|');
   return [
     selectedType?.id ?? '',
@@ -31,8 +40,10 @@ function buildAvailabilityInputsKey(
     minLeadTimeMinutes,
     providerTimezone ?? '',
     viewerTimezone ?? '',
+    providerId ?? '',
     selectedServiceIds.join(','),
     bookingSig,
+    exceptionSig,
     JSON.stringify(availabilitySettings?.timesheet ?? null),
     JSON.stringify(availabilitySettings?.individual ?? null),
   ].join('::');
@@ -63,7 +74,9 @@ export function isDateAvailable(
   selectedServiceIds: string[] = [],
   serviceCatalog: ServiceDurationCatalogItem[] = [],
   providerTimezone?: string | null,
-  viewerTimezone?: string | null
+  viewerTimezone?: string | null,
+  dateExceptions: date_exception[] = [],
+  providerId?: string | null
 ): boolean {
   if (!availabilitySettings?.timesheet || !selectedType) return false;
 
@@ -87,7 +100,9 @@ export function isDateAvailable(
     effectiveDuration,
     providerTimezone,
     viewerTimezone,
-    selectedServiceIds
+    selectedServiceIds,
+    dateExceptions,
+    providerId
   );
 
   return getCachedDateAvailability(dateStr, inputsKey, () =>
@@ -99,7 +114,9 @@ export function isDateAvailable(
       minLeadTimeMinutes,
       effectiveDuration,
       providerTimezone,
-      viewerTimezone
+      viewerTimezone,
+      dateExceptions,
+      providerId
     )
   );
 }

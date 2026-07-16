@@ -5,6 +5,7 @@ import type {
   EventType,
   Timeslot,
 } from '@/src/types/bookingForm';
+import type { date_exception } from '@/src/types/date_exceptions';
 import {
   resolveEffectiveBookingDurationMinutes,
   type ServiceDurationCatalogItem,
@@ -22,7 +23,9 @@ export function useTimeslots(
   selectedServiceIds: string[] = [],
   serviceCatalog: ServiceDurationCatalogItem[] = [],
   providerTimezone?: string | null,
-  viewerTimezone?: string | null
+  viewerTimezone?: string | null,
+  dateExceptions: date_exception[] = [],
+  providerId?: string | null
 ): Timeslot[] {
   return useMemo(() => {
     if (!selectedType || !selectedDate) return [];
@@ -43,7 +46,9 @@ export function useTimeslots(
       minLeadTimeMinutes,
       effectiveDuration,
       providerTz,
-      viewerTz
+      viewerTz,
+      dateExceptions,
+      providerId
     );
     const enabled = slots.filter((s) => !s.disabled).length;
     step3PerfSync('useTimeslots build', t0, {
@@ -63,5 +68,7 @@ export function useTimeslots(
     serviceCatalog,
     providerTimezone,
     viewerTimezone,
+    dateExceptions,
+    providerId,
   ]);
 }

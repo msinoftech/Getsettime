@@ -80,6 +80,7 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
   const [currentPage, setCurrentPage] = useState(1);
   const [showForm, setShowForm] = useState(false);
   const [editingBooking, setEditingBooking] = useState<Booking | null>(null);
+  const [rescheduleInProgress, setRescheduleInProgress] = useState(false);
   const [loading, setLoading] = useState(false);
   const [deleteConfirmModal, setDeleteConfirmModal] = useState<{ id: string } | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -442,6 +443,7 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
         markBookingAsViewed(booking.id);
       }
       setEditingBooking(booking);
+      setRescheduleInProgress(false);
       setShowForm(true);
     },
     [markBookingAsViewed]
@@ -454,6 +456,7 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
   const handleFormSave = useCallback(async () => {
     setShowForm(false);
     setEditingBooking(null);
+    setRescheduleInProgress(false);
     await fetchBookings(
       currentPage,
       debouncedFilter,
@@ -480,6 +483,7 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
   const handleFormCancel = useCallback(() => {
     setShowForm(false);
     setEditingBooking(null);
+    setRescheduleInProgress(false);
   }, []);
 
   /** When navigating to `/bookings/[id]`, keep the same viewed / reschedule-ack behavior as the old modal close. */
@@ -660,6 +664,8 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
         {showForm && (
           <div
             className={`fixed inset-0 z-40 flex items-center justify-center p-4 transition-opacity duration-200 ${
+              rescheduleInProgress ? "invisible pointer-events-none" : ""
+            } ${
               showForm ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0"
             }`}
           >
@@ -707,6 +713,7 @@ const BookingList = ({ bookings: initialBookings }: BookingListProps) => {
                   booking={editingBooking}
                   onSave={handleFormSave}
                   onCancel={handleFormCancel}
+                  onRescheduleStart={() => setRescheduleInProgress(true)}
                 />
               </div>
             </section>

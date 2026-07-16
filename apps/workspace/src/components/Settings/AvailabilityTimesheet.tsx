@@ -34,7 +34,8 @@ export type availability_timesheet_save_feedback =
 export type availability_timesheet_handle = {
   applyMonFriPreset: () => void;
   copyMondayToWeekdays: () => void;
-  saveChanges: () => Promise<void>;
+  /** Resolves true when the timesheet saved successfully. */
+  saveChanges: () => Promise<boolean>;
   isBusy: () => boolean;
 };
 
@@ -1032,7 +1033,7 @@ const AvailabilityTimesheet = forwardRef<
       applyMonFriPreset,
       copyMondayToWeekdays,
       saveChanges: async () => {
-        await handleSave();
+        return await handleSave();
       },
       isBusy: () => isBusy,
     }),

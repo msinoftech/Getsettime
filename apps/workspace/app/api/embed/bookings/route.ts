@@ -25,6 +25,10 @@ import {
   validateBookingEndAt,
 } from '@/lib/booking-effective-duration';
 import { normalizeInviteePhoneForStorage } from '@/src/utils/phone';
+import {
+  fetchActiveDateExceptionsForSlot,
+  validateSlotDateExceptions,
+} from '@/src/utils/dateExceptionApiValidation';
 
 type DayName = "Sun" | "Mon" | "Tue" | "Wed" | "Thu" | "Fri" | "Sat";
 
@@ -382,17 +386,47 @@ export async function POST(req: NextRequest) {
       ? (['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][startParts.dayOfWeek] as DayName)
       : (['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][startDate.getDay()] as DayName);
     const daySchedule = availability.timesheet?.[dayName];
-    
-    if (!daySchedule || !daySchedule.enabled) {
-      return NextResponse.json({ 
-        error: 'This time slot is not available. The selected day is not enabled in availability settings.' 
-      }, { status: 400 });
-    }
 
     const startMinutes = startParts ? startParts.startMinutes : startDate.getHours() * 60 + startDate.getMinutes();
     const endMinutes = endParts ? endParts.startMinutes : endDate.getHours() * 60 + endDate.getMinutes();
-    const scheduleStart = parseInt(daySchedule.startTime.split(':')[0]) * 60 + parseInt(daySchedule.startTime.split(':')[1]);
-    const scheduleEnd = parseInt(daySchedule.endTime.split(':')[0]) * 60 + parseInt(daySchedule.endTime.split(':')[1]);
+    const dateStr = startParts ? startParts.dateStr : startDate.toISOString().split('T')[0];
+    const timesheetStart = daySchedule
+      ? parseInt(daySchedule.startTime.split(':')[0]) * 60 + parseInt(daySchedule.startTime.split(':')[1])
+      : 9 * 60;
+    const timesheetEnd = daySchedule
+      ? parseInt(daySchedule.endTime.split(':')[0]) * 60 + parseInt(daySchedule.endTime.split(':')[1])
+      : 17 * 60;
+
+    const dateExceptions = await fetchActiveDateExceptionsForSlot(
+      supabase,
+      workspace_id,
+      dateStr,
+      bookingServiceProviderId
+    );
+    const exceptionValidation = validateSlotDateExceptions(
+      dateExceptions,
+      dateStr,
+      bookingServiceProviderId,
+      startMinutes,
+      endMinutes,
+      timesheetStart,
+      timesheetEnd
+    );
+
+    if (exceptionValidation.blocked && exceptionValidation.error?.includes('closed')) {
+      return NextResponse.json({ error: exceptionValidation.error }, { status: 400 });
+    }
+    
+    if (!daySchedule || !daySchedule.enabled) {
+      if (!exceptionValidation.allowDisabledDay) {
+        return NextResponse.json({ 
+          error: 'This time slot is not available. The selected day is not enabled in availability settings.' 
+        }, { status: 400 });
+      }
+    }
+
+    const scheduleStart = exceptionValidation.startMinutes ?? timesheetStart;
+    const scheduleEnd = exceptionValidation.endMinutes ?? timesheetEnd;
     
     if (startMinutes < scheduleStart || endMinutes > scheduleEnd) {
       return NextResponse.json({ 
@@ -401,7 +435,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Check if time conflicts with breaks
-    if (daySchedule.breaks && daySchedule.breaks.length > 0) {
+    if (daySchedule?.breaks && daySchedule.breaks.length > 0) {
       const conflictsWithBreak = daySchedule.breaks.some((breakTime) => {
         const breakStart = parseInt(breakTime.start.split(':')[0]) * 60 + parseInt(breakTime.start.split(':')[1]);
         const breakEnd = parseInt(breakTime.end.split(':')[0]) * 60 + parseInt(breakTime.end.split(':')[1]);
@@ -416,7 +450,6 @@ export async function POST(req: NextRequest) {
     }
 
     // Check individual overrides (format: YYYY-MM-DD-H)
-    const dateStr = startParts ? startParts.dateStr : startDate.toISOString().split('T')[0];
     const slotHour = startParts ? startParts.hours : startDate.getHours();
     const individualKey = `${dateStr}-${slotHour}`;
     const individualOverride = availability.individual?.[individualKey];
@@ -424,6 +457,12 @@ export async function POST(req: NextRequest) {
     if (individualOverride === false) {
       return NextResponse.json({ 
         error: 'This time slot has been marked as unavailable.' 
+      }, { status: 400 });
+    }
+
+    if (exceptionValidation.blocked) {
+      return NextResponse.json({
+        error: exceptionValidation.error || 'This time slot is blocked by an availability exception.',
       }, { status: 400 });
     }
 

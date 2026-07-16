@@ -145,6 +145,7 @@ const MultiStepBookingForm = ({
     loadingEventTypes,
     availabilitySettings,
     existingBookings,
+    dateExceptions,
     loadingAvailability,
     loadingBookings,
     services,
@@ -322,7 +323,9 @@ const MultiStepBookingForm = ({
     selectedServiceIds,
     serviceCatalogForSlots,
     providerTimezone,
-    viewerTimezone
+    viewerTimezone,
+    dateExceptions,
+    effectiveProviderId
   );
 
   const handleSelectDate = useCallback((date: Date) => {
@@ -891,6 +894,8 @@ const MultiStepBookingForm = ({
                     departmentsCount={departments.length}
                     workspacePrimaryColor={workspacePrimaryColor}
                     workspaceAccentColor={workspaceAccentColor}
+                    dateExceptions={dateExceptions}
+                    serviceProviderId={effectiveProviderId}
                     onSelectDate={handleSelectDate}
                     onSelectTime={setSelectedTime}
                     onSelectSlot={handleSelectSlot}

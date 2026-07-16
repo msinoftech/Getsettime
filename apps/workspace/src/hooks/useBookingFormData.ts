@@ -63,6 +63,7 @@ export function useBookingFormData({
   const [loadingEventTypes, setLoadingEventTypes] = useState(true);
   const [availabilitySettings, setAvailabilitySettings] = useState<AvailabilitySettings | null>(null);
   const [existingBookings, setExistingBookings] = useState<Booking[]>([]);
+  const [dateExceptions, setDateExceptions] = useState<import('@/src/types/date_exceptions').date_exception[]>([]);
   const [loadingAvailability, setLoadingAvailability] = useState(false);
   const [loadingBookings, setLoadingBookings] = useState(false);
   const [services, setServices] = useState<Service[]>([]);
@@ -227,6 +228,7 @@ export function useBookingFormData({
     if (!effectiveProviderId && needsExplicitProvider) {
       setAvailabilitySettings(null);
       setExistingBookings([]);
+      setDateExceptions([]);
       onAvailabilityChange?.();
       setLoadingAvailability(false);
       return;
@@ -237,6 +239,7 @@ export function useBookingFormData({
       setLoadingAvailability(true);
       setAvailabilitySettings(null);
       setExistingBookings([]);
+      setDateExceptions([]);
       onAvailabilityChange?.();
       try {
         const { supabase } = await import('@/lib/supabaseClient');
@@ -380,6 +383,53 @@ export function useBookingFormData({
   }, [effectiveProviderId, days, departments.length, needsExplicitProvider]);
 
   useEffect(() => {
+    const hasReqs = departments.length === 0 || !needsExplicitProvider || effectiveProviderId;
+    if (!hasReqs) {
+      setDateExceptions([]);
+      return;
+    }
+    const startDate = days[0] ?? new Date();
+    const endDate = days[days.length - 1] ?? new Date();
+    const rangeStart = new Date(startDate);
+    rangeStart.setDate(rangeStart.getDate() - CALENDAR_BUFFER_DAYS_BEFORE);
+    const rangeEnd = new Date(endDate);
+    rangeEnd.setDate(rangeEnd.getDate() + CALENDAR_BUFFER_DAYS);
+    const fmt = (d: Date) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+    const fetchExceptions = async () => {
+      try {
+        const { supabase } = await import('@/lib/supabaseClient');
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+        if (!session?.access_token) return;
+        const params = new URLSearchParams({
+          from: fmt(rangeStart),
+          to: fmt(rangeEnd),
+          status: 'active',
+          limit: '200',
+        });
+        if (effectiveProviderId) {
+          params.set('provider_id', effectiveProviderId);
+        }
+        const res = await fetch(`/api/date-exceptions?${params.toString()}`, {
+          headers: { Authorization: `Bearer ${session.access_token}` },
+        });
+        if (res.ok) {
+          const result = await res.json();
+          setDateExceptions(
+            Array.isArray(result.exceptions) ? result.exceptions : []
+          );
+        }
+      } catch (e) {
+        console.error('Error fetching date exceptions:', e);
+      }
+    };
+    void fetchExceptions();
+  }, [effectiveProviderId, days, departments.length, needsExplicitProvider]);
+
+  useEffect(() => {
     if (!isServicesEnabled(intakeForm)) {
       setServices([]);
       return;
@@ -475,6 +525,7 @@ export function useBookingFormData({
     availabilitySettings,
     setAvailabilitySettings,
     existingBookings,
+    dateExceptions,
     loadingAvailability,
     loadingBookings,
     services,

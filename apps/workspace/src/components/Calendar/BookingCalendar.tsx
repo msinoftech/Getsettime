@@ -11,6 +11,13 @@ import {
 import type { Booking } from "@/src/types/booking";
 import { useCreateBookingModal } from "@/src/providers/CreateBookingModalProvider";
 import { useWorkspaceSettings } from "@/src/hooks/useWorkspaceSettings";
+import { CUSTOMER_TIMEZONE_OPTIONS } from "@/src/constants/timezone";
+import {
+  formatTimezoneSelectLabel,
+  getBrowserTimezone,
+} from "@/src/utils/timezone";
+import { getLocalTimePartsInTimezone } from "@/lib/date-timezone";
+import { TimezoneSelector } from "@/src/components/ui/TimezoneSelector";
 import {
   CalendarFiltersBar,
   type CalendarStatusFilterOption,
@@ -68,6 +75,31 @@ type SidebarSummary = {
   reschedule: number;
   noShow: number;
 };
+
+/**
+ * Re-anchor an instant so its browser-local wall clock matches the wall clock
+ * in the given timezone. Display-only: grids read times via local Date getters.
+ */
+function shift_iso_to_timezone_wall_clock(iso: string, timezone: string): string {
+  const instant = new Date(iso);
+  if (Number.isNaN(instant.getTime())) return iso;
+  try {
+    const parts = getLocalTimePartsInTimezone(iso, timezone);
+    const [year, month, day] = parts.dateStr.split("-").map(Number);
+    const shifted = new Date(
+      year,
+      month - 1,
+      day,
+      parts.hours,
+      parts.minutes,
+      instant.getSeconds(),
+      instant.getMilliseconds(),
+    );
+    return shifted.toISOString();
+  } catch {
+    return iso;
+  }
+}
 
 function group_bookings_by_day(bookings: Booking[]): Record<string, Booking[]> {
   const grouped: Record<string, Booking[]> = {};
@@ -144,19 +176,26 @@ export default function BookingCalendar() {
   const { open: open_create_booking } = useCreateBookingModal();
   const { general, settings } = useWorkspaceSettings();
   const today = new Date();
-  const timezoneLabel = useMemo(() => {
-    const configured = (
-      general?.timezone ??
-      settings.general?.timezone ??
-      ""
-    ).trim();
-    if (configured) return configured;
-    try {
-      return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-    } catch {
-      return "UTC";
-    }
-  }, [general?.timezone, settings.general?.timezone]);
+  const browser_timezone = useMemo(() => getBrowserTimezone(), []);
+  const workspace_timezone =
+    (general?.timezone ?? settings.general?.timezone ?? "").trim();
+  const source_timezone = workspace_timezone || browser_timezone;
+
+  const timezone_options = useMemo(() => {
+    const set = new Set<string>([
+      ...CUSTOMER_TIMEZONE_OPTIONS,
+      source_timezone,
+      browser_timezone,
+    ]);
+    return Array.from(set).sort((a, b) =>
+      formatTimezoneSelectLabel(a).localeCompare(formatTimezoneSelectLabel(b)),
+    );
+  }, [source_timezone, browser_timezone]);
+
+  // Display-only selection: bookings are re-rendered in this timezone.
+  const [displayTimezone, setDisplayTimezone] = useState<string | null>(null);
+  const selectedTimezone = displayTimezone ?? source_timezone;
+  const timezoneLabel = selectedTimezone;
   const [viewDate, setViewDate] = useState(() => start_of_month(new Date()));
   const [viewMode, setViewMode] = useState<CalendarViewMode>("month");
   const [showMonthOptions, setShowMonthOptions] = useState(false);
@@ -318,8 +357,23 @@ export default function BookingCalendar() {
     return options;
   }, [rawBookings]);
 
+  // Bookings with start/end re-anchored to the selected display timezone so
+  // grids (which use local Date getters) place them on the right date/slot.
+  const display_bookings = useMemo(() => {
+    if (selectedTimezone === browser_timezone) return rawBookings;
+    return rawBookings.map((booking) => ({
+      ...booking,
+      start_at: booking.start_at
+        ? shift_iso_to_timezone_wall_clock(booking.start_at, selectedTimezone)
+        : booking.start_at,
+      end_at: booking.end_at
+        ? shift_iso_to_timezone_wall_clock(booking.end_at, selectedTimezone)
+        : booking.end_at,
+    }));
+  }, [rawBookings, selectedTimezone, browser_timezone]);
+
   const filtered_bookings_list = useMemo(() => {
-    const searchedBookings = filterBookingsBySearch(rawBookings, search);
+    const searchedBookings = filterBookingsBySearch(display_bookings, search);
     return searchedBookings.filter((booking) => {
       const matchesDepartment =
         departmentFilter === "all" ||
@@ -332,7 +386,7 @@ export default function BookingCalendar() {
         to_filter_id(booking.service_provider_id) === providerFilter;
       return matchesDepartment && matchesService && matchesProvider;
     });
-  }, [rawBookings, search, departmentFilter, serviceFilter, providerFilter]);
+  }, [display_bookings, search, departmentFilter, serviceFilter, providerFilter]);
 
   const bookingsByDay = useMemo(
     () => group_bookings_by_day(filtered_bookings_list),
@@ -1138,24 +1192,22 @@ export default function BookingCalendar() {
                   ))}
                 </div>
 
-                {/* <div className="flex items-center gap-2">
-                  <div className="inline-flex h-8 items-center gap-2 rounded-md border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700">
-                    <span className="text-slate-500">Time Zone:</span>
-                    <span className="max-w-[180px] truncate">{timezoneLabel}</span>
-                    <ChevronDown
-                      className="h-3.5 w-3.5 shrink-0 text-slate-400"
-                      aria-hidden
-                    />
-                  </div>
+                <div className="flex items-center gap-2">
+                  <TimezoneSelector
+                    timezone={selectedTimezone}
+                    options={timezone_options}
+                    onChange={setDisplayTimezone}
+                    variant="inline"
+                  />
                   <button
                     type="button"
                     onClick={() => setRefreshKey((k) => k + 1)}
                     className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-50 hover:text-slate-700"
                     aria-label="Refresh calendar"
                   >
-                    <RefreshCw className="h-3.5 w-3.5" aria-hidden />
+                    {/* <RefreshCw className="h-3.5 w-3.5" aria-hidden /> */}
                   </button>
-                </div> */}
+                </div>
               </div>
             </div>
 

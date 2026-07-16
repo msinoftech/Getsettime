@@ -24,6 +24,10 @@ import {
   validateBookingEndAt,
 } from '@/lib/booking-effective-duration';
 import { load_customer_booking_rules_for_workspace } from '@/lib/customer-booking-rules';
+import {
+  fetchActiveDateExceptionsForSlot,
+  validateSlotDateExceptions,
+} from '@/src/utils/dateExceptionApiValidation';
 
 type DayName = 'Sun' | 'Mon' | 'Tue' | 'Wed' | 'Thu' | 'Fri' | 'Sat';
 
@@ -151,20 +155,52 @@ export async function POST(req: NextRequest) {
       : (['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][startDate.getDay()] as DayName);
 
     const daySchedule = availability.timesheet?.[dayName];
-    if (!daySchedule || !daySchedule.enabled) {
-      return NextResponse.json({ error: 'The selected day is not available.' }, { status: 400 });
-    }
-
     const startMinutes = startParts ? startParts.startMinutes : startDate.getHours() * 60 + startDate.getMinutes();
     const endMinutes = endParts ? endParts.startMinutes : endDate.getHours() * 60 + endDate.getMinutes();
-    const scheduleStart = parseInt(daySchedule.startTime.split(':')[0]) * 60 + parseInt(daySchedule.startTime.split(':')[1]);
-    const scheduleEnd = parseInt(daySchedule.endTime.split(':')[0]) * 60 + parseInt(daySchedule.endTime.split(':')[1]);
+    const dateStr = startParts ? startParts.dateStr : startDate.toISOString().split('T')[0];
+    const timesheetStart = daySchedule
+      ? parseInt(daySchedule.startTime.split(':')[0]) * 60 + parseInt(daySchedule.startTime.split(':')[1])
+      : 9 * 60;
+    const timesheetEnd = daySchedule
+      ? parseInt(daySchedule.endTime.split(':')[0]) * 60 + parseInt(daySchedule.endTime.split(':')[1])
+      : 17 * 60;
+
+    const providerIdForExceptions =
+      typeof booking.service_provider_id === 'string' ? booking.service_provider_id : null;
+    const dateExceptions = await fetchActiveDateExceptionsForSlot(
+      supabase,
+      booking.workspace_id,
+      dateStr,
+      providerIdForExceptions
+    );
+    const exceptionValidation = validateSlotDateExceptions(
+      dateExceptions,
+      dateStr,
+      providerIdForExceptions,
+      startMinutes,
+      endMinutes,
+      timesheetStart,
+      timesheetEnd
+    );
+
+    if (exceptionValidation.blocked && exceptionValidation.error?.includes('closed')) {
+      return NextResponse.json({ error: exceptionValidation.error }, { status: 400 });
+    }
+
+    if (!daySchedule || !daySchedule.enabled) {
+      if (!exceptionValidation.allowDisabledDay) {
+        return NextResponse.json({ error: 'The selected day is not available.' }, { status: 400 });
+      }
+    }
+
+    const scheduleStart = exceptionValidation.startMinutes ?? timesheetStart;
+    const scheduleEnd = exceptionValidation.endMinutes ?? timesheetEnd;
 
     if (startMinutes < scheduleStart || endMinutes > scheduleEnd) {
       return NextResponse.json({ error: 'This time slot is outside available hours.' }, { status: 400 });
     }
 
-    if (daySchedule.breaks?.length) {
+    if (daySchedule?.breaks?.length) {
       const conflictsWithBreak = daySchedule.breaks.some((b) => {
         const bStart = parseInt(b.start.split(':')[0]) * 60 + parseInt(b.start.split(':')[1]);
         const bEnd = parseInt(b.end.split(':')[0]) * 60 + parseInt(b.end.split(':')[1]);
@@ -175,11 +211,16 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const dateStr = startParts ? startParts.dateStr : startDate.toISOString().split('T')[0];
     const slotHour = startParts ? startParts.hours : startDate.getHours();
     const individualKey = `${dateStr}-${slotHour}`;
     if (availability.individual?.[individualKey] === false) {
       return NextResponse.json({ error: 'This time slot has been marked as unavailable.' }, { status: 400 });
+    }
+
+    if (exceptionValidation.blocked) {
+      return NextResponse.json({
+        error: exceptionValidation.error || 'This time slot is blocked by an availability exception.',
+      }, { status: 400 });
     }
 
     // Google Calendar busy check

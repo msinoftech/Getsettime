@@ -200,6 +200,20 @@ export async function POST(req: NextRequest) {
     }
 
     const inviteUrl = appUrl(`/invite-accept?token=${inviteToken}`, req);
+    const invitedByName =
+      (typeof user.user_metadata?.full_name === 'string' && user.user_metadata.full_name.trim()) ||
+      (typeof user.user_metadata?.name === 'string' && user.user_metadata.name.trim()) ||
+      user.email ||
+      'A teammate';
+    const roleLabel = String(role).replace(/_/g, ' ');
+
+    const { data: workspaceRow } = await adminClient
+      .from('workspaces')
+      .select('name')
+      .eq('id', workspaceId)
+      .maybeSingle();
+    const workspaceName =
+      (typeof workspaceRow?.name === 'string' && workspaceRow.name.trim()) || 'your workspace';
 
     // Send email with invite link using Nodemailer
     try {
@@ -220,21 +234,22 @@ export async function POST(req: NextRequest) {
       const emailResult = await transporter.sendMail({
         from: process.env.EMAIL_FROM || process.env.SMTP_USER,
         to: email,
-        subject: 'You have been invited to join GetSetTime',
+        subject: `GetSetTime (${workspaceName}) Invitation`,
         html: `
           <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-            <h2 style="color: #4F46E5;">You're Invited!</h2>
-            <p>You have been invited to join as a <strong>${role.replace('_', ' ')}</strong>.</p>
-            <p>Click the button below to accept your invitation and create your account:</p>
+            <h2 style="color: #4F46E5;">Hello ${nameStr}!</h2>
+            <p>${invitedByName} has invited you to join ${workspaceName} as a <strong>${roleLabel}</strong>.</p>
+            <p>After accepting the invitation, you'll be able to access your workspace and manage appointments.</p>
             <div style="margin: 30px 0;">
               <a href="${inviteUrl}" style="background-color: #4F46E5; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">Accept Invitation</a>
             </div>
             <p style="color: #666; font-size: 14px;">Or copy and paste this link into your browser:</p>
             <p style="color: #666; font-size: 14px; word-break: break-all;">${inviteUrl}</p>
+            <p style="color: #999; font-size: 12px; margin-top: 40px;">If you weren't expecting this invitation, simply ignore this email.</p>
             <p style="color: #999; font-size: 12px; margin-top: 40px;">This invitation will expire in 72 hours.</p>
           </div>
         `,
-        text: `You're Invited!\n\nYou have been invited to join as a ${role.replace('_', ' ')}.\n\nAccept your invitation by visiting: ${inviteUrl}\n\nThis invitation will expire in 72 hours.`,
+        text: `Hello ${nameStr}!\n\n${invitedByName} has invited you to join GetSetTime (${workspaceName}) as a ${roleLabel}.\n\nAccept your invitation by visiting: ${inviteUrl}\n\nThis invitation will expire in 72 hours.`,
       });
 
       console.log('Email sent:', emailResult.messageId);

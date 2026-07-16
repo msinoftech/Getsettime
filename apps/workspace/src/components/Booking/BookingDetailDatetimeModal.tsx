@@ -62,6 +62,7 @@ export function BookingDetailDatetimeModal({
   onClose,
   onConfirm,
   saving,
+  saveError,
 }: {
   open: boolean;
   mode: Mode;
@@ -81,6 +82,7 @@ export function BookingDetailDatetimeModal({
     provider_timezone?: string;
   }) => void;
   saving: boolean;
+  saveError?: string | null;
 }) {
   const [selectedDepartment, setSelectedDepartment] = useState<Department | null>(null);
   const [selectedProvider, setSelectedProvider] = useState<ServiceProvider | null>(null);
@@ -412,6 +414,11 @@ export function BookingDetailDatetimeModal({
             {error && (
               <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
                 {error}
+              </div>
+            )}
+            {saveError && (
+              <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+                {saveError}
               </div>
             )}
             <Step3DateTime

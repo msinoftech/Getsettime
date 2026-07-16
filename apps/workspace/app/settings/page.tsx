@@ -1594,7 +1594,7 @@ export default function SettingsPage() {
             )}
 
             {canSave ? (
-              <div className="sticky bottom-0 border-t border-slate-200 bg-white/90 px-5 py-4 backdrop-blur md:px-8">
+              <div className="bottom-0 border-t border-slate-200 bg-white/90 px-5 py-4 backdrop-blur md:px-8">
                 <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
                   <button
                     type="button"

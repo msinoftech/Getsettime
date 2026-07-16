@@ -6,7 +6,7 @@ import { BookingUsageBanner } from "./BookingUsageBanner";
 export function SubscriptionBanners() {
   return (
     <>
-      <FreePlanWelcomeBanner />
+      {/* <FreePlanWelcomeBanner /> */}
       <BookingUsageBanner />
     </>
   );

@@ -19,8 +19,10 @@ import {
 } from "@/lib/invite_department_assignment";
 import { supabase } from "@/lib/supabaseClient";
 import AvailabilityTimesheet, {
+  type availability_timesheet_handle,
   type availability_timesheet_save_feedback,
 } from "@/src/components/Settings/AvailabilityTimesheet";
+import { ConfirmModal } from "@/src/components/ui/ConfirmModal";
 import AlertMessage from "@/src/components/Auth/AlertMessage";
 import {
   ROLE_WORKSPACE_ADMIN,
@@ -169,10 +171,25 @@ export default function RegisterForm() {
     google_meet: false,
   });
   const [step3Saved, setStep3Saved] = useState(false);
-  const [step3NextError, setStep3NextError] = useState<"top" | "bottom" | null>(
-    null
-  );
-  const bottomErrorRef = useRef<HTMLDivElement>(null);
+  const [step3SaveChoiceOpen, setStep3SaveChoiceOpen] = useState(false);
+  const [step3SavingHours, setStep3SavingHours] = useState(false);
+  const timesheetRef = useRef<availability_timesheet_handle | null>(null);
+  const departmentSectionRef = useRef<HTMLDivElement>(null);
+
+  const scrollToDepartmentSection = useCallback(() => {
+    // Wait a frame so the department suggestions render before scrolling.
+    requestAnimationFrame(() => {
+      departmentSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }, []);
+
+  const nextButtonRef = useRef<HTMLButtonElement>(null);
+
+  const scrollToNextButton = useCallback(() => {
+    requestAnimationFrame(() => {
+      nextButtonRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+  }, []);
   const [timesheetSaveFeedback, setTimesheetSaveFeedback] =
     useState<availability_timesheet_save_feedback>(null);
   const [onboardingUser, setOnboardingUser] = useState<{ email?: string; google_calendar_sync?: boolean } | null>(null);
@@ -1027,22 +1044,32 @@ export default function RegisterForm() {
     }
   };
 
-  useEffect(() => {
-    if (step3NextError !== "bottom") return;
-    const t = window.setTimeout(() => {
-      bottomErrorRef.current?.scrollIntoView({
-        behavior: "smooth",
-        block: "center",
-      });
-    }, 260);
-    return () => window.clearTimeout(t);
-  }, [step3NextError]);
+  const advanceFromStep3 = async () => {
+    setOnboardingSaving(true);
+    try {
+      await persistOnboardingStep(3);
+      goToOnboardingStep(4);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Failed to save progress");
+    } finally {
+      setOnboardingSaving(false);
+    }
+  };
 
-  const handleOnboardingNext = async (
-    position: "top" | "bottom" = "bottom"
-  ) => {
+  const handleStep3SaveHours = async () => {
+    setStep3SavingHours(true);
+    try {
+      const ok = (await timesheetRef.current?.saveChanges()) ?? false;
+      setStep3SaveChoiceOpen(false);
+      if (!ok) return; // the timesheet's feedback banner explains the failure
+      await advanceFromStep3();
+    } finally {
+      setStep3SavingHours(false);
+    }
+  };
+
+  const handleOnboardingNext = async () => {
     setError("");
-    setStep3NextError(null);
     if (onboardingStep === 1) {
       // Optimistic: validate locally, kick off the single batched save in the
       // background, and advance immediately so the user doesn't wait. The promise
@@ -1077,18 +1104,11 @@ export default function RegisterForm() {
       }
     } else if (onboardingStep === 3) {
       if (!step3Saved) {
-        setStep3NextError(position);
+        // Offer to save the current hours or keep editing instead of blocking.
+        setStep3SaveChoiceOpen(true);
         return;
       }
-      setOnboardingSaving(true);
-      try {
-        await persistOnboardingStep(3);
-        goToOnboardingStep(4);
-      } catch (e: unknown) {
-        setError(e instanceof Error ? e.message : "Failed to save progress");
-      } finally {
-        setOnboardingSaving(false);
-      }
+      await advanceFromStep3();
     } else if (onboardingStep === 4) {
       const ok = await saveStep4();
       if (!ok) return;
@@ -1287,20 +1307,12 @@ export default function RegisterForm() {
             <div className="mb-4 flex flex-col items-end gap-2">
               <button
                 type="button"
-                onClick={() => handleOnboardingNext("top")}
+                onClick={() => handleOnboardingNext()}
                 disabled={onboardingNextDisabled}
                 className="px-6 py-3 rounded-lg bg-blue-600 text-white font-medium hover:bg-blue-700 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {onboardingSaving ? "Saving…" : "Next"}
               </button>
-              {step3NextError === "top" && (
-                <div className="w-full">
-                  <AlertMessage
-                    type="error"
-                    message="Save working hours first, then click Next."
-                  />
-                </div>
-              )}
             </div>
           )}
 
@@ -1321,6 +1333,7 @@ export default function RegisterForm() {
                         setSelectedDepartments([]);
                         setCustomDepartment("");
                         setCustomDepartmentMode(false);
+                        scrollToDepartmentSection();
                       }}
                       className={`flex items-center gap-3 px-4 py-4 rounded-2xl border text-left transition ${
                         selectedProfessionId === String(p.id)
@@ -1366,6 +1379,7 @@ export default function RegisterForm() {
                       setSelectedDepartments([]);
                       setCustomDepartment("");
                       setCustomDepartmentMode(true);
+                      scrollToDepartmentSection();
                     }}
                     className={`flex items-center gap-3 px-4 py-4 rounded-2xl border text-left transition ${
                       selectedProfessionId === OTHER_VALUE
@@ -1396,7 +1410,7 @@ export default function RegisterForm() {
               )}
 
               {/* Department */}
-              <div>
+              <div ref={departmentSectionRef} className="scroll-mt-6">
                 <h2 className="text-lg font-semibold text-gray-800 mb-3">
                   {isSpOnboardingUi && spDepartmentsLockedFromInvite
                     ? "Your assigned departments"
@@ -1465,13 +1479,14 @@ export default function RegisterForm() {
                           <button
                             key={name}
                             type="button"
-                            onClick={() =>
+                            onClick={() => {
                               setSelectedDepartments((prev) =>
                                 prev.includes(name)
                                   ? prev.filter((dept) => dept !== name)
                                   : [...prev, name]
-                              )
-                            }
+                              );
+                              if (!isSelected) scrollToNextButton();
+                            }}
                             className={`inline-flex items-center gap-2 rounded-full border px-5 py-2 text-base font-medium transition ${
                               isSelected
                                 ? "border-violet-500 bg-violet-50 text-violet-700"
@@ -1520,6 +1535,7 @@ export default function RegisterForm() {
                               return [...prev, value];
                             });
                             setCustomDepartment("");
+                            scrollToNextButton();
                           }}
                           className="rounded-2xl bg-violet-600 px-6 py-3 text-white font-semibold hover:bg-violet-700 transition"
                         >
@@ -1662,11 +1678,11 @@ export default function RegisterForm() {
               <h2 className="text-lg font-semibold text-gray-800 mb-4">Working Hours</h2>
               <p className="text-sm text-gray-600 mb-4">Configure your availability and break times, then click Save Timesheet before continuing.</p>
               <AvailabilityTimesheet
+                ref={timesheetRef}
                 providerUserId={isSpOnboardingUi ? onboardingProviderUserId ?? undefined : undefined}
                 onSave={() => {
                   setStep3Saved(true);
                   setError("");
-                  setStep3NextError(null);
                 }}
                 onSaveFeedback={setTimesheetSaveFeedback}
               />
@@ -1705,7 +1721,6 @@ export default function RegisterForm() {
                   type="button"
                   onClick={() => {
                     setError("");
-                    setStep3NextError(null);
                     goToOnboardingStep(onboardingStep - 1);
                   }}
                   disabled={onboardingSaving}
@@ -1715,23 +1730,29 @@ export default function RegisterForm() {
                 </button>
               ) : <span />}
               <button
+                ref={nextButtonRef}
                 type="button"
-                onClick={() => handleOnboardingNext("bottom")}
+                onClick={() => handleOnboardingNext()}
                 disabled={onboardingNextDisabled}
                 className="px-6 py-3 rounded-lg bg-blue-600 text-white font-medium hover:bg-blue-700 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {onboardingSaving ? "Saving…" : onboardingStep === 4 ? "Finish" : "Next"}
               </button>
             </div>
-            {step3NextError === "bottom" && (
-              <div ref={bottomErrorRef} className="animate-fade-slide-in">
-                <AlertMessage
-                  type="error"
-                  message="Save working hours first, then click Next."
-                />
-              </div>
-            )}
           </div>
+
+          {step3SaveChoiceOpen && (
+            <ConfirmModal
+              title="Save working hours?"
+              message="Your working hours haven't been saved yet. Save them now and continue, or go back to modify them first."
+              confirmLabel="Save hours"
+              cancelLabel="Modify hours"
+              variant="primary"
+              loading={step3SavingHours}
+              onConfirm={() => void handleStep3SaveHours()}
+              onCancel={() => setStep3SaveChoiceOpen(false)}
+            />
+          )}
         </div>
       </div>
     );

@@ -148,6 +148,7 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
     loadingEventTypes,
     availabilitySettings,
     existingBookings,
+    dateExceptions,
     loadingAvailability,
     loadingBookings,
     services,
@@ -286,7 +287,9 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
     selectedServiceIds,
     serviceCatalogForSlots,
     providerTimezone,
-    viewerTimezone
+    viewerTimezone,
+    dateExceptions,
+    effectiveProviderId
   );
 
   const handleSelectDate = useCallback((date: Date) => {
@@ -971,6 +974,8 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
                     departmentsCount={departments.length}
                     workspacePrimaryColor={workspacePrimaryColor}
                     workspaceAccentColor={workspaceAccentColor}
+                    dateExceptions={dateExceptions}
+                    serviceProviderId={effectiveProviderId}
                     onSelectDate={handleSelectDate}
                     onSelectTime={setSelectedTime}
                     onSelectSlot={handleSelectSlot}

@@ -78,6 +78,7 @@ export function useEmbedBookingFormData({
   const [loadingEventTypes, setLoadingEventTypes] = useState(true);
   const [availabilitySettings, setAvailabilitySettings] = useState<AvailabilitySettings | null>(null);
   const [existingBookings, setExistingBookings] = useState<Booking[]>([]);
+  const [dateExceptions, setDateExceptions] = useState<import('@/src/types/date_exceptions').date_exception[]>([]);
   const [loadingAvailability, setLoadingAvailability] = useState(false);
   const [loadingBookings, setLoadingBookings] = useState(false);
   const [services, setServices] = useState<Service[]>([]);
@@ -281,6 +282,7 @@ export function useEmbedBookingFormData({
     if (!effectiveProviderId && needsExplicitProvider) {
       setAvailabilitySettings(null);
       setExistingBookings([]);
+      setDateExceptions([]);
       onAvailabilityChange?.();
       setLoadingAvailability(false);
       return;
@@ -293,6 +295,7 @@ export function useEmbedBookingFormData({
       setLoadingAvailability(true);
       setAvailabilitySettings(null);
       setExistingBookings([]);
+      setDateExceptions([]);
       onAvailabilityChange?.();
       try {
         const providerQuery =
@@ -377,6 +380,54 @@ export function useEmbedBookingFormData({
     fetchBookings();
   }, [selectedType, effectiveProviderId, days, departments.length, workspace.id, needsExplicitProvider]);
 
+  useEffect(() => {
+    const hasReqs =
+      selectedType &&
+      (departments.length === 0 || !needsExplicitProvider || effectiveProviderId);
+    if (!hasReqs) {
+      setDateExceptions([]);
+      return;
+    }
+    const startDate = days[0] ?? new Date();
+    const endDate = days[days.length - 1] ?? new Date();
+    const rangeStart = new Date(startDate);
+    rangeStart.setDate(rangeStart.getDate() - CALENDAR_BUFFER_DAYS_BEFORE);
+    const rangeEnd = new Date(endDate);
+    rangeEnd.setDate(rangeEnd.getDate() + CALENDAR_BUFFER_DAYS);
+    const fmt = (d: Date) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+    const fetchExceptions = async () => {
+      try {
+        const params = new URLSearchParams({
+          workspace_id: String(workspace.id),
+          from: fmt(rangeStart),
+          to: fmt(rangeEnd),
+        });
+        if (effectiveProviderId) {
+          params.set('service_provider_id', effectiveProviderId);
+        }
+        const res = await fetch(`/api/embed/date-exceptions?${params.toString()}`);
+        if (res.ok) {
+          const result = await res.json();
+          setDateExceptions(
+            Array.isArray(result.exceptions) ? result.exceptions : []
+          );
+        }
+      } catch (e) {
+        console.error('Error fetching embed date exceptions:', e);
+      }
+    };
+    void fetchExceptions();
+  }, [
+    selectedType,
+    effectiveProviderId,
+    days,
+    departments.length,
+    workspace.id,
+    needsExplicitProvider,
+  ]);
+
   const effectiveIntakeForm = settingsIntakeForm ?? intakeForm;
   useEffect(() => {
     if (!isServicesEnabled(effectiveIntakeForm)) {
@@ -448,6 +499,7 @@ export function useEmbedBookingFormData({
     loadingEventTypes,
     availabilitySettings,
     existingBookings,
+    dateExceptions,
     loadingAvailability,
     loadingBookings,
     services,

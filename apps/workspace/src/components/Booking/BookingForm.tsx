@@ -1,20 +1,33 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { createPortal } from "react-dom";
 import { type Booking, BOOKING_STATUSES } from "@/src/types/booking";
 import { supabase } from "@/lib/supabaseClient";
 import { useWorkspaceSettings } from "@/src/hooks/useWorkspaceSettings";
 import { useEventTypes, useDepartments, useServices, useServiceProviders } from "@/src/hooks/useBookingLookups";
 import { formatDateTimeLocal } from "@/src/utils/date";
 import { normalizeIntakeForm } from "@/src/utils/intakeForm";
+import { BookingDetailDatetimeModal } from "@/src/components/Booking/BookingDetailDatetimeModal";
+import type { EventType as BookingFormEventType } from "@/src/types/bookingForm";
+
+const CANCELLED_STATUS_OPTIONS = BOOKING_STATUSES.filter(
+  (s) => s.value === "cancelled" || s.value === "reschedule"
+);
 
 interface BookingFormProps {
   booking?: Booking | null;
   onSave: () => void;
   onCancel: () => void;
+  onRescheduleStart?: () => void;
 }
 
-const BookingForm = ({ booking, onSave, onCancel }: BookingFormProps) => {
+const BookingForm = ({
+  booking,
+  onSave,
+  onCancel,
+  onRescheduleStart,
+}: BookingFormProps) => {
   const { settings } = useWorkspaceSettings();
   const { data: eventTypes, loading: loadingEventTypes } = useEventTypes();
   const { data: departments, loading: loadingDepartments } = useDepartments();
@@ -46,7 +59,37 @@ const BookingForm = ({ booking, onSave, onCancel }: BookingFormProps) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+  const [rescheduleModalOpen, setRescheduleModalOpen] = useState(false);
+  const [rescheduleSaving, setRescheduleSaving] = useState(false);
+  const [rescheduleError, setRescheduleError] = useState<string | null>(null);
   const successRef = useRef<HTMLDivElement | null>(null);
+
+  const isCancelledBooking = booking?.status === "cancelled";
+  const statusOptions = isCancelledBooking
+    ? CANCELLED_STATUS_OPTIONS
+    : BOOKING_STATUSES;
+
+  const general = settings?.general as Record<string, unknown> | undefined;
+  const workspaceTimezone =
+    typeof general?.timezone === "string" && general.timezone.trim()
+      ? general.timezone.trim()
+      : null;
+  const workspacePrimaryColor =
+    typeof general?.primary_color === "string"
+      ? general.primary_color
+      : "#4f46e5";
+  const workspaceAccentColor =
+    typeof general?.accent_color === "string" ? general.accent_color : null;
+
+  const rescheduleEventTypes = useMemo<BookingFormEventType[]>(
+    () =>
+      eventTypes.map((e) => ({
+        id: e.id,
+        title: e.title,
+        duration_minutes: e.duration_minutes ?? 30,
+      })),
+    [eventTypes]
+  );
 
   useEffect(() => {
     if (success) {
@@ -230,7 +273,100 @@ const BookingForm = ({ booking, onSave, onCancel }: BookingFormProps) => {
     []
   );
 
+  const handleStatusChange = useCallback(
+    (value: string) => {
+      if (isCancelledBooking && value === "reschedule") {
+        setRescheduleError(null);
+        onRescheduleStart?.();
+        setRescheduleModalOpen(true);
+        return;
+      }
+      updateFormField("status", value);
+    },
+    [isCancelledBooking, onRescheduleStart, updateFormField]
+  );
+
+  const handleRescheduleConfirm = useCallback(
+    async (payload: {
+      start_at: string;
+      end_at: string;
+      status?: string;
+      customer_timezone?: string;
+      provider_timezone?: string;
+    }) => {
+      if (!booking) return;
+
+      setRescheduleSaving(true);
+      setRescheduleError(null);
+
+      try {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+        if (!session?.access_token) throw new Error("Not authenticated");
+
+        const existingMetadata = booking.metadata ?? {};
+        const existingHistory = Array.isArray(existingMetadata.reschedule_history)
+          ? existingMetadata.reschedule_history
+          : [];
+        const metadata = {
+          ...existingMetadata,
+          was_previously_cancelled: true,
+          reschedule_history: [
+            ...existingHistory,
+            {
+              previous_status: "cancelled",
+              previous_start_at: booking.start_at,
+              previous_end_at: booking.end_at,
+              new_start_at: payload.start_at,
+              new_end_at: payload.end_at,
+              rescheduled_at: new Date().toISOString(),
+            },
+          ],
+        };
+
+        const response = await fetch("/api/bookings", {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${session.access_token}`,
+          },
+          body: JSON.stringify({
+            id: booking.id,
+            start_at: payload.start_at,
+            end_at: payload.end_at,
+            status: "reschedule",
+            customer_timezone: payload.customer_timezone,
+            provider_timezone: payload.provider_timezone,
+            metadata,
+          }),
+        });
+
+        const responseData = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(responseData.error || "Failed to reschedule booking");
+        }
+
+        setRescheduleModalOpen(false);
+        onSave();
+      } catch (err) {
+        setRescheduleError(
+          err instanceof Error ? err.message : "Failed to reschedule booking"
+        );
+      } finally {
+        setRescheduleSaving(false);
+      }
+    },
+    [booking, onSave]
+  );
+
+  const handleRescheduleClose = useCallback(() => {
+    setRescheduleModalOpen(false);
+    onCancel();
+  }, [onCancel]);
+
   return (
+    <>
     <form
       onSubmit={handleSubmit}
       className="grid md:grid-cols-2 gap-4 p-5 rounded-xl border border-slate-200 bg-gray-50/70"
@@ -329,10 +465,10 @@ const BookingForm = ({ booking, onSave, onCancel }: BookingFormProps) => {
         <select
           id="status"
           value={formData.status}
-          onChange={(e) => updateFormField("status", e.target.value)}
+          onChange={(e) => handleStatusChange(e.target.value)}
           className="w-full px-4 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-indigo-500 outline-none"
         >
-          {BOOKING_STATUSES.map(({ value, label }) => (
+          {statusOptions.map(({ value, label }) => (
             <option key={value} value={value}>
               {label}
             </option>
@@ -626,6 +762,29 @@ const BookingForm = ({ booking, onSave, onCancel }: BookingFormProps) => {
         </button>
       </div>
     </form>
+
+    {booking &&
+      rescheduleModalOpen &&
+      typeof document !== "undefined" &&
+      createPortal(
+        <BookingDetailDatetimeModal
+          open={rescheduleModalOpen}
+          mode="reschedule"
+          booking={booking}
+          departments={departments as unknown[]}
+          eventTypes={rescheduleEventTypes}
+          intakeForm={intakeFormSettings}
+          workspacePrimaryColor={workspacePrimaryColor}
+          workspaceAccentColor={workspaceAccentColor}
+          clientTimezone={workspaceTimezone}
+          onClose={handleRescheduleClose}
+          onConfirm={handleRescheduleConfirm}
+          saving={rescheduleSaving}
+          saveError={rescheduleError}
+        />,
+        document.body
+      )}
+    </>
   );
 };
 

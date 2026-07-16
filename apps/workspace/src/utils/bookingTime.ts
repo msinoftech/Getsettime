@@ -7,6 +7,7 @@ import type {
   EventType,
   Timeslot,
 } from '@/src/types/bookingForm';
+import type { date_exception } from '@/src/types/date_exceptions';
 import { DAY_NAMES } from '@/src/constants/booking';
 import {
   formatUtcInTimezone,
@@ -17,6 +18,11 @@ import {
 import { getBrowserTimezone } from '@app/location';
 import { step3PerfLog } from '@/src/utils/bookingStep3Perf';
 import { formatDateTimeForDisplay, needsTimezoneConversion } from './timezone';
+import {
+  applyExceptionScheduleBounds,
+  isSlotBlockedByException,
+  resolveExceptionEffectForDate,
+} from './dateExceptionRules';
 
 /** Parse time string (HH:mm) to minutes since midnight */
 export function parseTimeToMinutes(time: string): number {
@@ -281,10 +287,23 @@ function buildSlotsForProviderDate(
   minLeadTimeMinutes: number,
   providerTimezone: string,
   viewerTimezone: string,
-  viewerDateStr: string
+  viewerDateStr: string,
+  dateExceptions?: date_exception[] | null,
+  providerId?: string | null
 ): Timeslot[] {
-  const startMinutes = parseTimeToMinutes(daySchedule.startTime);
-  const endMinutes = parseTimeToMinutes(daySchedule.endTime);
+  const timesheetStart = parseTimeToMinutes(daySchedule.startTime);
+  const timesheetEnd = parseTimeToMinutes(daySchedule.endTime);
+  const bounds = applyExceptionScheduleBounds(
+    dateExceptions,
+    providerDateStr,
+    providerId,
+    timesheetStart,
+    timesheetEnd
+  );
+  if (bounds.closed) return [];
+
+  const startMinutes = bounds.startMinutes;
+  const endMinutes = bounds.endMinutes;
   const breaks = daySchedule.breaks || [];
   const slots: Timeslot[] = [];
   const showHostTime = needsTimezoneConversion(providerTimezone, viewerTimezone);
@@ -348,6 +367,20 @@ function buildSlotsForProviderDate(
       continue;
     }
 
+    if (
+      isSlotBlockedByException(
+        dateExceptions,
+        providerDateStr,
+        providerId,
+        t,
+        slotEndMinutes
+      )
+    ) {
+      slots.push(makeSlot(true, 'unavailable'));
+      t = Math.min(Math.max((Math.floor(t / 60) + 1) * 60, t + 1), endMinutes);
+      continue;
+    }
+
     if (isUtcSlotInPast(startUtc, minLeadTimeMinutes)) {
       slots.push(makeSlot(true, 'past'));
       t += 1;
@@ -371,10 +404,23 @@ function hasBookableSlotForProviderDate(
   minLeadTimeMinutes: number,
   providerTimezone: string,
   viewerTimezone: string,
-  viewerDateStr: string
+  viewerDateStr: string,
+  dateExceptions?: date_exception[] | null,
+  providerId?: string | null
 ): boolean {
-  const startMinutes = parseTimeToMinutes(daySchedule.startTime);
-  const endMinutes = parseTimeToMinutes(daySchedule.endTime);
+  const timesheetStart = parseTimeToMinutes(daySchedule.startTime);
+  const timesheetEnd = parseTimeToMinutes(daySchedule.endTime);
+  const bounds = applyExceptionScheduleBounds(
+    dateExceptions,
+    providerDateStr,
+    providerId,
+    timesheetStart,
+    timesheetEnd
+  );
+  if (bounds.closed) return false;
+
+  const startMinutes = bounds.startMinutes;
+  const endMinutes = bounds.endMinutes;
   const breaks = daySchedule.breaks || [];
   let t = startMinutes;
 
@@ -420,6 +466,19 @@ function hasBookableSlotForProviderDate(
       continue;
     }
 
+    if (
+      isSlotBlockedByException(
+        dateExceptions,
+        providerDateStr,
+        providerId,
+        t,
+        slotEndMinutes
+      )
+    ) {
+      t = Math.min(Math.max((Math.floor(t / 60) + 1) * 60, t + 1), endMinutes);
+      continue;
+    }
+
     if (isUtcSlotInPast(startUtc, minLeadTimeMinutes)) {
       t += duration;
       continue;
@@ -442,7 +501,9 @@ export function hasBookableSlotForDay(
   minLeadTimeMinutes = 0,
   slotDurationMinutes?: number,
   providerTimezone?: string | null,
-  viewerTimezone?: string | null
+  viewerTimezone?: string | null,
+  dateExceptions?: date_exception[] | null,
+  providerId?: string | null
 ): boolean {
   const duration =
     typeof slotDurationMinutes === 'number' &&
@@ -462,18 +523,37 @@ export function hasBookableSlotForDay(
   for (const providerDateStr of providerDates) {
     const dayName = getDayNameFromDateStr(providerDateStr, providerTz);
     const daySchedule = availabilitySettings.timesheet[dayName];
-    if (!daySchedule?.enabled) continue;
+    const effect = resolveExceptionEffectForDate(
+      dateExceptions,
+      providerDateStr,
+      providerId
+    );
+    if (effect.kind === 'closed') continue;
+
+    const hasSpecialHours =
+      effect.kind === 'open' && effect.specialHours != null;
+    if (!daySchedule?.enabled && !hasSpecialHours) continue;
+
+    const scheduleForDay: DaySchedule = daySchedule ?? {
+      enabled: true,
+      startTime: '09:00',
+      endTime: '17:00',
+      breaks: [],
+    };
+
     if (
       hasBookableSlotForProviderDate(
         providerDateStr,
-        daySchedule,
+        scheduleForDay,
         duration,
         availabilitySettings,
         existingBookings,
         minLeadTimeMinutes,
         providerTz,
         viewerTz,
-        viewerDateStr
+        viewerDateStr,
+        dateExceptions,
+        providerId
       )
     ) {
       return true;
@@ -494,7 +574,9 @@ export function buildTimeslotsForDay(
   minLeadTimeMinutes = 0,
   slotDurationMinutes?: number,
   providerTimezone?: string,
-  viewerTimezone?: string
+  viewerTimezone?: string,
+  dateExceptions?: date_exception[] | null,
+  providerId?: string | null
 ): Timeslot[] {
   const buildT0 = performance.now();
   const duration =
@@ -516,18 +598,37 @@ export function buildTimeslotsForDay(
   for (const providerDateStr of providerDates) {
     const dayName = getDayNameFromDateStr(providerDateStr, providerTz);
     const daySchedule = availabilitySettings.timesheet[dayName];
-    if (!daySchedule?.enabled) continue;
+    const effect = resolveExceptionEffectForDate(
+      dateExceptions,
+      providerDateStr,
+      providerId
+    );
+    if (effect.kind === 'closed') continue;
+
+    const hasSpecialHours =
+      effect.kind === 'open' && effect.specialHours != null;
+    if (!daySchedule?.enabled && !hasSpecialHours) continue;
+
+    const scheduleForDay: DaySchedule = daySchedule ?? {
+      enabled: true,
+      startTime: '09:00',
+      endTime: '17:00',
+      breaks: [],
+    };
+
     allSlots.push(
       ...buildSlotsForProviderDate(
         providerDateStr,
-        daySchedule,
+        scheduleForDay,
         duration,
         availabilitySettings,
         existingBookings,
         minLeadTimeMinutes,
         providerTz,
         viewerTz,
-        viewerDateStr
+        viewerDateStr,
+        dateExceptions,
+        providerId
       )
     );
   }

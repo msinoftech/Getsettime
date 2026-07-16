@@ -15,25 +15,29 @@ import {
   isSameWeek,
   eachDayOfInterval,
 } from "date-fns";
-import { LuGlobe as Globe, LuClock as Clock, LuCopy as Copy, LuCalendarPlus as CalendarPlus, LuUsers as Users, LuChevronDown as ChevronDown } from "react-icons/lu";
+import { LuClock as Clock, LuCopy as Copy, LuCalendarPlus as CalendarPlus, LuUsers as Users, LuChevronDown as ChevronDown } from "react-icons/lu";
 import AvailabilityTimesheet, {
   type availability_timesheet_save_feedback,
   type availability_timesheet_handle,
 } from '@/src/components/Settings/AvailabilityTimesheet';
+import { DateExceptionsTable } from '@/src/components/Settings/DateExceptionsTable';
+import { AddExceptionPanel } from '@/src/features/availability/AddExceptionPanel';
 import AlertMessage from '@/src/components/Auth/AlertMessage';
 import { AvailabilityGeneralSkeleton } from '@/src/components/ui/AvailabilityGeneralSkeleton';
+import { TimezoneSelector } from '@/src/components/ui/TimezoneSelector';
+import { ConfirmModal } from '@/src/components/ui/ConfirmModal';
 import { useWorkspaceSettings } from '@/src/hooks/useWorkspaceSettings';
 import { ROLE_SERVICE_PROVIDER, ROLE_WORKSPACE_ADMIN } from '@/src/constants/roles';
 import { resolveAvailabilityForServiceProvider } from '@/src/utils/availabilityResolution';
 import { CUSTOMER_TIMEZONE_OPTIONS } from '@/src/constants/timezone';
 import {
-  convertWallClockHHmm,
   formatTimezoneSelectLabel,
   getBrowserTimezone,
 } from '@/src/utils/timezone';
+import type { date_exception } from '@/src/types/date_exceptions';
 import { supabase } from "@/lib/supabaseClient";
 
-type TabType = 'general' | 'availability';
+type TabType = 'general' | 'date_exceptions' | 'availability';
 type DayName = "Mon" | "Tue" | "Wed" | "Thu" | "Fri" | "Sat" | "Sun";
 type BreakTime = { id: string; start: string; end: string };
 type DaySchedule = {
@@ -59,19 +63,13 @@ export default function Availability() {
   const [hoverDate, setHoverDate] = useState<Date | null>(null);
   const [hasSelectedDate, setHasSelectedDate] = useState(true);
   const calendarRef = useRef<HTMLDivElement>(null);
-  const timezoneMenuRef = useRef<HTMLDivElement>(null);
-  const [timezoneMenuOpen, setTimezoneMenuOpen] = useState(false);
-  const [displayTimezoneOverride, setDisplayTimezoneOverride] = useState<string | null>(null);
   const startWeek = startOfWeek(currentDate, { weekStartsOn: 1 });
   const weekDays = Array.from({ length: 7 }, (_, i) => addDays(startWeek, i));
 
   const browserTimezone = useMemo(() => getBrowserTimezone(), []);
-  const sourceTimezone = useMemo(() => {
-    const workspaceTz =
-      typeof general?.timezone === "string" ? general.timezone.trim() : "";
-    return workspaceTz || browserTimezone;
-  }, [general?.timezone, browserTimezone]);
-  const displayTimezone = displayTimezoneOverride ?? sourceTimezone;
+  const workspaceTimezone =
+    typeof general?.timezone === "string" ? general.timezone.trim() : "";
+  const sourceTimezone = workspaceTimezone || browserTimezone;
 
   const timezoneOptions = useMemo(() => {
     const set = new Set<string>([...CUSTOMER_TIMEZONE_OPTIONS, sourceTimezone, browserTimezone]);
@@ -110,6 +108,12 @@ export default function Availability() {
   const [timesheetEditPanelOpen, setTimesheetEditPanelOpen] = useState(false);
   const [timesheetBusy, setTimesheetBusy] = useState(false);
   const timesheetRef = useRef<availability_timesheet_handle | null>(null);
+  const [dateExceptions, setDateExceptions] = useState<date_exception[]>([]);
+  const [dateExceptionsLoading, setDateExceptionsLoading] = useState(false);
+  const [exceptionPanelOpen, setExceptionPanelOpen] = useState(false);
+  const [editingException, setEditingException] = useState<date_exception | null>(null);
+  const [exceptionPendingDelete, setExceptionPendingDelete] = useState<date_exception | null>(null);
+  const [exceptionDeleting, setExceptionDeleting] = useState(false);
   const [settingsAvailability, setSettingsAvailability] = useState<{
     timesheet: Record<DayName, DaySchedule> | null;
     individual: Record<string, boolean> | undefined;
@@ -117,18 +121,9 @@ export default function Availability() {
   } | null>(null);
 
   const formatHour = (hour: number) => {
-    const sourceHHmm = `${hour.toString().padStart(2, "0")}:00`;
-    const displayHHmm = convertWallClockHHmm(
-      sourceHHmm,
-      sourceTimezone,
-      displayTimezone
-    );
-    const [h, m] = displayHHmm.split(":").map(Number);
-    const suffix = h >= 12 ? "PM" : "AM";
-    const displayHour = h % 12 === 0 ? 12 : h % 12;
-    return `${displayHour.toString().padStart(2, "0")}:${(m || 0)
-      .toString()
-      .padStart(2, "0")} ${suffix}`;
+    const suffix = hour >= 12 ? "PM" : "AM";
+    const displayHour = hour % 12 === 0 ? 12 : hour % 12;
+    return `${displayHour.toString().padStart(2, "0")}:00 ${suffix}`;
   };
 
   // Helper function to create a unique key for day and hour
@@ -757,19 +752,115 @@ export default function Availability() {
     return eachDayOfInterval({ start, end });
   }, [calendarMonth]);
 
-  useEffect(() => {
-    if (!timezoneMenuOpen) return;
-    const onPointerDown = (event: MouseEvent) => {
-      if (
-        timezoneMenuRef.current &&
-        !timezoneMenuRef.current.contains(event.target as Node)
-      ) {
-        setTimezoneMenuOpen(false);
+  const saveTimezone = async (timezone: string) => {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    if (!session?.access_token) throw new Error("No active session");
+
+    const response = await fetch("/api/settings", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${session.access_token}`,
+      },
+      body: JSON.stringify({
+        settings: { general: { timezone } },
+      }),
+    });
+    if (!response.ok) throw new Error("Failed to update timezone");
+
+    await refetchWorkspaceSettings();
+  };
+
+  const fetchDateExceptions = async () => {
+    setDateExceptionsLoading(true);
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      if (!session?.access_token) return;
+
+      const params = new URLSearchParams({ status: "active", limit: "100" });
+      if (isServiceProviderUser && currentUserId) {
+        params.set("provider_id", currentUserId);
       }
-    };
-    document.addEventListener("mousedown", onPointerDown);
-    return () => document.removeEventListener("mousedown", onPointerDown);
-  }, [timezoneMenuOpen]);
+
+      const res = await fetch(`/api/date-exceptions?${params.toString()}`, {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      setDateExceptions(
+        Array.isArray(data.exceptions) ? (data.exceptions as date_exception[]) : []
+      );
+    } catch (error) {
+      console.error("Error loading date exceptions:", error);
+    } finally {
+      setDateExceptionsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab !== "date_exceptions") return;
+    void fetchDateExceptions();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reload when tab / provider context changes
+  }, [activeTab, currentUserId, currentUserRole]);
+
+  const openAddExceptionPanel = () => {
+    setEditingException(null);
+    setActiveTab("date_exceptions");
+    setExceptionPanelOpen(true);
+  };
+
+  const openEditExceptionPanel = (row: date_exception) => {
+    setEditingException(row);
+    setExceptionPanelOpen(true);
+  };
+
+  const closeExceptionPanel = () => {
+    setExceptionPanelOpen(false);
+    setEditingException(null);
+  };
+
+  const handleExceptionSaved = (saved: date_exception) => {
+    setDateExceptions((prev) => {
+      const idx = prev.findIndex((e) => e.id === saved.id);
+      if (idx >= 0) {
+        const next = [...prev];
+        next[idx] = saved;
+        return next;
+      }
+      return [...prev, saved].sort((a, b) =>
+        a.exception_date.localeCompare(b.exception_date)
+      );
+    });
+  };
+
+  const confirmDeleteException = async () => {
+    if (!exceptionPendingDelete) return;
+    setExceptionDeleting(true);
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      if (!session?.access_token) return;
+      const res = await fetch(`/api/date-exceptions/${exceptionPendingDelete.id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+      if (res.ok) {
+        setDateExceptions((prev) =>
+          prev.filter((e) => e.id !== exceptionPendingDelete.id)
+        );
+        setExceptionPendingDelete(null);
+      }
+    } catch (error) {
+      console.error("Error deleting date exception:", error);
+    } finally {
+      setExceptionDeleting(false);
+    }
+  };
 
   const renderTabNav = () => (
     <nav className="flex shrink-0 gap-6 border-b border-slate-200">
@@ -784,6 +875,20 @@ export default function Availability() {
       >
         Weekly Hours
         {activeTab === "general" ? (
+          <span className="absolute inset-x-0 -bottom-px h-0.5 rounded-full bg-indigo-600" />
+        ) : null}
+      </button>
+      <button
+        type="button"
+        onClick={() => setActiveTab("date_exceptions")}
+        className={`relative -mb-px pb-3 text-sm font-semibold transition-colors ${
+          activeTab === "date_exceptions"
+            ? "text-indigo-600"
+            : "text-slate-500 hover:text-slate-800"
+        }`}
+      >
+        Date Exceptions
+        {activeTab === "date_exceptions" ? (
           <span className="absolute inset-x-0 -bottom-px h-0.5 rounded-full bg-indigo-600" />
         ) : null}
       </button>
@@ -836,7 +941,8 @@ export default function Availability() {
     );
   };
 
-  const layoutPanelOpen = activeTab === "general" && timesheetEditPanelOpen;
+  const layoutPanelOpen =
+    (activeTab === "general" && timesheetEditPanelOpen) || exceptionPanelOpen;
 
   const outlineActionBtn =
     "inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50";
@@ -856,57 +962,13 @@ export default function Availability() {
             Manage your availability, breaks and exceptions
           </p>
         </div>
-        <div ref={timezoneMenuRef} className="relative shrink-0">
-          <button
-            type="button"
-            onClick={() => setTimezoneMenuOpen((open) => !open)}
-            aria-haspopup="listbox"
-            aria-expanded={timezoneMenuOpen}
-            className="inline-flex items-center gap-3 rounded-lg px-1 py-1 text-left transition hover:bg-slate-50"
-          >
-            <Globe className="h-5 w-5 shrink-0 text-slate-600" />
-            <span className="min-w-0">
-              <span className="block text-xs text-slate-500">Timezone</span>
-              <span className="block truncate text-sm font-medium text-slate-800">
-                {formatTimezoneSelectLabel(displayTimezone)}
-              </span>
-            </span>
-            <ChevronDown
-              className={`h-4 w-4 shrink-0 text-slate-500 transition-transform ${
-                timezoneMenuOpen ? "rotate-180" : ""
-              }`}
-            />
-          </button>
-          {timezoneMenuOpen ? (
-            <div
-              role="listbox"
-              className="absolute right-0 z-50 mt-2 max-h-72 w-72 overflow-y-auto rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl"
-            >
-              {timezoneOptions.map((tz) => {
-                const selected = tz === displayTimezone;
-                return (
-                  <button
-                    key={tz}
-                    type="button"
-                    role="option"
-                    aria-selected={selected}
-                    onClick={() => {
-                      setDisplayTimezoneOverride(tz);
-                      setTimezoneMenuOpen(false);
-                    }}
-                    className={`flex w-full items-center rounded-lg px-3 py-2 text-left text-sm transition ${
-                      selected
-                        ? "bg-indigo-50 font-semibold text-indigo-700"
-                        : "text-slate-700 hover:bg-slate-50"
-                    }`}
-                  >
-                    {formatTimezoneSelectLabel(tz)}
-                  </button>
-                );
-              })}
-            </div>
-          ) : null}
-        </div>
+        <TimezoneSelector
+          timezone={sourceTimezone}
+          options={timezoneOptions}
+          onSave={saveTimezone}
+          variant="header"
+          actionsAlign="left"
+        />
       </header>
 
       <div className="space-y-4">
@@ -940,24 +1002,26 @@ export default function Availability() {
             </button>
             <button
               type="button"
-              onClick={() => setActiveTab("availability")}
+              onClick={openAddExceptionPanel}
               className={outlineActionBtn}
             >
               <CalendarPlus className="h-4 w-4 text-slate-500" />
               Add Exception
             </button>
           </div>
-          <button
-            type="button"
-            onClick={() => {
-              setActiveTab("general");
-              void timesheetRef.current?.saveChanges();
-            }}
-            disabled={settingsLoading || timesheetBusy}
-            className="inline-flex items-center rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {timesheetBusy ? "Saving..." : "Save changes"}
-          </button>
+          {activeTab === "general" ? (
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab("general");
+                void timesheetRef.current?.saveChanges();
+              }}
+              disabled={settingsLoading || timesheetBusy}
+              className="inline-flex items-center rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {timesheetBusy ? "Saving..." : "Save changes"}
+            </button>
+          ) : null}
         </div>
       </div>
 
@@ -997,10 +1061,21 @@ export default function Availability() {
               onEditPanelOpenChange={setTimesheetEditPanelOpen}
               onBusyChange={setTimesheetBusy}
               sourceTimezone={sourceTimezone}
-              displayTimezone={displayTimezone}
+              displayTimezone={sourceTimezone}
             />
           )}
         </div>
+
+        {activeTab === "date_exceptions" ? (
+          <DateExceptionsTable
+            exceptions={dateExceptions}
+            providers={serviceProviders}
+            loading={dateExceptionsLoading}
+            onAdd={openAddExceptionPanel}
+            onEdit={openEditExceptionPanel}
+            onDelete={setExceptionPendingDelete}
+          />
+        ) : null}
 
           {activeTab === 'availability' && (
             <div className="space-y-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:space-y-6 sm:p-5">
@@ -1334,6 +1409,30 @@ export default function Availability() {
             </div>
           )}
       </div>
+
+      <AddExceptionPanel
+        open={exceptionPanelOpen}
+        onClose={closeExceptionPanel}
+        onSaved={handleExceptionSaved}
+        exception={editingException}
+        providers={serviceProviders}
+        defaultProviderId={
+          isServiceProviderUser && currentUserId ? currentUserId : ""
+        }
+        lockProviderScope={isServiceProviderUser}
+      />
+
+      {exceptionPendingDelete ? (
+        <ConfirmModal
+          title="Delete exception"
+          message={`Delete "${exceptionPendingDelete.name}"? This cannot be undone.`}
+          confirmLabel="Delete"
+          variant="danger"
+          loading={exceptionDeleting}
+          onConfirm={() => void confirmDeleteException()}
+          onCancel={() => setExceptionPendingDelete(null)}
+        />
+      ) : null}
     </section>
   );
 }

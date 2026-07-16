@@ -7,6 +7,7 @@ import type {
   EventType,
   Timeslot,
 } from '@/src/types/bookingForm';
+import type { date_exception } from '@/src/types/date_exceptions';
 import type { ServiceDurationCatalogItem } from '@/src/utils/bookingDuration';
 import {
   BOOKING_BUTTON_LABELS,
@@ -69,6 +70,8 @@ interface Step3DateTimeProps {
   selectedStartUtc?: string | null;
   onTimezoneChange?: (timezone: string) => void;
   onSelectSlot?: (slot: Timeslot) => void;
+  dateExceptions?: date_exception[];
+  serviceProviderId?: string | null;
 }
 
 export function Step3DateTime({
@@ -107,6 +110,8 @@ export function Step3DateTime({
   selectedStartUtc = null,
   onTimezoneChange,
   onSelectSlot,
+  dateExceptions = [],
+  serviceProviderId = null,
 }: Step3DateTimeProps) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const selectedDateRef = useRef<HTMLButtonElement | null>(null);
@@ -227,7 +232,9 @@ export function Step3DateTime({
         selectedServiceIds,
         serviceCatalog,
         providerTimezone,
-        customerTimezone
+        customerTimezone,
+        dateExceptions,
+        serviceProviderId
       );
     });
     const ms = performance.now() - t0;
@@ -250,6 +257,8 @@ export function Step3DateTime({
     serviceCatalog,
     providerTimezone,
     customerTimezone,
+    dateExceptions,
+    serviceProviderId,
   ]);
 
   useEffect(() => {
@@ -395,7 +404,9 @@ export function Step3DateTime({
                         selectedServiceIds,
                         serviceCatalog,
                         providerTimezone,
-                        customerTimezone
+                        customerTimezone,
+                        dateExceptions,
+                        serviceProviderId
                       );
                 const isPast = date < new Date() && !isTodayDate;
                 const isDisabled = !isAvailable || isPast;
