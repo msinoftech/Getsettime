@@ -344,7 +344,7 @@ export function Step4IntakeForm({
                   </div>
                 ))}
                 <p className="text-xs text-gray-500">
-                  Total: {formatFileSize(totalFilesSize)} / 10 MB
+                  Total: {formatFileSize(totalFilesSize)} / 10 MB (2 MB max per file)
                 </p>
               </div>
             )}
@@ -365,7 +365,7 @@ export function Step4IntakeForm({
               <span className="text-sm font-medium text-gray-600">
                 {files.length > 0 ? 'Add more files or drag & drop' : 'Choose files or drag & drop'}
               </span>
-              <span className="text-xs text-gray-400">PDF, PNG, JPG, HEIC &mdash; Max 10 MB total</span>
+              <span className="text-xs text-gray-400">PDF, PNG, JPG, HEIC &mdash; Max 2 MB per file, 10 MB total</span>
               <input
                 type="file"
                 className="hidden"

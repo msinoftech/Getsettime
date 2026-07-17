@@ -1,15 +1,15 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   LuFilter as Filter,
-  LuEllipsisVertical as MoreVertical,
   LuPencil as Pencil,
   LuSearch as Search,
   LuTrash2 as Trash2,
   LuUsers as Users,
 } from "react-icons/lu";
 import { format, parseISO } from "date-fns";
+import { PortalActionsMenu } from "@/src/components/ui/PortalActionsMenu";
 import type { date_exception } from "@/src/types/date_exceptions";
 
 type provider_option = {
@@ -94,6 +94,20 @@ export function DateExceptionsTable({
   }, [exceptions, search]);
 
   const total = filtered.length;
+
+  useEffect(() => {
+    if (openMenuId === null) return;
+    const onPointerDown = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (!target) return;
+      if (target.closest("[data-portal-actions-menu]")) {
+        return;
+      }
+      setOpenMenuId(null);
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    return () => document.removeEventListener("mousedown", onPointerDown);
+  }, [openMenuId]);
 
   return (
     <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
@@ -251,31 +265,26 @@ export function DateExceptionsTable({
                             <Pencil className="h-3.5 w-3.5 text-slate-500" />
                             Edit
                           </button>
-                          <button
-                            type="button"
-                            onClick={() =>
+                          <PortalActionsMenu
+                            open={openMenuId === ex.id}
+                            estimatedHeight={44}
+                            onToggle={() =>
                               setOpenMenuId((id) => (id === ex.id ? null : ex.id))
                             }
-                            className="rounded-lg border border-slate-200 p-1.5 text-slate-500 hover:bg-slate-50"
-                            aria-label="More actions"
                           >
-                            <MoreVertical className="h-4 w-4" />
-                          </button>
-                          {openMenuId === ex.id ? (
-                            <div className="absolute right-0 top-full z-10 mt-1 min-w-[140px] overflow-hidden rounded-lg border border-slate-200 bg-white py-1 shadow-lg">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setOpenMenuId(null);
-                                  onDelete(ex);
-                                }}
-                                className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50"
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                                Delete
-                              </button>
-                            </div>
-                          ) : null}
+                            <button
+                              type="button"
+                              role="menuitem"
+                              onClick={() => {
+                                setOpenMenuId(null);
+                                onDelete(ex);
+                              }}
+                              className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-red-600 hover:bg-red-50"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                              Delete
+                            </button>
+                          </PortalActionsMenu>
                         </div>
                       </td>
                     ) : null}

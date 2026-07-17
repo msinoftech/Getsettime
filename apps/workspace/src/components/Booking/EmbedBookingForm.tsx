@@ -574,6 +574,7 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
   }, [isRescheduleMode, rescheduleReady, rescheduleEventTypeId, loadingEventTypes, eventTypes, selectedType]);
 
   const ALLOWED_FILE_TYPES = ['application/pdf', 'image/png', 'image/jpeg', 'image/heic', 'image/heif'];
+  const MAX_PER_FILE_SIZE = 2 * 1024 * 1024;
   const MAX_TOTAL_FILE_SIZE = 10 * 1024 * 1024;
 
   const validateFiles = useCallback((nextFiles: File[]): boolean => {
@@ -584,6 +585,10 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
     for (const f of nextFiles) {
       if (!ALLOWED_FILE_TYPES.includes(f.type)) {
         setFileError('Only PDF, PNG, JPG, and HEIC files are allowed.');
+        return false;
+      }
+      if (f.size > MAX_PER_FILE_SIZE) {
+        setFileError('Each file must be 2 MB or less.');
         return false;
       }
     }
