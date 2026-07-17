@@ -256,6 +256,7 @@ export default function TeamMembersPage() {
   const [loading, setLoading] = useState(false);
   const [initialLoading, setInitialLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [modalError, setModalError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [confirmModal, setConfirmModal] = useState<{
     action: "deactivate" | "activate";
@@ -430,6 +431,7 @@ export default function TeamMembersPage() {
     setProviderSelectedDepartmentNames([]);
     setProviderInviteUrl(null);
     setError(null);
+    setModalError(null);
     setSuccess(null);
     setShowInviteForm(false);
     setShowMemberForm(true);
@@ -447,6 +449,7 @@ export default function TeamMembersPage() {
     });
     setInviteUrl(null);
     setError(null);
+    setModalError(null);
     setSuccess(null);
     setShowMemberForm(false);
     setShowInviteForm(true);
@@ -517,6 +520,7 @@ export default function TeamMembersPage() {
     setProviderSelectedDepartmentNames([]);
     setProviderInviteUrl(null);
     setError(null);
+    setModalError(null);
     setSuccess(null);
   };
 
@@ -529,13 +533,13 @@ export default function TeamMembersPage() {
   const handleProviderInviteSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    setError(null);
+    setModalError(null);
     setSuccess(null);
 
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) {
-        setError("Not authenticated");
+        setModalError("Not authenticated");
         setLoading(false);
         return;
       }
@@ -546,7 +550,7 @@ export default function TeamMembersPage() {
       );
 
       if (departmentIds.length === 0 && departmentNames.length === 0) {
-        setError("Select at least one department");
+        setModalError("Select at least one department");
         setLoading(false);
         return;
       }
@@ -596,12 +600,12 @@ export default function TeamMembersPage() {
           );
           setUpgradeModalOpen(true);
         } else {
-          setError(errorData.error || "Failed to send provider invite");
+          setModalError(errorData.error || "Failed to send provider invite");
         }
       }
     } catch (err) {
       console.error("Error sending provider invite:", err);
-      setError("An error occurred while sending the provider invite");
+      setModalError("An error occurred while sending the provider invite");
     } finally {
       setLoading(false);
     }
@@ -619,6 +623,7 @@ export default function TeamMembersPage() {
     });
     setInviteUrl(null);
     setError(null);
+    setModalError(null);
     setSuccess(null);
   };
 
@@ -863,13 +868,13 @@ export default function TeamMembersPage() {
   const handleInviteFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    setError(null);
+    setModalError(null);
     setSuccess(null);
 
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) {
-        setError('Not authenticated');
+        setModalError('Not authenticated');
         setLoading(false);
         return;
       }
@@ -895,11 +900,11 @@ export default function TeamMembersPage() {
         setInviteUrl(data.inviteUrl);
       } else {
         const errorData = await response.json();
-        setError(errorData.error || 'Failed to create invite');
+        setModalError(errorData.error || 'Failed to create invite');
       }
     } catch (error) {
       console.error('Error creating invite:', error);
-      setError('An error occurred while creating the invite');
+      setModalError('An error occurred while creating the invite');
     } finally {
       setLoading(false);
     }
@@ -1363,6 +1368,7 @@ export default function TeamMembersPage() {
       <ProviderCreateModal
         open={showMemberForm && !editingMember}
         loading={loading}
+        error={modalError}
         professionLabel={providerProfessionLabel}
         catalogDepartmentNames={providerCatalogNames}
         selectedDepartmentNames={providerSelectedDepartmentNames}
@@ -1439,6 +1445,7 @@ export default function TeamMembersPage() {
       <StaffInviteModal
         open={showInviteForm}
         loading={loading}
+        error={modalError}
         departments={departments}
         inviteFormData={inviteFormData}
         inviteUrl={inviteUrl}

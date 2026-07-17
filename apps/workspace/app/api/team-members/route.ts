@@ -44,7 +44,8 @@ function userCanAssignServiceProviderAdditionalRoles(user: User): boolean {
 /** Read team roster for booking/availability UIs (not full team management). */
 function userCanReadTeamMembers(user: User): boolean {
   if (userCanManageTeam(user)) return true;
-  return user.user_metadata?.role === 'service_provider';
+  const role = user.user_metadata?.role;
+  return role === ROLE_SERVICE_PROVIDER || role === ROLE_STAFF;
 }
 
 /**

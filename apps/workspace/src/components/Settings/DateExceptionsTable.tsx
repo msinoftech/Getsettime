@@ -24,6 +24,8 @@ export type DateExceptionsTableProps = {
   onAdd: () => void;
   onEdit: (exception: date_exception) => void;
   onDelete: (exception: date_exception) => void;
+  /** When true, hides edit/delete actions (e.g. staff view-only) */
+  readOnly?: boolean;
 };
 
 function formatDisplayTime(time: string | null): string {
@@ -74,6 +76,7 @@ export function DateExceptionsTable({
   onAdd,
   onEdit,
   onDelete,
+  readOnly = false,
 }: DateExceptionsTableProps) {
   const [search, setSearch] = useState("");
   const [openMenuId, setOpenMenuId] = useState<number | null>(null);
@@ -100,7 +103,9 @@ export function DateExceptionsTable({
             Exceptions &amp; Holidays
           </h2>
           <p className="mt-1 text-sm text-slate-500">
-            Manage dates when your regular availability changes.
+            {readOnly
+              ? "View dates when regular availability changes."
+              : "Manage dates when your regular availability changes."}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -133,13 +138,15 @@ export function DateExceptionsTable({
       ) : total === 0 ? (
         <div className="px-5 py-12 text-center">
           <p className="text-sm text-slate-600">No exceptions yet.</p>
-          <button
-            type="button"
-            onClick={onAdd}
-            className="mt-3 text-sm font-semibold text-indigo-600 hover:text-indigo-700"
-          >
-            Add your first exception
-          </button>
+          {!readOnly ? (
+            <button
+              type="button"
+              onClick={onAdd}
+              className="mt-3 text-sm font-semibold text-indigo-600 hover:text-indigo-700"
+            >
+              Add your first exception
+            </button>
+          ) : null}
         </div>
       ) : (
         <div className="overflow-x-auto">
@@ -161,9 +168,11 @@ export function DateExceptionsTable({
                 <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
                   Availability
                 </th>
-                <th className="px-5 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  Action
-                </th>
+                {!readOnly ? (
+                  <th className="px-5 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Action
+                  </th>
+                ) : null}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 bg-white">
@@ -231,43 +240,45 @@ export function DateExceptionsTable({
                         </div>
                       )}
                     </td>
-                    <td className="whitespace-nowrap px-5 py-4 text-right">
-                      <div className="relative inline-flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => onEdit(ex)}
-                          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
-                        >
-                          <Pencil className="h-3.5 w-3.5 text-slate-500" />
-                          Edit
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setOpenMenuId((id) => (id === ex.id ? null : ex.id))
-                          }
-                          className="rounded-lg border border-slate-200 p-1.5 text-slate-500 hover:bg-slate-50"
-                          aria-label="More actions"
-                        >
-                          <MoreVertical className="h-4 w-4" />
-                        </button>
-                        {openMenuId === ex.id ? (
-                          <div className="absolute right-0 top-full z-10 mt-1 min-w-[140px] overflow-hidden rounded-lg border border-slate-200 bg-white py-1 shadow-lg">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setOpenMenuId(null);
-                                onDelete(ex);
-                              }}
-                              className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50"
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                              Delete
-                            </button>
-                          </div>
-                        ) : null}
-                      </div>
-                    </td>
+                    {!readOnly ? (
+                      <td className="whitespace-nowrap px-5 py-4 text-right">
+                        <div className="relative inline-flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => onEdit(ex)}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                          >
+                            <Pencil className="h-3.5 w-3.5 text-slate-500" />
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setOpenMenuId((id) => (id === ex.id ? null : ex.id))
+                            }
+                            className="rounded-lg border border-slate-200 p-1.5 text-slate-500 hover:bg-slate-50"
+                            aria-label="More actions"
+                          >
+                            <MoreVertical className="h-4 w-4" />
+                          </button>
+                          {openMenuId === ex.id ? (
+                            <div className="absolute right-0 top-full z-10 mt-1 min-w-[140px] overflow-hidden rounded-lg border border-slate-200 bg-white py-1 shadow-lg">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setOpenMenuId(null);
+                                  onDelete(ex);
+                                }}
+                                className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                                Delete
+                              </button>
+                            </div>
+                          ) : null}
+                        </div>
+                      </td>
+                    ) : null}
                   </tr>
                 );
               })}

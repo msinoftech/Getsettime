@@ -155,6 +155,7 @@ export default function DepartmentsPage() {
   const currentUserRole =
     (user?.user_metadata?.role as string | undefined) ?? null;
   const isLoggedInServiceProvider = currentUserRole === "service_provider";
+  const isStaffUser = currentUserRole === "staff";
   const currentUserId = user?.id ?? null;
 
   const showFullDoctorFlow =
@@ -718,6 +719,7 @@ export default function DepartmentsPage() {
   };
 
   const openAddDepartmentDrawer = () => {
+    if (isStaffUser) return;
     closeEditDepartmentPanel();
     setShowAddPanel(true);
   };
@@ -735,7 +737,7 @@ export default function DepartmentsPage() {
   );
 
   const openEditDepartment = (department: Department) => {
-    if (isLoggedInServiceProvider) return;
+    if (isLoggedInServiceProvider || isStaffUser) return;
     setShowAddPanel(false);
     setEditingDepartmentId(department.id);
     setEditDepartmentName(department.name);
@@ -974,14 +976,16 @@ export default function DepartmentsPage() {
               </p>
             </div>
 
-            <button
-              type="button"
-              onClick={openAddDepartmentDrawer}
-              className="inline-flex h-10 items-center gap-2 rounded-xl bg-violet-600 px-3.5 text-sm font-semibold text-white shadow-sm transition hover:bg-violet-700"
-            >
-              <Plus className="h-4 w-4" />
-              Add Department
-            </button>
+            {!isStaffUser ? (
+              <button
+                type="button"
+                onClick={openAddDepartmentDrawer}
+                className="inline-flex h-10 items-center gap-2 rounded-xl bg-violet-600 px-3.5 text-sm font-semibold text-white shadow-sm transition hover:bg-violet-700"
+              >
+                <Plus className="h-4 w-4" />
+                Add Department
+              </button>
+            ) : null}
           </div>
 
           <div
@@ -1093,7 +1097,7 @@ export default function DepartmentsPage() {
                       <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
                         Status
                       </th>
-                      {!isLoggedInServiceProvider && (
+                      {!isLoggedInServiceProvider && !isStaffUser && (
                         <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
                           Action
                         </th>
@@ -1104,7 +1108,7 @@ export default function DepartmentsPage() {
                     {paginatedDepartments.length === 0 && (
                       <tr>
                         <td
-                          colSpan={isLoggedInServiceProvider ? 4 : 5}
+                          colSpan={isLoggedInServiceProvider || isStaffUser ? 4 : 5}
                           className="px-4 py-10 text-center"
                         >
                           <p className="text-sm font-medium text-slate-700">
@@ -1231,7 +1235,7 @@ export default function DepartmentsPage() {
                             </span>
                           </td>
 
-                          {!isLoggedInServiceProvider && (
+                          {!isLoggedInServiceProvider && !isStaffUser && (
                             <td className="px-4 py-3.5">
                               <div className="relative flex items-center gap-1.5">
                                 <button

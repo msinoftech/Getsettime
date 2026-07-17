@@ -44,8 +44,8 @@ interface Step4IntakeFormProps {
   onTouchedEmail: () => void;
   onTouchedPhone: () => void;
   onTouchedCustomField: (id: string) => void;
-  file: File | null;
-  onFileChange: (f: File | null) => void;
+  files: File[];
+  onFilesChange: (files: File[]) => void;
   fileError: string;
   onBack: () => void;
   onConfirm: () => void;
@@ -58,13 +58,19 @@ interface Step4IntakeFormProps {
   profileCountry?: string | null;
 }
 
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 export function Step4IntakeForm({
   intakeForm,
   name,
   email,
   phone,
   notes,
-   sendWhatsapp,
+  sendWhatsapp,
   customFieldValues,
   selectedServiceIds,
   services,
@@ -85,8 +91,8 @@ export function Step4IntakeForm({
   onTouchedEmail,
   onTouchedPhone,
   onTouchedCustomField,
-  file,
-  onFileChange,
+  files,
+  onFilesChange,
   fileError,
   onBack,
   onConfirm,
@@ -102,6 +108,16 @@ export function Step4IntakeForm({
   const showFieldError = (key: string) => attemptedConfirm && Boolean(intakeValidation[key]);
   const baseInputClass =
     'w-full px-4 py-4 rounded-xl border-2 border-gray-200 focus:outline-none focus:border-indigo-500 transition-all bg-white hover:border-gray-300';
+  const totalFilesSize = files.reduce((sum, f) => sum + f.size, 0);
+
+  const addIncomingFiles = (incoming: FileList | File[]) => {
+    const next = [...files, ...Array.from(incoming)];
+    onFilesChange(next);
+  };
+
+  const removeFileAt = (index: number) => {
+    onFilesChange(files.filter((_, i) => i !== index));
+  };
 
   return (
     <div className="space-y-4 sm:space-y-6 lg:space-y-8 animate-fadeIn">
@@ -177,40 +193,6 @@ export function Step4IntakeForm({
             )}
           </div>
         )}
-
-        {/* {isServicesEnabled(intakeForm) && !hideIntakeCatalogServices && (
-          <div className="group">
-            <div className="text-sm font-semibold text-gray-700">
-              Services{showFieldError('services') ? <span className="text-red-500"> *</span> : null}
-            </div>
-            <div className="mt-3 flex flex-wrap gap-2">
-              {loadingServices ? (
-                <div className="text-sm text-gray-500">{BOOKING_LOADING_MESSAGES.services}</div>
-              ) : services.length === 0 ? (
-                <div className="text-sm text-gray-500">{BOOKING_EMPTY_MESSAGES.noServices}</div>
-              ) : (
-                services.map((s) => {
-                  const selected = selectedServiceIds.includes(s.id);
-                  return (
-                    <button
-                      key={s.id}
-                      type="button"
-                      onClick={() => onServiceToggle(s.id)}
-                      className={`inline-flex items-center gap-2 px-4 py-2 rounded-full border-2 transition-all text-sm font-semibold ${
-                        selected ? 'bg-indigo-600 text-white border-indigo-600 shadow-lg' : 'bg-white text-gray-700 border-gray-200 hover:border-indigo-400 hover:bg-indigo-50'
-                      } ${showFieldError('services') ? 'border-red-300' : ''}`}
-                    >
-                      <span className="truncate max-w-[220px]">{s.name}</span>
-                    </button>
-                  );
-                })
-              )}
-            </div>
-            {showFieldError('services') && (
-              <p className="mt-2 text-xs font-medium text-red-600">{intakeValidation.services}</p>
-            )}
-          </div>
-        )} */}
 
         {enabledMeetingOptionKeys.length > 0 && onMeetingOptionChange && (
           <div className="group" role="radiogroup" aria-labelledby="meeting-option-heading">
@@ -334,52 +316,69 @@ export function Step4IntakeForm({
         {intakeForm?.file_upload === true && (
           <div className="group">
             <div className="text-sm font-semibold text-gray-700 mb-2">
-              Upload File <span className="text-gray-400 font-normal">(optional)</span>
+              Upload Files <span className="text-gray-400 font-normal">(optional)</span>
             </div>
-            {file ? (
-              <div className="flex items-center gap-3 px-4 py-3 rounded-xl border-2 border-indigo-200 bg-indigo-50">
-                <svg className="w-5 h-5 text-indigo-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                </svg>
-                <span className="text-sm text-gray-800 truncate flex-1">{file.name}</span>
-                <span className="text-xs text-gray-500 flex-shrink-0">{(file.size / 1024).toFixed(0)} KB</span>
-                <button
-                  type="button"
-                  onClick={() => onFileChange(null)}
-                  className="p-1 rounded-full text-gray-400 hover:text-red-600 hover:bg-red-50 transition"
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                </button>
+
+            {files.length > 0 && (
+              <div className="mb-3 space-y-2">
+                {files.map((selectedFile, index) => (
+                  <div
+                    key={`${selectedFile.name}-${selectedFile.size}-${index}`}
+                    className="flex items-center gap-3 px-4 py-3 rounded-xl border-2 border-indigo-200 bg-indigo-50"
+                  >
+                    <svg className="w-5 h-5 text-indigo-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                    <span className="text-sm text-gray-800 truncate flex-1">{selectedFile.name}</span>
+                    <span className="text-xs text-gray-500 flex-shrink-0">{formatFileSize(selectedFile.size)}</span>
+                    <button
+                      type="button"
+                      onClick={() => removeFileAt(index)}
+                      className="p-1 rounded-full text-gray-400 hover:text-red-600 hover:bg-red-50 transition"
+                      aria-label={`Remove ${selectedFile.name}`}
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
+                ))}
+                <p className="text-xs text-gray-500">
+                  Total: {formatFileSize(totalFilesSize)} / 10 MB
+                </p>
               </div>
-            ) : (
-              <label
-                className="flex flex-col items-center justify-center gap-2 px-4 py-6 rounded-xl border-2 border-dashed border-gray-300 bg-gray-50 hover:border-indigo-400 hover:bg-indigo-50/50 cursor-pointer transition-all"
-                onDragOver={(e) => e.preventDefault()}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  const dropped = e.dataTransfer.files[0];
-                  if (dropped) onFileChange(dropped);
-                }}
-              >
-                <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-                </svg>
-                <span className="text-sm font-medium text-gray-600">Choose file or drag &amp; drop</span>
-                <span className="text-xs text-gray-400">PDF, PNG, JPG, HEIC &mdash; Max 2 MB</span>
-                <input
-                  type="file"
-                  className="hidden"
-                  accept=".pdf,.png,.jpg,.jpeg,.heic,.heif"
-                  onChange={(e) => {
-                    const selected = e.target.files?.[0] ?? null;
-                    onFileChange(selected);
-                    e.target.value = '';
-                  }}
-                />
-              </label>
             )}
+
+            <label
+              className="flex flex-col items-center justify-center gap-2 px-4 py-6 rounded-xl border-2 border-dashed border-gray-300 bg-gray-50 hover:border-indigo-400 hover:bg-indigo-50/50 cursor-pointer transition-all"
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => {
+                e.preventDefault();
+                if (e.dataTransfer.files.length > 0) {
+                  addIncomingFiles(e.dataTransfer.files);
+                }
+              }}
+            >
+              <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+              </svg>
+              <span className="text-sm font-medium text-gray-600">
+                {files.length > 0 ? 'Add more files or drag & drop' : 'Choose files or drag & drop'}
+              </span>
+              <span className="text-xs text-gray-400">PDF, PNG, JPG, HEIC &mdash; Max 10 MB total</span>
+              <input
+                type="file"
+                className="hidden"
+                multiple
+                accept=".pdf,.png,.jpg,.jpeg,.heic,.heif"
+                onChange={(e) => {
+                  if (e.target.files && e.target.files.length > 0) {
+                    addIncomingFiles(e.target.files);
+                  }
+                  e.target.value = '';
+                }}
+              />
+            </label>
             {fileError && (
               <p className="mt-2 text-xs font-medium text-red-600">{fileError}</p>
             )}

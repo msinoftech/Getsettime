@@ -27,6 +27,32 @@ const STAFF_INVITE_ROLES = ASSIGNABLE_ROLES.filter(
 export const MODAL_FIELD_CLASS =
   "w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm text-slate-900 shadow-none outline-none transition focus:border-transparent focus:ring-2 focus:ring-slate-200";
 
+function ModalErrorBanner({ error }: { error: string | null }) {
+  if (!error) return null;
+
+  return (
+    <div className="rounded-xl border border-red-200 bg-red-50 p-3">
+      <div className="flex items-start gap-2">
+        <svg
+          className="mt-0.5 h-4 w-4 shrink-0 text-red-600"
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+          aria-hidden
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+          />
+        </svg>
+        <p className="text-sm text-red-800">{error}</p>
+      </div>
+    </div>
+  );
+}
+
 function InviteLinkCopyBlock({
   inviteUrl,
   variant,
@@ -245,6 +271,7 @@ type InviteFormData = {
 export function ProviderCreateModal({
   open,
   loading,
+  error = null,
   professionLabel,
   catalogDepartmentNames,
   selectedDepartmentNames,
@@ -257,6 +284,7 @@ export function ProviderCreateModal({
 }: {
   open: boolean;
   loading: boolean;
+  error?: string | null;
   professionLabel: string | null;
   catalogDepartmentNames: string[];
   selectedDepartmentNames: string[];
@@ -328,6 +356,7 @@ export function ProviderCreateModal({
           ) : (
         <form onSubmit={onSubmit} className="flex min-h-0 flex-1 flex-col">
           <div className="flex-1 space-y-6 overflow-y-auto px-6 py-5">
+            <ModalErrorBanner error={error} />
             <div className="grid gap-4 sm:grid-cols-2">
               <div>
                 <label className="mb-2 block text-sm font-medium text-slate-700">
@@ -442,6 +471,7 @@ export function ProviderCreateModal({
 export function StaffInviteModal({
   open,
   loading,
+  error = null,
   departments,
   inviteFormData,
   inviteUrl,
@@ -452,6 +482,7 @@ export function StaffInviteModal({
 }: {
   open: boolean;
   loading: boolean;
+  error?: string | null;
   departments: Department[];
   inviteFormData: InviteFormData;
   inviteUrl: string | null;
@@ -521,6 +552,7 @@ export function StaffInviteModal({
           ) : (
             <form onSubmit={onSubmit} className="flex min-h-0 flex-1 flex-col">
               <div className="flex-1 space-y-6 overflow-y-auto px-6 py-5">
+                <ModalErrorBanner error={error} />
                 <div className="rounded-xl border border-emerald-200 bg-emerald-50/80 p-4">
                   <p className="text-sm font-semibold text-emerald-900">Internal team invite flow</p>
                   <p className="mt-1 text-sm text-emerald-800">

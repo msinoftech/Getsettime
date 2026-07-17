@@ -2,25 +2,13 @@
 import { useState, useEffect, useMemo } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { AlertModal } from "@/src/components/ui/AlertModal";
-
-/*
-TEMP DISABLED: Services intake support
-interface Service {
-  id: string;
-  workspace_id: string;
-  name: string;
-  description: string | null;
-  price: number | null;
-  created_at: string;
-  updated_at: string;
-}
-*/
+import { useAuth } from "@/src/providers/AuthProvider";
 
 interface CustomField {
   id: string;
   label: string;
-  field_type: 'text' | 'textarea' | 'number' | 'email' | 'tel' | 'url';
-  type?: 'text' | 'textarea' | 'number' | 'email' | 'tel' | 'url';
+  field_type: 'text' | 'textarea' | 'number' | 'url';
+  type?: 'text' | 'textarea' | 'number' | 'url';
   required: boolean;
   placeholder?: string;
 }
@@ -116,8 +104,6 @@ function fieldTypeLabel(fieldType: CustomField["field_type"]): string {
     text: "Text",
     textarea: "Text area",
     number: "Number",
-    email: "Email",
-    tel: "Phone",
     url: "URL",
   };
   return labels[fieldType];
@@ -127,12 +113,12 @@ const CUSTOM_FIELD_TYPE_OPTIONS: Array<{ value: CustomField["field_type"]; label
   { value: "text", label: "Text (Single Line)" },
   { value: "textarea", label: "Text Area (Multiple Lines)" },
   { value: "number", label: "Number" },
-  { value: "email", label: "Email" },
-  { value: "tel", label: "Phone" },
   { value: "url", label: "URL" },
 ];
 
 export default function RoutingForm({ dark = false }) {
+  const { user } = useAuth();
+  const isStaffUser = user?.user_metadata?.role === "staff";
   const [fieldSearch, setFieldSearch] = useState("");
   const [intakeFormSettings, setIntakeFormSettings] = useState({
     name: true,
@@ -174,32 +160,6 @@ export default function RoutingForm({ dark = false }) {
     fetchIntakeFormSettings();
   }, []);
 
-  /*
-  TEMP DISABLED: Services intake support
-  const [services, setServices] = useState<Service[]>([]);
-  const [serviceSearch, setServiceSearch] = useState("");
-
-  const fetchServices = async () => {
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) return;
-
-      const response = await fetch('/api/services', {
-        headers: {
-          'Authorization': `Bearer ${session.access_token}`,
-        },
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        setServices(data.services || []);
-      }
-    } catch (error) {
-      console.error('Error fetching services:', error);
-    }
-  };
-  */
-
   const fetchIntakeFormSettings = async () => {
     try {
       const { data: { session } } = await supabase.auth.getSession();
@@ -218,13 +178,6 @@ export default function RoutingForm({ dark = false }) {
             name: true,
             email: true,
             phone: true,
-            /*
-            TEMP DISABLED: Services intake support
-            services: data.settings.intake_form.services ?? {
-              enabled: false,
-              allowed_service_ids: [],
-            },
-            */
             file_upload: data.settings.intake_form.file_upload ?? false,
             additional_description: true,
             custom_fields: data.settings.intake_form.custom_fields ?? [],
@@ -250,6 +203,7 @@ export default function RoutingForm({ dark = false }) {
   const persistIntakeFormSettings = async (
     overrides?: Partial<typeof intakeFormSettings>
   ): Promise<boolean> => {
+    if (isStaffUser) return false;
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) {
@@ -297,25 +251,8 @@ export default function RoutingForm({ dark = false }) {
     }
   };
 
-  /*
-  TEMP DISABLED: Services intake support
-  const handleToggleService = (serviceId: string) => {
-    const isSelected = intakeFormSettings.services.allowed_service_ids.includes(serviceId);
-    const newServiceIds = isSelected
-      ? intakeFormSettings.services.allowed_service_ids.filter((id) => id !== serviceId)
-      : [...intakeFormSettings.services.allowed_service_ids, serviceId];
-
-    setIntakeFormSettings({
-      ...intakeFormSettings,
-      services: {
-        ...intakeFormSettings.services,
-        allowed_service_ids: newServiceIds,
-      },
-    });
-  };
-  */
-
   const handleEditCustomField = (field: CustomField) => {
+    if (isStaffUser) return;
     setEditingCustomField(field);
     setCustomFieldFormData({
       id: field.id,
@@ -341,6 +278,7 @@ export default function RoutingForm({ dark = false }) {
 
   const handleCustomFieldFormSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (isStaffUser) return;
     if (!editingCustomField) return;
     const updated: CustomField = {
       ...customFieldFormData,
@@ -356,6 +294,7 @@ export default function RoutingForm({ dark = false }) {
   };
 
   const addCustomFieldInline = () => {
+    if (isStaffUser) return;
     const label = newCustomLabel.trim();
     if (!label) return;
     const newField: CustomField = {
@@ -375,6 +314,7 @@ export default function RoutingForm({ dark = false }) {
   };
 
   const toggleCustomFieldRequired = (id: string) => {
+    if (isStaffUser) return;
     setIntakeFormSettings((prev) => ({
       ...prev,
       custom_fields: prev.custom_fields.map((field) =>
@@ -384,6 +324,7 @@ export default function RoutingForm({ dark = false }) {
   };
 
   const handleRemoveCustomField = (id: string) => {
+    if (isStaffUser) return;
     setIntakeFormSettings({
       ...intakeFormSettings,
       custom_fields: intakeFormSettings.custom_fields.filter(field => field.id !== id),
@@ -391,6 +332,7 @@ export default function RoutingForm({ dark = false }) {
   };
 
   const reorderCustomFields = (activeId: string, overId: string) => {
+    if (isStaffUser) return;
     setIntakeFormSettings((prev) => {
       const fromIndex = prev.custom_fields.findIndex((field) => field.id === activeId);
       const toIndex = prev.custom_fields.findIndex((field) => field.id === overId);
@@ -440,6 +382,7 @@ export default function RoutingForm({ dark = false }) {
   );
 
   const toggleDefaultIntakeField = async (key: DefaultIntakeFieldKey) => {
+    if (isStaffUser) return;
     if (LOCKED_DEFAULT_INTAKE_FIELDS.has(key)) return;
 
     if (key === "file_upload") {
@@ -585,7 +528,7 @@ export default function RoutingForm({ dark = false }) {
                         onClick={() => void toggleDefaultIntakeField(field.key)}
                         aria-label={isLocked ? `${field.label} is always enabled` : `Toggle ${field.label}`}
                         aria-pressed={enabled}
-                        disabled={toggleDisabled}
+                        disabled={toggleDisabled || isStaffUser}
                         className={`relative h-6 w-11 shrink-0 rounded-full transition ${enabled ? "bg-blue-600" : "bg-slate-300"} ${isLocked ? "cursor-not-allowed opacity-20" : ""} ${isFileUpload && fileUploadSaving ? "cursor-wait opacity-60" : ""}`}
                       >
                         <span
@@ -666,22 +609,26 @@ export default function RoutingForm({ dark = false }) {
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                <button
-                  type="submit"
-                  disabled={loading}
-                  className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-blue-200 bg-white px-4 text-sm font-semibold text-blue-700 transition hover:bg-blue-50 disabled:opacity-50"
-                >
-                  <Icon name="arrowUpDown" className="h-4 w-4" />
-                  {loading ? "Saving..." : "Save Order"}
-                </button>
-                <button
-                  type="button"
-                  onClick={addCustomFieldInline}
-                  className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white transition hover:bg-blue-700"
-                >
-                  <Icon name="plus" className="h-4 w-4" />
-                  Add Field
-                </button>
+                {!isStaffUser ? (
+                  <>
+                    <button
+                      type="submit"
+                      disabled={loading}
+                      className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-blue-200 bg-white px-4 text-sm font-semibold text-blue-700 transition hover:bg-blue-50 disabled:opacity-50"
+                    >
+                      <Icon name="arrowUpDown" className="h-4 w-4" />
+                      {loading ? "Saving..." : "Save Order"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={addCustomFieldInline}
+                      className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white transition hover:bg-blue-700"
+                    >
+                      <Icon name="plus" className="h-4 w-4" />
+                      Add Field
+                    </button>
+                  </>
+                ) : null}
               </div>
             </div>
 
@@ -690,12 +637,14 @@ export default function RoutingForm({ dark = false }) {
                 type="text"
                 value={newCustomLabel}
                 onChange={(e) => setNewCustomLabel(e.target.value)}
+                disabled={isStaffUser}
                 placeholder="Field Name (e.g. Patient ID)"
                 className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm outline-none transition focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
               />
               <select
                 value={newCustomFieldType}
                 onChange={(e) => setNewCustomFieldType(e.target.value as CustomField["field_type"])}
+                disabled={isStaffUser}
                 className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm outline-none transition focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
               >
                 {CUSTOM_FIELD_TYPE_OPTIONS.map((opt) => (
@@ -744,6 +693,7 @@ export default function RoutingForm({ dark = false }) {
                     <button
                       type="button"
                       draggable
+                      disabled={isStaffUser}
                       onDragStart={(event) => {
                         setDraggedCustomFieldId(field.id);
                         event.dataTransfer.setData("text/plain", field.id);
@@ -765,6 +715,7 @@ export default function RoutingForm({ dark = false }) {
                     <button
                       type="button"
                       onClick={() => toggleCustomFieldRequired(field.id)}
+                      disabled={isStaffUser}
                       className={`shrink-0 rounded-full px-3 py-1 text-xs font-semibold transition ${field.required ? "bg-blue-100 text-blue-700" : "bg-slate-100 text-slate-600"}`}
                       aria-label={field.required ? "Mark optional" : "Mark required"}
                     >
@@ -773,6 +724,7 @@ export default function RoutingForm({ dark = false }) {
                     <button
                       type="button"
                       onClick={() => handleEditCustomField(field)}
+                      disabled={isStaffUser}
                       className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 transition hover:text-blue-600"
                       title="Edit field"
                       aria-label="Edit custom field"
@@ -782,6 +734,7 @@ export default function RoutingForm({ dark = false }) {
                     <button
                       type="button"
                       onClick={() => handleRemoveCustomField(field.id)}
+                      disabled={isStaffUser}
                       className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-red-100 bg-red-50 text-red-500 transition hover:bg-red-100"
                       title="Remove field"
                       aria-label="Delete custom field"

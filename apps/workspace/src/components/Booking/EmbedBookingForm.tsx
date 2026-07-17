@@ -115,7 +115,7 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
   });
   const [touchedCustomFields, setTouchedCustomFields] = useState<Record<string, boolean>>({});
   const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>([]);
-  const [file, setFile] = useState<File | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
   const [fileError, setFileError] = useState('');
   const [confirmed, setConfirmed] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -574,33 +574,35 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
   }, [isRescheduleMode, rescheduleReady, rescheduleEventTypeId, loadingEventTypes, eventTypes, selectedType]);
 
   const ALLOWED_FILE_TYPES = ['application/pdf', 'image/png', 'image/jpeg', 'image/heic', 'image/heif'];
-  const MAX_FILE_SIZE = 2 * 1024 * 1024; // 2 MB
+  const MAX_TOTAL_FILE_SIZE = 10 * 1024 * 1024;
 
-  const validateFile = useCallback((f: File | null): boolean => {
-    if (!f) {
+  const validateFiles = useCallback((nextFiles: File[]): boolean => {
+    if (nextFiles.length === 0) {
       setFileError('');
       return true;
     }
-    if (!ALLOWED_FILE_TYPES.includes(f.type)) {
-      setFileError('Only PDF, PNG, JPG, and HEIC files are allowed.');
-      return false;
+    for (const f of nextFiles) {
+      if (!ALLOWED_FILE_TYPES.includes(f.type)) {
+        setFileError('Only PDF, PNG, JPG, and HEIC files are allowed.');
+        return false;
+      }
     }
-    if (f.size > MAX_FILE_SIZE) {
-      setFileError('File size must be 2 MB or less.');
+    const totalSize = nextFiles.reduce((sum, f) => sum + f.size, 0);
+    if (totalSize > MAX_TOTAL_FILE_SIZE) {
+      setFileError('Total file size must be 10 MB or less.');
       return false;
     }
     setFileError('');
     return true;
   }, []);
 
-  const handleFileChange = useCallback((f: File | null) => {
-    if (f && !validateFile(f)) {
-      setFile(null);
+  const handleFilesChange = useCallback((nextFiles: File[]) => {
+    if (!validateFiles(nextFiles)) {
       return;
     }
-    setFile(f);
+    setFiles(nextFiles);
     setFileError('');
-  }, [validateFile]);
+  }, [validateFiles]);
 
   const handleRescheduleConfirm = async () => {
     if (!selectedType || !selectedDate || !selectedTime || !rescheduleCode) {
@@ -765,20 +767,25 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
         intakeFormPayload.meeting_option = meetingKey;
       }
 
-      if (file && intakeForm?.file_upload === true) {
-        if (!validateFile(file)) {
+      if (files.length > 0 && intakeForm?.file_upload === true) {
+        if (!validateFiles(files)) {
           setLoading(false);
           return;
         }
-        const uploadForm = new FormData();
-        uploadForm.append('file', file);
-        uploadForm.append('workspace_id', String(workspace.id));
-        const uploadRes = await fetch('/api/embed/upload', { method: 'POST', body: uploadForm });
-        const uploadResult = await uploadRes.json();
-        if (!uploadRes.ok) {
-          throw new Error(uploadResult.error || 'Failed to upload file');
+        const uploadedUrls: string[] = [];
+        for (const uploadFile of files) {
+          const uploadForm = new FormData();
+          uploadForm.append('file', uploadFile);
+          uploadForm.append('workspace_id', String(workspace.id));
+          const uploadRes = await fetch('/api/embed/upload', { method: 'POST', body: uploadForm });
+          const uploadResult = await uploadRes.json();
+          if (!uploadRes.ok) {
+            throw new Error(uploadResult.error || 'Failed to upload file');
+          }
+          uploadedUrls.push(uploadResult.url);
         }
-        intakeFormPayload.file_upload_url = uploadResult.url;
+        intakeFormPayload.file_upload_urls = uploadedUrls;
+        intakeFormPayload.file_upload_url = uploadedUrls[0];
       }
 
       const service_provider_id =
@@ -1041,8 +1048,8 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
                   onTouchedPhone={() => setTouched((t) => ({ ...t, phone: true }))}
                   profileCountry={locationCtx?.country ?? undefined}
                   onTouchedCustomField={(id) => setTouchedCustomFields((prev) => ({ ...prev, [id]: true }))}
-                  file={file}
-                  onFileChange={handleFileChange}
+                  files={files}
+                  onFilesChange={handleFilesChange}
                   fileError={fileError}
                   onBack={() => setStep(3)}
                   onConfirm={handleConfirm}

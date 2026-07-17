@@ -27,7 +27,7 @@ import { AvailabilityGeneralSkeleton } from '@/src/components/ui/AvailabilityGen
 import { TimezoneSelector } from '@/src/components/ui/TimezoneSelector';
 import { ConfirmModal } from '@/src/components/ui/ConfirmModal';
 import { useWorkspaceSettings } from '@/src/hooks/useWorkspaceSettings';
-import { ROLE_SERVICE_PROVIDER, ROLE_WORKSPACE_ADMIN } from '@/src/constants/roles';
+import { ROLE_SERVICE_PROVIDER, ROLE_STAFF, ROLE_WORKSPACE_ADMIN } from '@/src/constants/roles';
 import { resolveAvailabilityForServiceProvider } from '@/src/utils/availabilityResolution';
 import { CUSTOMER_TIMEZONE_OPTIONS } from '@/src/constants/timezone';
 import {
@@ -527,6 +527,7 @@ export default function Availability() {
 
   const isServiceProviderUser = currentUserRole === ROLE_SERVICE_PROVIDER;
   const isWorkspaceAdminUser = currentUserRole === ROLE_WORKSPACE_ADMIN;
+  const isStaffUser = currentUserRole === ROLE_STAFF;
 
   const effectiveProviderIdForView = useMemo(() => {
     if (isServiceProviderUser && currentUserId) return currentUserId;
@@ -808,12 +809,14 @@ export default function Availability() {
   }, [activeTab, currentUserId, currentUserRole]);
 
   const openAddExceptionPanel = () => {
+    if (isStaffUser) return;
     setEditingException(null);
     setActiveTab("date_exceptions");
     setExceptionPanelOpen(true);
   };
 
   const openEditExceptionPanel = (row: date_exception) => {
+    if (isStaffUser) return;
     setEditingException(row);
     setExceptionPanelOpen(true);
   };
@@ -976,40 +979,44 @@ export default function Availability() {
 
         <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
           <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                setActiveTab("general");
-                timesheetRef.current?.applyMonFriPreset();
-              }}
-              disabled={settingsLoading || timesheetBusy}
-              className={outlineActionBtn}
-            >
-              <Clock className="h-4 w-4 text-slate-500" />
-              Apply Mon-Fri 9AM–5PM
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setActiveTab("general");
-                timesheetRef.current?.copyMondayToWeekdays();
-              }}
-              disabled={settingsLoading || timesheetBusy}
-              className={outlineActionBtn}
-            >
-              <Copy className="h-4 w-4 text-slate-500" />
-              Copy Monday to Weekdays
-            </button>
-            <button
-              type="button"
-              onClick={openAddExceptionPanel}
-              className={outlineActionBtn}
-            >
-              <CalendarPlus className="h-4 w-4 text-slate-500" />
-              Add Exception
-            </button>
+            {!isStaffUser ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveTab("general");
+                    timesheetRef.current?.applyMonFriPreset();
+                  }}
+                  disabled={settingsLoading || timesheetBusy}
+                  className={outlineActionBtn}
+                >
+                  <Clock className="h-4 w-4 text-slate-500" />
+                  Apply Mon-Fri 9AM–5PM
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveTab("general");
+                    timesheetRef.current?.copyMondayToWeekdays();
+                  }}
+                  disabled={settingsLoading || timesheetBusy}
+                  className={outlineActionBtn}
+                >
+                  <Copy className="h-4 w-4 text-slate-500" />
+                  Copy Monday to Weekdays
+                </button>
+                <button
+                  type="button"
+                  onClick={openAddExceptionPanel}
+                  className={outlineActionBtn}
+                >
+                  <CalendarPlus className="h-4 w-4 text-slate-500" />
+                  Add Exception
+                </button>
+              </>
+            ) : null}
           </div>
-          {activeTab === "general" ? (
+          {activeTab === "general" && !isStaffUser ? (
             <button
               type="button"
               onClick={() => {
@@ -1062,6 +1069,7 @@ export default function Availability() {
               onBusyChange={setTimesheetBusy}
               sourceTimezone={sourceTimezone}
               displayTimezone={sourceTimezone}
+              readOnly={isStaffUser}
             />
           )}
         </div>
@@ -1074,6 +1082,7 @@ export default function Availability() {
             onAdd={openAddExceptionPanel}
             onEdit={openEditExceptionPanel}
             onDelete={setExceptionPendingDelete}
+            readOnly={isStaffUser}
           />
         ) : null}
 

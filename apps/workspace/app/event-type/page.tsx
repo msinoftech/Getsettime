@@ -189,6 +189,7 @@ export default function EventTypes() {
   const { general } = useWorkspaceSettings();
   const user_role =
     typeof user?.user_metadata?.role === "string" ? user.user_metadata.role : "";
+  const isStaffUser = user_role === ROLE_STAFF;
   const can_assign_event_type_owner =
     user_role === ROLE_WORKSPACE_ADMIN || user_role === ROLE_MANAGER;
   const [items, setItems] = useState<EventType[]>([]);
@@ -568,13 +569,17 @@ export default function EventTypes() {
   };
 
   const handleEdit = (item: EventType) => {
+    if (isStaffUser) return;
     setShowForm(false);
     setFormError(null);
     setEditingId(item.id);
     set_open_menu_id(null);
   };
 
-  const handleDeleteClick = (id: number) => setDeleteConfirmId(id);
+  const handleDeleteClick = (id: number) => {
+    if (isStaffUser) return;
+    setDeleteConfirmId(id);
+  };
 
   const handleDeleteConfirm = async () => {
     if (!deleteConfirmId) return;
@@ -631,6 +636,7 @@ export default function EventTypes() {
   };
 
   const handleNewEvent = () => {
+    if (isStaffUser) return;
     setEditingId(null);
     slug_touched_ref.current = false;
     set_slug_error(null);
@@ -646,6 +652,7 @@ export default function EventTypes() {
   };
 
   const handleDuplicate = async (item: EventType) => {
+    if (isStaffUser) return;
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session?.access_token) {
@@ -753,6 +760,7 @@ export default function EventTypes() {
   };
 
   const handle_save_settings = async () => {
+    if (isStaffUser) return;
     if (settings_saving) return;
     set_settings_saving(true);
     try {
@@ -1070,14 +1078,16 @@ export default function EventTypes() {
                 <Settings2 className="mr-2 h-4 w-4" />
                 View Settings
               </button>
-              <button
-                type="button"
-                onClick={handleNewEvent}
-                className="inline-flex cursor-pointer items-center justify-center rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-violet-700"
-              >
-                <Plus className="mr-2 h-4 w-4" />
-                Add Event Type
-              </button>
+              {!isStaffUser ? (
+                <button
+                  type="button"
+                  onClick={handleNewEvent}
+                  className="inline-flex cursor-pointer items-center justify-center rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-violet-700"
+                >
+                  <Plus className="mr-2 h-4 w-4" />
+                  Add Event Type
+                </button>
+              ) : null}
             </div>
           </div>
 
@@ -1198,7 +1208,10 @@ export default function EventTypes() {
                   get_short_description={parse_short_description_from_settings}
                   get_status={parse_event_type_status}
                   get_status_label={event_type_status_label}
-                  on_edit={(item) => handleEdit(item as EventType)}
+                  on_edit={(item) => {
+                    if (isStaffUser) return;
+                    handleEdit(item as EventType);
+                  }}
                   on_toggle_menu={(id) =>
                     set_open_menu_id((prev) => (prev === id ? null : id))
                   }
@@ -1206,10 +1219,12 @@ export default function EventTypes() {
                     void handle_copy_link_from_menu(item as EventType);
                   }}
                   on_duplicate={(item) => {
+                    if (isStaffUser) return;
                     void handleDuplicate(item as EventType);
                     set_open_menu_id(null);
                   }}
                   on_delete={(id) => {
+                    if (isStaffUser) return;
                     handleDeleteClick(id);
                     set_open_menu_id(null);
                   }}
@@ -1237,9 +1252,13 @@ export default function EventTypes() {
                         <th className="border-b border-slate-200 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
                           Status
                         </th>
+                        {!isStaffUser ? (
+                        <>
                         <th className="border-b border-slate-200 px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">
                           Action
                         </th>
+                        </>
+                        ) : null}
                       </tr>
                     </thead>
                     <tbody>
@@ -1311,35 +1330,39 @@ export default function EventTypes() {
                             </td>
                             <td className="px-4 py-4">
                               <div className="flex items-center justify-end gap-2">
-                                <button
-                                  type="button"
-                                  onClick={() => handleEdit(item)}
-                                  className="inline-flex cursor-pointer items-center rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
-                                >
-                                  <Edit3 className="mr-1.5 h-3.5 w-3.5" />
-                                  Edit
-                                </button>
-                                <EventTypeActionsMenu
-                                  open={open_menu_id === item.id}
-                                  copy_disabled={loadingSlug || !item.slug}
-                                  copy_copied={copiedId === item.id}
-                                  on_toggle={() =>
-                                    set_open_menu_id((prev) =>
-                                      prev === item.id ? null : item.id
-                                    )
-                                  }
-                                  on_copy_link={() => {
-                                    void handle_copy_link_from_menu(item);
-                                  }}
-                                  on_duplicate={() => {
-                                    void handleDuplicate(item);
-                                    set_open_menu_id(null);
-                                  }}
-                                  on_delete={() => {
-                                    handleDeleteClick(item.id);
-                                    set_open_menu_id(null);
-                                  }}
-                                />
+                                {!isStaffUser ? (
+                                  <>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleEdit(item)}
+                                      className="inline-flex cursor-pointer items-center rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+                                    >
+                                      <Edit3 className="mr-1.5 h-3.5 w-3.5" />
+                                      Edit
+                                    </button>
+                                    <EventTypeActionsMenu
+                                      open={open_menu_id === item.id}
+                                      copy_disabled={loadingSlug || !item.slug}
+                                      copy_copied={copiedId === item.id}
+                                      on_toggle={() =>
+                                        set_open_menu_id((prev) =>
+                                          prev === item.id ? null : item.id
+                                        )
+                                      }
+                                      on_copy_link={() => {
+                                        void handle_copy_link_from_menu(item);
+                                      }}
+                                      on_duplicate={() => {
+                                        void handleDuplicate(item);
+                                        set_open_menu_id(null);
+                                      }}
+                                      on_delete={() => {
+                                        handleDeleteClick(item.id);
+                                        set_open_menu_id(null);
+                                      }}
+                                    />
+                                  </>
+                                ) : null}
                               </div>
                             </td>
                           </tr>
@@ -1570,14 +1593,16 @@ export default function EventTypes() {
 
             <div className="border-t border-slate-200 bg-white px-5 py-4 sm:px-6">
               <div className="flex flex-col gap-3 sm:flex-row sm:justify-between">
-                <button
-                  type="button"
-                  onClick={handle_reset_settings}
-                  className="inline-flex cursor-pointer items-center justify-center rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-                >
-                  <RotateCcw className="mr-2 h-4 w-4" />
-                  Reset
-                </button>
+                {!isStaffUser ? (
+                  <button
+                    type="button"
+                    onClick={handle_reset_settings}
+                    className="inline-flex cursor-pointer items-center justify-center rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                  >
+                    <RotateCcw className="mr-2 h-4 w-4" />
+                    Reset
+                  </button>
+                ) : null}
 
                 <div className="flex flex-col gap-3 sm:flex-row">
                   <button
@@ -1587,14 +1612,16 @@ export default function EventTypes() {
                   >
                     Cancel
                   </button>
-                  <button
-                    type="button"
-                    onClick={handle_save_settings}
-                    disabled={settings_saving}
-                    className="inline-flex cursor-pointer items-center justify-center rounded-xl bg-gradient-to-r from-sky-600 to-cyan-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-cyan-100 transition hover:scale-[1.01] disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    {settings_saving ? "Saving…" : "Save Settings"}
-                  </button>
+                  {!isStaffUser ? (
+                    <button
+                      type="button"
+                      onClick={handle_save_settings}
+                      disabled={settings_saving}
+                      className="inline-flex cursor-pointer items-center justify-center rounded-xl bg-gradient-to-r from-sky-600 to-cyan-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-cyan-100 transition hover:scale-[1.01] disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {settings_saving ? "Saving…" : "Save Settings"}
+                    </button>
+                  ) : null}
                 </div>
               </div>
             </div>

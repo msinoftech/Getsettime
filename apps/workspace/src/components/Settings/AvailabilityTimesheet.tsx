@@ -57,6 +57,8 @@ interface AvailabilityTimesheetProps {
   sourceTimezone?: string;
   /** IANA timezone used only for displaying table times (not persisted) */
   displayTimezone?: string;
+  /** When true, hides edit actions (e.g. staff view-only) */
+  readOnly?: boolean;
 }
 
 function classNames(...parts: Array<string | false | null | undefined>) {
@@ -239,6 +241,7 @@ const AvailabilityTimesheet = forwardRef<
     onBusyChange,
     sourceTimezone = "UTC",
     displayTimezone = "UTC",
+    readOnly = false,
   },
   ref
 ) {
@@ -1051,6 +1054,7 @@ const AvailabilityTimesheet = forwardRef<
   };
 
   const openDayPanel = (day: DayName) => {
+    if (readOnly) return;
     if (preCopySnapshot) {
       const restored = cloneSchedules(preCopySnapshot);
       setSchedules(restored);
@@ -1116,7 +1120,9 @@ const AvailabilityTimesheet = forwardRef<
     <>
       <div className="space-y-5">
         <p className="text-sm text-slate-500">
-          Set your regular weekly availability. Click on a day to edit its hours and breaks.
+          {readOnly
+            ? "View regular weekly availability, working hours, and breaks."
+            : "Set your regular weekly availability. Click on a day to edit its hours and breaks."}
         </p>
 
         <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
@@ -1128,7 +1134,9 @@ const AvailabilityTimesheet = forwardRef<
                   <th className="px-4 py-3 font-semibold">Status</th>
                   <th className="px-4 py-3 font-semibold">Working Hours</th>
                   <th className="px-4 py-3 font-semibold">Breaks</th>
-                  <th className="px-4 py-3 font-semibold text-right">Action</th>
+                  {!readOnly ? (
+                    <th className="px-4 py-3 font-semibold text-right">Action</th>
+                  ) : null}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -1144,13 +1152,19 @@ const AvailabilityTimesheet = forwardRef<
                       )}
                     >
                       <td className="px-4 py-3.5">
-                        <button
-                          type="button"
-                          onClick={() => openDayPanel(day)}
-                          className="text-left text-sm font-semibold text-slate-900 hover:text-indigo-600"
-                        >
-                          {DAY_NAMES[day]}
-                        </button>
+                        {readOnly ? (
+                          <span className="text-sm font-semibold text-slate-900">
+                            {DAY_NAMES[day]}
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => openDayPanel(day)}
+                            className="text-left text-sm font-semibold text-slate-900 hover:text-indigo-600"
+                          >
+                            {DAY_NAMES[day]}
+                          </button>
+                        )}
                       </td>
                       <td className="px-4 py-3.5">
                         <span
@@ -1185,24 +1199,26 @@ const AvailabilityTimesheet = forwardRef<
                                 )}
                               </span>
                             ))}
-                            <button
-                              type="button"
-                              onClick={() => {
-                                openDayPanel(day);
-                                addBreak(day);
-                              }}
-                              className="inline-flex h-6 w-6 items-center justify-center rounded-md border border-slate-200 text-slate-500 transition hover:bg-white hover:text-indigo-600"
-                              aria-label={`Add break on ${DAY_NAMES[day]}`}
-                            >
-                              <Plus className="h-3.5 w-3.5" />
-                            </button>
+                            {!readOnly ? (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  openDayPanel(day);
+                                  addBreak(day);
+                                }}
+                                className="inline-flex h-6 w-6 items-center justify-center rounded-md border border-slate-200 text-slate-500 transition hover:bg-white hover:text-indigo-600"
+                                aria-label={`Add break on ${DAY_NAMES[day]}`}
+                              >
+                                <Plus className="h-3.5 w-3.5" />
+                              </button>
+                            ) : null}
                           </div>
                         ) : (
                           <div className="flex items-center gap-2">
                             <span className="text-sm text-slate-400">
                               {schedule.enabled ? "No breaks" : "—"}
                             </span>
-                            {schedule.enabled ? (
+                            {schedule.enabled && !readOnly ? (
                               <button
                                 type="button"
                                 onClick={() => {
@@ -1218,16 +1234,18 @@ const AvailabilityTimesheet = forwardRef<
                           </div>
                         )}
                       </td>
-                      <td className="px-4 py-3.5 text-right">
-                        <button
-                          type="button"
-                          onClick={() => openDayPanel(day)}
-                          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50"
-                        >
-                          <Pencil className="h-3.5 w-3.5 text-slate-500" />
-                          Edit
-                        </button>
-                      </td>
+                      {!readOnly ? (
+                        <td className="px-4 py-3.5 text-right">
+                          <button
+                            type="button"
+                            onClick={() => openDayPanel(day)}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50"
+                          >
+                            <Pencil className="h-3.5 w-3.5 text-slate-500" />
+                            Edit
+                          </button>
+                        </td>
+                      ) : null}
                     </tr>
                   );
                 })}

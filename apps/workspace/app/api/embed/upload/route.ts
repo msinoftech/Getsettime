@@ -10,7 +10,7 @@ const ALLOWED_MIME_TYPES = [
   'image/heif',
 ];
 
-const MAX_FILE_SIZE = 2 * 1024 * 1024; // 2 MB
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB (per file; client enforces 10 MB total)
 
 export async function POST(req: NextRequest) {
   try {
@@ -35,7 +35,7 @@ export async function POST(req: NextRequest) {
 
     if (file.size > MAX_FILE_SIZE) {
       return NextResponse.json(
-        { error: 'File size too large. Maximum size is 2MB.' },
+        { error: 'File size too large. Maximum size is 10MB.' },
         { status: 400 },
       );
     }

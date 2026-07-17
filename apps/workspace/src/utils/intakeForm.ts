@@ -91,6 +91,7 @@ const INTAKE_FORM_PAYLOAD_RESERVED_KEYS = new Set([
   'services',
   'additional_description',
   'file_upload_url',
+  'file_upload_urls',
   'whatsapp_opt_in',
   /** Shown as "Meeting type" on booking details / preview, not a workspace custom field. */
   'meeting_option',
@@ -98,6 +99,22 @@ const INTAKE_FORM_PAYLOAD_RESERVED_KEYS = new Set([
 
 export function isIntakeFormReservedPayloadKey(key: string): boolean {
   return INTAKE_FORM_PAYLOAD_RESERVED_KEYS.has(key);
+}
+
+/** Normalize intake file uploads to a URL list (supports legacy single URL). */
+export function getIntakeFileUploadUrls(
+  intakeForm: Record<string, unknown> | null | undefined
+): string[] {
+  if (!intakeForm) return [];
+  const urls = intakeForm.file_upload_urls;
+  if (Array.isArray(urls)) {
+    return urls.filter((u): u is string => typeof u === 'string' && u.trim() !== '');
+  }
+  const single = intakeForm.file_upload_url;
+  if (typeof single === 'string' && single.trim() !== '') {
+    return [single];
+  }
+  return [];
 }
 
 /** Whether an intake/custom field value should appear in summaries (allows 0, non-empty arrays). */

@@ -29,6 +29,7 @@ import { PortalActionsMenu } from "@/src/components/ui/PortalActionsMenu";
 import { ServiceSkeleton } from "@/src/components/ui/ServiceSkeleton";
 import { currencySymbol } from "@/src/constants/currency";
 import { AddDepartmentPanel } from "@/src/features/departments/AddDepartmentPanel";
+import { get_department_gradient } from "@/src/features/departments/department_colors";
 import {
   ServiceFilters,
   type service_status_filter,
@@ -36,23 +37,6 @@ import {
 import { useServiceProviders, useUserDepartments } from "@/src/hooks/useBookingLookups";
 import { useAuth } from "@/src/providers/AuthProvider";
 import type { ServiceProvider } from "@/src/types/booking-entities";
-
-const DEPARTMENT_BADGE_STYLES = [
-  "bg-violet-50 text-violet-700",
-  "bg-emerald-50 text-emerald-700",
-  "bg-amber-50 text-amber-700",
-  "bg-sky-50 text-sky-700",
-  "bg-rose-50 text-rose-700",
-  "bg-indigo-50 text-indigo-700",
-];
-
-function departmentBadgeClass(name: string): string {
-  let hash = 0;
-  for (let i = 0; i < name.length; i += 1) {
-    hash = (hash + name.charCodeAt(i) * (i + 1)) % DEPARTMENT_BADGE_STYLES.length;
-  }
-  return DEPARTMENT_BADGE_STYLES[hash] ?? DEPARTMENT_BADGE_STYLES[0];
-}
 
 type DepartmentStatus = "active" | "inactive";
 /** Public=active, Private=private, Draft=draft; inactive kept for legacy rows. */
@@ -110,6 +94,7 @@ interface Department {
   meta_data: {
     services?: { id: string; name: string }[];
     service_providers?: DepartmentServiceProviderMeta[];
+    color?: string | null;
   } | null;
   created_at: string;
 }
@@ -254,6 +239,7 @@ export default function ServicesPage() {
   const currentUserRole =
     (user?.user_metadata?.role as string | undefined) ?? null;
   const isLoggedInServiceProvider = currentUserRole === "service_provider";
+  const isStaffUser = currentUserRole === "staff";
   const currentUserId = user?.id ?? null;
 
   const [departments, setDepartments] = useState<Department[]>([]);
@@ -474,6 +460,16 @@ export default function ServicesPage() {
         (d) => d.id === Number(service.department_id)
       );
       return dept?.name ?? "—";
+    },
+    [departments]
+  );
+
+  const getServiceDepartment = useCallback(
+    (service: Service): Department | null => {
+      if (service.department_id == null) return null;
+      return (
+        departments.find((d) => d.id === Number(service.department_id)) ?? null
+      );
     },
     [departments]
   );
@@ -825,6 +821,7 @@ export default function ServicesPage() {
   };
 
   const openAddServiceDrawer = () => {
+    if (isStaffUser) return;
     if (departmentsForList.length === 0) return;
     setShowAddDepartmentPanel(false);
     resetEditForm();
@@ -907,6 +904,7 @@ export default function ServicesPage() {
   };
 
   const openEditService = (service: Service) => {
+    if (isStaffUser) return;
     setEditServiceId(service.id);
     setEditServiceName(service.name);
     setEditServiceDescription(
@@ -1196,7 +1194,7 @@ export default function ServicesPage() {
   };
 
   const openAddDepartmentDrawer = () => {
-    if (isLoggedInServiceProvider) return;
+    if (isLoggedInServiceProvider || isStaffUser) return;
     closeServicePanel();
     setShowAddDepartmentPanel(true);
   };
@@ -1251,7 +1249,7 @@ export default function ServicesPage() {
               View booking impact
             </button>
 
-            {!isLoggedInServiceProvider && (
+            {!isLoggedInServiceProvider && !isStaffUser && (
               <button
                 type="button"
                 onClick={openAddDepartmentDrawer}
@@ -1262,15 +1260,17 @@ export default function ServicesPage() {
               </button>
             )}
 
-            <button
-              type="button"
-              onClick={openAddServiceDrawer}
-              disabled={departmentsForList.length === 0}
-              className="inline-flex h-10 items-center gap-2 rounded-xl bg-violet-600 px-3.5 text-sm font-semibold text-white shadow-sm transition hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              <Plus className="h-4 w-4" />
-              Add Service
-            </button>
+            {!isStaffUser ? (
+              <button
+                type="button"
+                onClick={openAddServiceDrawer}
+                disabled={departmentsForList.length === 0}
+                className="inline-flex h-10 items-center gap-2 rounded-xl bg-violet-600 px-3.5 text-sm font-semibold text-white shadow-sm transition hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <Plus className="h-4 w-4" />
+                Add Service
+              </button>
+            ) : null}
           </div>
         </div>
 
@@ -1404,15 +1404,17 @@ export default function ServicesPage() {
                     <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
                       Status
                     </th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
-                      Action
-                    </th>
+                    {!isStaffUser ? (
+                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                        Action
+                      </th>
+                    ) : null}
                   </tr>
                 </thead>
                 <tbody>
                   {paginatedServices.length === 0 && (
                     <tr>
-                      <td colSpan={6} className="px-4 py-10 text-center">
+                      <td colSpan={isStaffUser ? 5 : 6} className="px-4 py-10 text-center">
                         <p className="text-sm font-medium text-slate-700">No services found</p>
                         <p className="mt-1 text-sm text-slate-500">
                           {allDepartmentServices.length === 0
@@ -1428,20 +1430,27 @@ export default function ServicesPage() {
                   {paginatedServices.map((service) => {
                     const assigned = service.meta_data?.service_providers ?? [];
                     const deptName = getServiceDepartmentName(service);
+                    const serviceDepartment = getServiceDepartment(service);
                     return (
                       <tr
                         key={service.id}
                         className="border-b border-slate-100 last:border-b-0 hover:bg-slate-50/60"
                       >
                         <td className="px-4 py-3.5">
-                          <span
-                            className={classNames(
-                              "inline-flex rounded-full px-2.5 py-1 text-xs font-medium",
-                              departmentBadgeClass(deptName)
-                            )}
-                          >
-                            {deptName}
-                          </span>
+                          {serviceDepartment ? (
+                            <span
+                              className={classNames(
+                                "inline-flex rounded-full bg-gradient-to-br px-2.5 py-1 text-xs font-medium text-white",
+                                get_department_gradient(serviceDepartment)
+                              )}
+                            >
+                              {deptName}
+                            </span>
+                          ) : (
+                            <span className="inline-flex rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600">
+                              {deptName}
+                            </span>
+                          )}
                         </td>
                         <td className="px-4 py-3.5">
                           <p className="text-sm font-semibold text-slate-900">{service.name}</p>
@@ -1505,55 +1514,57 @@ export default function ServicesPage() {
                             {serviceStatusLabel(service.status)}
                           </span>
                         </td>
-                        <td className="px-4 py-3.5">
-                          <div className="relative flex items-center gap-1.5">
-                            <button
-                              type="button"
-                              onClick={() => openEditService(service)}
-                              className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-2.5 text-xs font-medium text-blue-700 transition hover:bg-blue-100"
-                            >
-                              <Pencil className="h-3.5 w-3.5" />
-                              Edit
-                            </button>
-                            <PortalActionsMenu
-                              open={rowMenuId === service.id}
-                              onToggle={() =>
-                                setRowMenuId((prev) =>
-                                  prev === service.id ? null : service.id
-                                )
-                              }
-                            >
+                        {!isStaffUser ? (
+                          <td className="px-4 py-3.5">
+                            <div className="relative flex items-center gap-1.5">
                               <button
                                 type="button"
-                                role="menuitem"
-                                disabled={busyAction}
-                                onClick={() => {
-                                  setRowMenuId(null);
-                                  handleToggleServiceStatus(service);
-                                }}
-                                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                                onClick={() => openEditService(service)}
+                                className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-2.5 text-xs font-medium text-blue-700 transition hover:bg-blue-100"
                               >
-                                <Power className="h-3.5 w-3.5" />
-                                {service.status === "active"
-                                  ? "Set private"
-                                  : "Set public"}
+                                <Pencil className="h-3.5 w-3.5" />
+                                Edit
                               </button>
-                              <button
-                                type="button"
-                                role="menuitem"
-                                disabled={busyAction}
-                                onClick={() => {
-                                  setRowMenuId(null);
-                                  setServiceToDelete(service);
-                                }}
-                                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-red-600 hover:bg-red-50 disabled:opacity-60"
+                              <PortalActionsMenu
+                                open={rowMenuId === service.id}
+                                onToggle={() =>
+                                  setRowMenuId((prev) =>
+                                    prev === service.id ? null : service.id
+                                  )
+                                }
                               >
-                                <Trash2 className="h-3.5 w-3.5" />
-                                Delete
-                              </button>
-                            </PortalActionsMenu>
-                          </div>
-                        </td>
+                                <button
+                                  type="button"
+                                  role="menuitem"
+                                  disabled={busyAction}
+                                  onClick={() => {
+                                    setRowMenuId(null);
+                                    handleToggleServiceStatus(service);
+                                  }}
+                                  className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                                >
+                                  <Power className="h-3.5 w-3.5" />
+                                  {service.status === "active"
+                                    ? "Set private"
+                                    : "Set public"}
+                                </button>
+                                <button
+                                  type="button"
+                                  role="menuitem"
+                                  disabled={busyAction}
+                                  onClick={() => {
+                                    setRowMenuId(null);
+                                    setServiceToDelete(service);
+                                  }}
+                                  className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-red-600 hover:bg-red-50 disabled:opacity-60"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                  Delete
+                                </button>
+                              </PortalActionsMenu>
+                            </div>
+                          </td>
+                        ) : null}
                       </tr>
                     );
                   })}
