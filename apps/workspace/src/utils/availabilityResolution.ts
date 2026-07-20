@@ -1,15 +1,8 @@
-import type { AvailabilitySettings } from '@/src/types/workspace';
-import type { DaySchedule } from '@/src/types/workspace';
+import type { AvailabilitySettings, DaySchedule } from '@/src/types/workspace';
 
-export type provider_availability_entry = {
-  timesheet?: Record<string, DaySchedule> | null;
-  individual?: Record<string, boolean>;
-  lastUpdated?: string;
-};
+export type { provider_availability_entry } from '@/src/types/workspace';
 
-export type availability_with_providers = AvailabilitySettings & {
-  providers?: Record<string, provider_availability_entry>;
-};
+export type availability_with_providers = AvailabilitySettings;
 
 function hasTimesheetData(
   timesheet: Record<string, DaySchedule> | null | undefined

@@ -1,4 +1,4 @@
-import type { provider_availability_entry } from '@/src/utils/availabilityResolution';
+import type { provider_availability_entry } from '@/src/types/workspace';
 
 type availability_blob = {
   timesheet?: unknown;

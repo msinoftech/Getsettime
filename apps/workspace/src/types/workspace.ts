@@ -19,10 +19,18 @@ export type AvailabilityGrid = {
   lastUpdated?: string;
 };
 
+export type provider_availability_entry = {
+  timesheet?: Record<DayName, DaySchedule> | null;
+  individual?: Record<string, boolean>;
+  lastUpdated?: string;
+};
+
 export type AvailabilitySettings = {
   grid?: AvailabilityGrid;
   individual?: Record<string, boolean>;
   timesheet?: Record<DayName, DaySchedule> | null;
+  lastUpdated?: string;
+  providers?: Record<string, provider_availability_entry>;
 };
 
 export type GeneralSettings = {

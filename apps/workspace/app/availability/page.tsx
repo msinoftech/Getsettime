@@ -37,7 +37,7 @@ import {
 import type { date_exception } from '@/src/types/date_exceptions';
 import { supabase } from "@/lib/supabaseClient";
 import { sync_settings_response } from '@/src/lib/workspace_shell_sync';
-import type { WorkspaceSettings } from '@/src/types/workspace';
+import type { WorkspaceSettings, provider_availability_entry } from '@/src/types/workspace';
 
 type TabType = 'general' | 'date_exceptions' | 'availability';
 type DayName = "Mon" | "Tue" | "Wed" | "Thu" | "Fri" | "Sat" | "Sun";
@@ -373,11 +373,7 @@ export default function Availability() {
       if (!session) throw new Error('Not authenticated');
 
       const token = session.access_token;
-      const existingSettings = (settings ?? {}) as WorkspaceSettings & {
-        availability?: WorkspaceSettings['availability'] & {
-          providers?: Record<string, unknown>;
-        };
-      };
+      const existingSettings = (settings ?? {}) as WorkspaceSettings;
       const existingAvailability = existingSettings.availability ?? {};
 
       let updatedSettings;
@@ -406,8 +402,7 @@ export default function Availability() {
         }
         // provider-availability returns { ok: true } — patch cache from local merge
         if (session.user.id) {
-          const existingProviders =
-            (existingAvailability as { providers?: Record<string, unknown> }).providers ?? {};
+          const existingProviders = existingAvailability.providers ?? {};
           sync_settings_response(session.user.id, {
             settings: {
               ...existingSettings,
@@ -419,7 +414,7 @@ export default function Availability() {
                     timesheet,
                     individual: timeSlots,
                     lastUpdated: new Date().toISOString(),
-                  },
+                  } satisfies provider_availability_entry,
                 },
               },
             },
@@ -435,13 +430,12 @@ export default function Availability() {
       }
 
       if (saveProviderId) {
-        const providerAvailabilityData = {
+        const providerAvailabilityData: provider_availability_entry = {
           timesheet: timesheet,
           individual: timeSlots,
           lastUpdated: new Date().toISOString(),
         };
-        const existingProviders =
-          (existingAvailability as { providers?: Record<string, unknown> }).providers ?? {};
+        const existingProviders = existingAvailability.providers ?? {};
         updatedSettings = {
           ...existingSettings,
           availability: {
