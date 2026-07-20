@@ -28,6 +28,7 @@ import {
 } from "./team-member-modals";
 import { supabase } from "@/lib/supabaseClient";
 import { useAuth } from "@/src/providers/AuthProvider";
+import { useWorkspaceSettings } from "@/src/hooks/useWorkspaceSettings";
 import { ConfirmModal } from "@/src/components/ui/ConfirmModal";
 import { UpgradePlanModal } from "@/src/components/Subscription/UpgradePlanModal";
 import {
@@ -211,6 +212,10 @@ function formatWeeklyBookingsLabel(count: number): string {
 
 export default function TeamMembersPage() {
   const { user: currentUser } = useAuth();
+  const {
+    workspaceProfessionLabel,
+    workspaceAdminProfessionsId,
+  } = useWorkspaceSettings();
   const currentUserRole =
     (currentUser?.user_metadata?.role as string | undefined) ?? null;
   const currentUserIsOwner =
@@ -250,7 +255,6 @@ export default function TeamMembersPage() {
   });
   const [inviteUrl, setInviteUrl] = useState<string | null>(null);
   const [providerCatalogNames, setProviderCatalogNames] = useState<string[]>([]);
-  const [providerProfessionLabel, setProviderProfessionLabel] = useState<string | null>(null);
   const [providerSelectedDepartmentNames, setProviderSelectedDepartmentNames] = useState<string[]>([]);
   const [providerInviteUrl, setProviderInviteUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -258,6 +262,7 @@ export default function TeamMembersPage() {
   const [error, setError] = useState<string | null>(null);
   const [modalError, setModalError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [modalSuccess, setModalSuccess] = useState<string | null>(null);
   const [confirmModal, setConfirmModal] = useState<{
     action: "deactivate" | "activate";
     memberId: string;
@@ -378,24 +383,7 @@ export default function TeamMembersPage() {
       if (!session) return;
 
       const headers = { Authorization: `Bearer ${session.access_token}` };
-      const wsRes = await fetch("/api/workspace", { headers });
-      if (!wsRes.ok) return;
-
-      const wsBody = (await wsRes.json()) as {
-        workspace?: {
-          type?: string | null;
-          profession_name?: string | null;
-          admin_professions_id?: number | null;
-        };
-      };
-      const ws = wsBody.workspace;
-      const label =
-        (typeof ws?.type === "string" && ws.type.trim()) ||
-        (typeof ws?.profession_name === "string" && ws.profession_name.trim()) ||
-        null;
-      setProviderProfessionLabel(label);
-
-      const catalogId = ws?.admin_professions_id;
+      const catalogId = workspaceAdminProfessionsId;
       if (catalogId == null || !Number.isFinite(Number(catalogId))) {
         setProviderCatalogNames([]);
         return;
@@ -433,6 +421,7 @@ export default function TeamMembersPage() {
     setError(null);
     setModalError(null);
     setSuccess(null);
+    setModalSuccess(null);
     setShowInviteForm(false);
     setShowMemberForm(true);
     void loadProviderCatalogDepartments();
@@ -451,6 +440,7 @@ export default function TeamMembersPage() {
     setError(null);
     setModalError(null);
     setSuccess(null);
+    setModalSuccess(null);
     setShowMemberForm(false);
     setShowInviteForm(true);
   };
@@ -470,6 +460,7 @@ export default function TeamMembersPage() {
     });
     setError(null);
     setSuccess(null);
+    setModalSuccess(null);
   };
 
   const handleRoleModalCancel = () => {
@@ -485,6 +476,7 @@ export default function TeamMembersPage() {
     });
     setError(null);
     setSuccess(null);
+    setModalSuccess(null);
   };
 
   const handleEditMember = (member: TeamMember) => {
@@ -501,6 +493,7 @@ export default function TeamMembersPage() {
     });
     setError(null);
     setSuccess(null);
+    setModalSuccess(null);
     setShowMemberForm(true);
   };
 
@@ -522,6 +515,7 @@ export default function TeamMembersPage() {
     setError(null);
     setModalError(null);
     setSuccess(null);
+    setModalSuccess(null);
   };
 
   const toggleProviderDepartmentName = (name: string) => {
@@ -694,6 +688,7 @@ export default function TeamMembersPage() {
     setLoading(true);
     setError(null);
     setSuccess(null);
+    setModalSuccess(null);
 
     try {
       const { data: { session } } = await supabase.auth.getSession();
@@ -777,7 +772,7 @@ export default function TeamMembersPage() {
       });
 
       if (response.ok) {
-        setSuccess('Team member updated successfully');
+        setModalSuccess('Team member updated successfully');
         await fetchTeamMembers();
         setTimeout(() => {
           if (fromRoleModal) handleRoleModalCancel();
@@ -1369,7 +1364,7 @@ export default function TeamMembersPage() {
         open={showMemberForm && !editingMember}
         loading={loading}
         error={modalError}
-        professionLabel={providerProfessionLabel}
+        professionLabel={workspaceProfessionLabel ?? null}
         catalogDepartmentNames={providerCatalogNames}
         selectedDepartmentNames={providerSelectedDepartmentNames}
         memberFormData={memberFormData}
@@ -1383,6 +1378,7 @@ export default function TeamMembersPage() {
       <EditTeamMemberModal
         open={showMemberForm && editingMember !== null}
         loading={loading}
+        success={modalSuccess}
         editingMember={editingMember!}
         departments={departments}
         memberFormData={memberFormData}
@@ -1417,6 +1413,7 @@ export default function TeamMembersPage() {
         <ManageRoleModal
           open
           loading={loading}
+          success={modalSuccess}
           member={roleModalMember}
           departments={departments}
           memberFormData={memberFormData}

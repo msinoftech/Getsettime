@@ -36,6 +36,8 @@ import {
 } from '@/src/utils/timezone';
 import type { date_exception } from '@/src/types/date_exceptions';
 import { supabase } from "@/lib/supabaseClient";
+import { sync_settings_response } from '@/src/lib/workspace_shell_sync';
+import type { WorkspaceSettings } from '@/src/types/workspace';
 
 type TabType = 'general' | 'date_exceptions' | 'availability';
 type DayName = "Mon" | "Tue" | "Wed" | "Thu" | "Fri" | "Sat" | "Sun";
@@ -54,7 +56,7 @@ interface ServiceProvider {
 }
 
 export default function Availability() {
-  const { settings, loading: settingsLoading, refetch: refetchWorkspaceSettings, general } = useWorkspaceSettings();
+  const { settings, loading: settingsLoading, general } = useWorkspaceSettings();
   const [activeTab, setActiveTab] = useState<TabType>('general');
   const [currentDate, setCurrentDate] = useState(new Date());
   const [viewMode, setViewMode] = useState("week");
@@ -371,19 +373,12 @@ export default function Availability() {
       if (!session) throw new Error('Not authenticated');
 
       const token = session.access_token;
-
-      // First, get existing settings to avoid overwriting other data
-      const getResponse = await fetch('/api/settings', {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      let existingSettings = {};
-      if (getResponse.ok) {
-        const payload = await getResponse.json();
-        existingSettings = payload?.settings ?? payload?.data?.settings ?? {};
-      }
-
-      const existingAvailability = (existingSettings as any).availability ?? {};
+      const existingSettings = (settings ?? {}) as WorkspaceSettings & {
+        availability?: WorkspaceSettings['availability'] & {
+          providers?: Record<string, unknown>;
+        };
+      };
+      const existingAvailability = existingSettings.availability ?? {};
 
       let updatedSettings;
 
@@ -409,6 +404,27 @@ export default function Availability() {
             (err as { error?: string }).error || 'Failed to save provider availability'
           );
         }
+        // provider-availability returns { ok: true } — patch cache from local merge
+        if (session.user.id) {
+          const existingProviders =
+            (existingAvailability as { providers?: Record<string, unknown> }).providers ?? {};
+          sync_settings_response(session.user.id, {
+            settings: {
+              ...existingSettings,
+              availability: {
+                ...existingAvailability,
+                providers: {
+                  ...existingProviders,
+                  [saveProviderId]: {
+                    timesheet,
+                    individual: timeSlots,
+                    lastUpdated: new Date().toISOString(),
+                  },
+                },
+              },
+            },
+          });
+        }
         setSaveMessage({
           type: 'success',
           text: 'Availability saved successfully for your profile!',
@@ -424,7 +440,8 @@ export default function Availability() {
           individual: timeSlots,
           lastUpdated: new Date().toISOString(),
         };
-        const existingProviders = existingAvailability.providers ?? {};
+        const existingProviders =
+          (existingAvailability as { providers?: Record<string, unknown> }).providers ?? {};
         updatedSettings = {
           ...existingSettings,
           availability: {
@@ -463,6 +480,10 @@ export default function Availability() {
 
       if (!response.ok) {
         throw new Error(result.error || 'Failed to save availability');
+      }
+
+      if (session.user?.id && result.settings) {
+        sync_settings_response(session.user.id, result);
       }
 
       const saveTarget = selectedProviderId 
@@ -572,7 +593,6 @@ export default function Availability() {
         timesheet: savedTimesheet as Record<DayName, DaySchedule>,
       };
     });
-    void refetchWorkspaceSettings();
   };
 
   // Resolve provider-specific availability (or workspace general when none configured)
@@ -769,9 +789,11 @@ export default function Availability() {
         settings: { general: { timezone } },
       }),
     });
-    if (!response.ok) throw new Error("Failed to update timezone");
-
-    await refetchWorkspaceSettings();
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || "Failed to update timezone");
+    if (session.user?.id && result.settings) {
+      sync_settings_response(session.user.id, result);
+    }
   };
 
   const fetchDateExceptions = async () => {
@@ -1062,6 +1084,7 @@ export default function Availability() {
                   ? selectedProviderId
                   : undefined
               }
+              workspaceSettings={settings}
               initialTimesheet={generalInitialTimesheet}
               onSave={handleGeneralTimesheetSaved}
               onSaveFeedback={setTimesheetSaveFeedback}

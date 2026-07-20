@@ -20,6 +20,7 @@ import {
   memberActsInDepartment,
 } from '@/src/utils/bookingFormUtils';
 import { resolveAvailabilityForServiceProvider } from '@/src/utils/availabilityResolution';
+import { useWorkspaceSettings } from '@/src/hooks/useWorkspaceSettings';
 
 interface TeamMemberRow {
   id: string;
@@ -50,6 +51,13 @@ export function useBookingFormData({
   intakeForm,
   onAvailabilityChange,
 }: UseBookingFormDataParams) {
+  const {
+    settings: workspaceSettings,
+    availability: workspaceAvailability,
+    workspaceName: cachedWorkspaceName,
+    workspaceLogo: cachedWorkspaceLogo,
+    loading: workspaceSettingsLoading,
+  } = useWorkspaceSettings();
   const [allDepartments, setDepartments] = useState<Department[]>([]);
   const [loadingDepartments, setLoadingDepartments] = useState(true);
   const [workspaceMembers, setWorkspaceMembers] = useState<TeamMemberRow[]>([]);
@@ -234,74 +242,42 @@ export function useBookingFormData({
       return;
     }
     if (loadingDepartments && departments.length === 0) return;
+    if (workspaceSettingsLoading) return;
 
-    const fetchAvailability = async () => {
-      setLoadingAvailability(true);
-      setAvailabilitySettings(null);
-      setExistingBookings([]);
-      setDateExceptions([]);
-      onAvailabilityChange?.();
-      try {
-        const { supabase } = await import('@/lib/supabaseClient');
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
-        if (!session?.access_token) {
-          setLoadingAvailability(false);
-          return;
-        }
-        const res = await fetch('/api/settings', {
-          headers: { Authorization: `Bearer ${session.access_token}` },
-        });
-        if (res.ok) {
-          const result = await res.json();
-          const availability = result.settings?.availability || {};
-          setAvailabilitySettings(
-            resolveAvailabilityForServiceProvider(
-              availability,
-              effectiveProviderId
-            ) as AvailabilitySettings
-          );
-        }
-      } catch (e) {
-        console.error('Error fetching availability settings:', e);
-      } finally {
-        setLoadingAvailability(false);
-      }
-    };
-    fetchAvailability();
+    setLoadingAvailability(true);
+    setAvailabilitySettings(null);
+    setExistingBookings([]);
+    setDateExceptions([]);
+    onAvailabilityChange?.();
+    try {
+      const availability = workspaceSettings?.availability ?? workspaceAvailability ?? {};
+      setAvailabilitySettings(
+        resolveAvailabilityForServiceProvider(
+          availability,
+          effectiveProviderId
+        ) as AvailabilitySettings
+      );
+    } catch (e) {
+      console.error('Error resolving availability settings:', e);
+    } finally {
+      setLoadingAvailability(false);
+    }
   }, [
     effectiveProviderId,
     departments.length,
     loadingDepartments,
     needsExplicitProvider,
     onAvailabilityChange,
+    workspaceSettings,
+    workspaceAvailability,
+    workspaceSettingsLoading,
   ]);
 
   useEffect(() => {
-    const fetchWorkspaceName = async () => {
-      try {
-        const { supabase } = await import('@/lib/supabaseClient');
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
-        if (!session?.access_token) return;
-        const res = await fetch('/api/workspace', {
-          headers: { Authorization: `Bearer ${session.access_token}` },
-        });
-        if (res.ok) {
-          const result = await res.json();
-          if (result.workspace) {
-            if (result.workspace.name) setWorkspaceName(result.workspace.name);
-            if (result.workspace.logo_url) setWorkspaceLogoUrl(result.workspace.logo_url);
-          }
-        }
-      } catch (e) {
-        console.error('Error fetching workspace name:', e);
-      }
-    };
-    fetchWorkspaceName();
-  }, []);
+    if (workspaceSettingsLoading) return;
+    if (cachedWorkspaceName) setWorkspaceName(cachedWorkspaceName);
+    if (cachedWorkspaceLogo) setWorkspaceLogoUrl(cachedWorkspaceLogo);
+  }, [cachedWorkspaceName, cachedWorkspaceLogo, workspaceSettingsLoading]);
 
   useEffect(() => {
     const fetchProviderSettings = async () => {

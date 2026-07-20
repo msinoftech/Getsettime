@@ -1,6 +1,9 @@
 "use client";
 import { useState, useEffect } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import { useAuth } from "@/src/providers/AuthProvider";
+import { useWorkspaceSettings } from "@/src/hooks/useWorkspaceSettings";
+import { sync_settings_response } from "@/src/lib/workspace_shell_sync";
 
 interface Rule {
   id: number;
@@ -28,6 +31,8 @@ interface CustomField {
 }
 
 export default function RoutingForm({ dark = false }) {
+  const { user } = useAuth();
+  const { settings, loading: settingsLoading } = useWorkspaceSettings();
   const [rules, setRules] = useState<Rule[]>([
     { id: 1, condition: "Consultation", timezone: "IST", target: "Deep/Consult" },
     { id: 2, condition: "Demo Call", timezone: "PST", target: "John/Demo" },
@@ -69,11 +74,34 @@ export default function RoutingForm({ dark = false }) {
   const [loading, setLoading] = useState(false);
   const [serviceSearch, setServiceSearch] = useState("");
 
-  // Fetch services and settings on mount
+  // Fetch services on mount; load intake form from workspace settings
   useEffect(() => {
     fetchServices();
-    fetchIntakeFormSettings();
   }, []);
+
+  useEffect(() => {
+    if (settingsLoading) return;
+    if (settings?.intake_form) {
+      const servicesSetting = settings.intake_form.services;
+      setIntakeFormSettings({
+        name: settings.intake_form.name ?? true,
+        email: settings.intake_form.email ?? true,
+        phone: settings.intake_form.phone ?? false,
+        services:
+          typeof servicesSetting === "object" && servicesSetting !== null
+            ? {
+                enabled: servicesSetting.enabled ?? false,
+                allowed_service_ids: servicesSetting.allowed_service_ids ?? [],
+              }
+            : {
+                enabled: false,
+                allowed_service_ids: [],
+              },
+        additional_description: settings.intake_form.additional_description ?? false,
+        custom_fields: (settings.intake_form.custom_fields ?? []) as CustomField[],
+      });
+    }
+  }, [settings, settingsLoading]);
 
   const fetchServices = async () => {
     try {
@@ -92,38 +120,6 @@ export default function RoutingForm({ dark = false }) {
       }
     } catch (error) {
       console.error('Error fetching services:', error);
-    }
-  };
-
-  const fetchIntakeFormSettings = async () => {
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) return;
-
-      const response = await fetch('/api/settings', {
-        headers: {
-          'Authorization': `Bearer ${session.access_token}`,
-        },
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        if (data.settings?.intake_form) {
-          setIntakeFormSettings({
-            name: data.settings.intake_form.name ?? true,
-            email: data.settings.intake_form.email ?? true,
-            phone: data.settings.intake_form.phone ?? false,
-            services: data.settings.intake_form.services ?? {
-              enabled: false,
-              allowed_service_ids: [],
-            },
-            additional_description: data.settings.intake_form.additional_description ?? false,
-            custom_fields: data.settings.intake_form.custom_fields ?? [],
-          });
-        }
-      }
-    } catch (error) {
-      console.error('Error fetching intake form settings:', error);
     }
   };
 
@@ -203,6 +199,8 @@ export default function RoutingForm({ dark = false }) {
       });
 
       if (response.ok) {
+        const result = await response.json();
+        if (user?.id && result.settings) sync_settings_response(user.id, result);
         alert('Intake form settings saved successfully!');
         handleIntakeFormCancel();
       } else {

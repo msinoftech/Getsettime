@@ -17,6 +17,9 @@ import {
 import { FaWhatsapp } from "react-icons/fa";
 import type { IconType } from "react-icons";
 import { useAuth } from "@/src/providers/AuthProvider";
+import { useWorkspaceSettings } from "@/src/hooks/useWorkspaceSettings";
+import { sync_settings_response } from "@/src/lib/workspace_shell_sync";
+import type { WorkspaceSettings } from "@/src/types/workspace";
 import { ConfirmModal } from "@/src/components/ui/ConfirmModal";
 import { RequestIntegrationModal } from "@/src/components/ui/RequestIntegrationModal";
 import { UpgradePlanModal } from "@/src/components/Subscription/UpgradePlanModal";
@@ -463,6 +466,7 @@ export function IntegrationsNotificationsView() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { user } = useAuth();
+  const { settings, loading: settingsLoading } = useWorkspaceSettings();
 
   const [integrations, setIntegrations] = useState<IntegrationStatus>({
     google_calendar: false,
@@ -534,45 +538,25 @@ export function IntegrationsNotificationsView() {
   }, [searchParams]);
 
   useEffect(() => {
-    const loadSettings = async () => {
-      if (!user) {
-        setWorkflowsLoading(false);
-        return;
-      }
+    if (!user) {
+      setWorkflowsLoading(false);
+      return;
+    }
+    if (settingsLoading) return;
 
-      try {
-        const { supabase } = await import("@/lib/supabaseClient");
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
-
-        if (!session?.access_token) {
-          setWorkflowsLoading(false);
-          return;
-        }
-
-        const response = await fetch("/api/settings", {
-          headers: { Authorization: `Bearer ${session.access_token}` },
-        });
-
-        if (response.ok) {
-          const result = await response.json();
-          const general = (result.settings?.general || {}) as Record<string, unknown>;
-          const generalPhone = typeof general.business_phone === "string" ? general.business_phone : "";
-          setBusinessPhone(generalPhone);
-          const notificationSettings = (result.settings?.notifications || {}) as Record<string, boolean | undefined>;
-          setFlows(buildWorkflowFlows(notificationSettings, generalPhone));
-        }
-      } catch (error) {
-        console.error("Error loading notification settings:", error);
-        setFlows(buildWorkflowFlows({}, ""));
-      } finally {
-        setWorkflowsLoading(false);
-      }
-    };
-
-    loadSettings();
-  }, [user]);
+    try {
+      const general = (settings?.general || {}) as Record<string, unknown>;
+      const generalPhone = typeof general.business_phone === "string" ? general.business_phone : "";
+      setBusinessPhone(generalPhone);
+      const notificationSettings = (settings?.notifications || {}) as Record<string, boolean | undefined>;
+      setFlows(buildWorkflowFlows(notificationSettings, generalPhone));
+    } catch (error) {
+      console.error("Error loading notification settings:", error);
+      setFlows(buildWorkflowFlows({}, ""));
+    } finally {
+      setWorkflowsLoading(false);
+    }
+  }, [user, settings, settingsLoading]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -613,20 +597,23 @@ export function IntegrationsNotificationsView() {
         }),
       });
 
+      const result = await response.json().catch(() => ({})) as {
+        error?: string;
+        upgradeRequired?: boolean;
+        settings?: WorkspaceSettings | null;
+      };
+
       if (!response.ok) {
-        const errBody = (await response.json().catch(() => ({}))) as {
-          error?: string;
-          upgradeRequired?: boolean;
-        };
-        if (errBody.upgradeRequired) {
+        if (result.upgradeRequired) {
           setUpgradeModalMessage(
-            errBody.error || "Available on paid plans. Upgrade to continue."
+            result.error || "Available on paid plans. Upgrade to continue."
           );
           setUpgradeModalOpen(true);
           return false;
         }
-        throw new Error(errBody.error || "Failed to save notification settings");
+        throw new Error(result.error || "Failed to save notification settings");
       }
+      if (user.id && result.settings) sync_settings_response(user.id, result);
       return true;
     } catch (error) {
       console.error("Error saving notification settings:", error);

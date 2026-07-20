@@ -4,6 +4,7 @@ import { useCallback } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { useAuth } from "@/src/providers/AuthProvider";
 import { useWorkspaceSettings } from "@/src/hooks/useWorkspaceSettings";
+import { sync_settings_response } from "@/src/lib/workspace_shell_sync";
 import { TIMEZONE_OPTIONS } from "@/src/constants/timezone";
 import { MANAGE_ROLES } from "@/src/constants/roles";
 import { TimezoneSelector } from "@/src/components/ui/TimezoneSelector";
@@ -31,7 +32,7 @@ function format_dashboard_label(tz: string): string {
 
 export default function DashboardTimezoneSelect() {
   const { user } = useAuth();
-  const { general, settings, refetch } = useWorkspaceSettings();
+  const { general, settings } = useWorkspaceSettings();
 
   const role = (user?.user_metadata?.role as string | undefined) ?? "";
   const can_edit = MANAGE_ROLES.includes(role);
@@ -60,11 +61,11 @@ export default function DashboardTimezoneSelect() {
           settings: { general: { timezone: value || undefined } },
         }),
       });
-      if (!res.ok) throw new Error("Failed to update timezone");
-
-      await refetch();
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || "Failed to update timezone");
+      if (user?.id && result.settings) sync_settings_response(user.id, result);
     },
-    [refetch],
+    [user?.id],
   );
 
   return (

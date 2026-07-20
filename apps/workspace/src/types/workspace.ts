@@ -121,6 +121,18 @@ export type WorkspaceSettings = {
   localization?: localization_settings;
 };
 
+export type workspace_shell_patch = {
+  settings?: WorkspaceSettings;
+  workspace?: {
+    name?: string | null;
+    slug?: string | null;
+    logo_url?: string | null;
+    profession_name?: string | null;
+    type?: string | null;
+    admin_professions_id?: number | null;
+  };
+};
+
 export type WorkspaceSettingsHook = {
   settings: WorkspaceSettings;
   general: GeneralSettings;
@@ -135,8 +147,12 @@ export type WorkspaceSettingsHook = {
   workspaceSlug?: string | null;
   /** Logged-in service provider link slug at `/{workspaceSlug}/{slug}` */
   serviceProviderLinkSlug?: string | null;
+  /** Catalog profession id from workspace.professions.admin_professions_id */
+  workspaceAdminProfessionsId?: number | null;
   loading: boolean;
   error: Error | null;
   refetch: () => Promise<void>;
+  /** Merge settings/workspace into provider state + localStorage without a network GET */
+  applyPatch: (partial: workspace_shell_patch) => void;
 };
 

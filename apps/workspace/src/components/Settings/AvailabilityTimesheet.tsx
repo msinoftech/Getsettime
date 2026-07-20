@@ -11,6 +11,8 @@ import {
 } from "react-icons/lu";
 import { AvailabilityGeneralSkeleton } from '@/src/components/ui/AvailabilityGeneralSkeleton';
 import { convertWallClockHHmm } from '@/src/utils/timezone';
+import { sync_settings_response } from '@/src/lib/workspace_shell_sync';
+import type { WorkspaceSettings } from '@/src/types/workspace';
 
 type DayName = "Mon" | "Tue" | "Wed" | "Thu" | "Fri" | "Sat" | "Sun";
 
@@ -45,6 +47,8 @@ interface AvailabilityTimesheetProps {
   onSaveFeedback?: (payload: availability_timesheet_save_feedback) => void;
   /** When provided, skips the initial settings fetch and uses this data instead */
   initialTimesheet?: Record<string, DaySchedule> | null;
+  /** Cached workspace settings from provider (dashboard). When absent, GET is used (e.g. register). */
+  workspaceSettings?: WorkspaceSettings | null;
   /** When set, load/save under availability.providers[userId] via provider-availability API (service provider self) */
   providerUserId?: string;
   /** When set, load/save under availability.providers[userId] via workspace settings API (workspace admin) */
@@ -235,6 +239,7 @@ const AvailabilityTimesheet = forwardRef<
     onSave,
     onSaveFeedback,
     initialTimesheet,
+    workspaceSettings,
     providerUserId,
     saveAsProviderId,
     onEditPanelOpenChange,
@@ -411,17 +416,22 @@ const AvailabilityTimesheet = forwardRef<
       data: { session },
     } = await supabase.auth.getSession();
     const token = session?.access_token;
+    const userId = session?.user?.id;
 
     if (saveAsProviderId) {
-      const getResponse = await fetch('/api/settings', {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-
       let existingSettings: Record<string, unknown> = {};
-      if (getResponse.ok) {
-        const payload = await getResponse.json();
-        existingSettings =
-          (payload?.settings ?? payload?.data?.settings ?? {}) as Record<string, unknown>;
+      if (workspaceSettings) {
+        existingSettings = workspaceSettings as Record<string, unknown>;
+      } else {
+        const getResponse = await fetch('/api/settings', {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
+
+        if (getResponse.ok) {
+          const payload = await getResponse.json();
+          existingSettings =
+            (payload?.settings ?? payload?.data?.settings ?? {}) as Record<string, unknown>;
+        }
       }
 
       const existingAvailability = (existingSettings.availability ?? {}) as Record<
@@ -457,11 +467,14 @@ const AvailabilityTimesheet = forwardRef<
         body: JSON.stringify({ settings: updatedSettings }),
       });
 
+      const result = await response.json().catch(() => ({}));
       if (!response.ok) {
-        const result = await response.json().catch(() => ({}));
         throw new Error(
           (result as { error?: string }).error || 'Failed to save provider availability'
         );
+      }
+      if (userId && (result as { settings?: WorkspaceSettings }).settings) {
+        sync_settings_response(userId, result as { settings?: WorkspaceSettings | null });
       }
       return;
     }
@@ -482,6 +495,36 @@ const AvailabilityTimesheet = forwardRef<
           (result as { error?: string }).error || 'Failed to save provider availability'
         );
       }
+      // provider-availability returns { ok: true } — merge into cache from known payload
+      if (userId && workspaceSettings) {
+        const existingAvailability = (workspaceSettings.availability ?? {}) as Record<
+          string,
+          unknown
+        >;
+        const existingProviders = (existingAvailability.providers ?? {}) as Record<
+          string,
+          unknown
+        >;
+        sync_settings_response(userId, {
+          settings: {
+            ...workspaceSettings,
+            availability: {
+              ...existingAvailability,
+              providers: {
+                ...existingProviders,
+                [providerUserId]: {
+                  ...(typeof existingProviders[providerUserId] === 'object' &&
+                  existingProviders[providerUserId] !== null
+                    ? (existingProviders[providerUserId] as Record<string, unknown>)
+                    : {}),
+                  timesheet,
+                  lastUpdated: new Date().toISOString(),
+                },
+              },
+            },
+          } as WorkspaceSettings,
+        });
+      }
       return;
     }
 
@@ -500,11 +543,14 @@ const AvailabilityTimesheet = forwardRef<
       body: JSON.stringify({ settings: settingsPayload }),
     });
 
+    const result = await response.json().catch(() => ({}));
     if (!response.ok) {
-      const result = await response.json().catch(() => ({}));
       throw new Error(
         (result as { error?: string }).error || 'Failed to save availability timesheet'
       );
+    }
+    if (userId && (result as { settings?: WorkspaceSettings }).settings) {
+      sync_settings_response(userId, result as { settings?: WorkspaceSettings | null });
     }
   };
 
@@ -549,44 +595,57 @@ const AvailabilityTimesheet = forwardRef<
 
   const loadAvailability = async () => {
     try {
-      const { supabase } = await import('@/lib/supabaseClient');
-      const { data: { session } } = await supabase.auth.getSession();
-      const token = session?.access_token;
+      type availability_blob = {
+        timesheet?: Record<string, DaySchedule> | null;
+        providers?: Record<string, { timesheet?: Record<string, DaySchedule> }>;
+      };
+      let availability: availability_blob | undefined;
 
-      const response = await fetch('/api/settings', {
-        headers: token ? {
-          'Authorization': `Bearer ${token}`,
-        } : {},
-      });
+      if (workspaceSettings) {
+        availability = workspaceSettings.availability as availability_blob | undefined;
+      } else {
+        const { supabase } = await import('@/lib/supabaseClient');
+        const { data: { session } } = await supabase.auth.getSession();
+        const token = session?.access_token;
 
-      if (response.ok) {
-        const data = await response.json();
-        const availability = data?.settings?.availability;
-        const providerIdForLoad = saveAsProviderId ?? providerUserId;
-        const providerEntry = providerIdForLoad
-          ? availability?.providers?.[providerIdForLoad]
-          : undefined;
-        const providerTimesheet = providerEntry?.timesheet;
-        let patch: Record<string, DaySchedule> | undefined;
-        if (
-          providerIdForLoad &&
-          providerTimesheet &&
-          Object.keys(providerTimesheet).length > 0
-        ) {
-          patch = providerTimesheet;
-        } else if (availability?.timesheet && Object.keys(availability.timesheet).length > 0) {
-          patch = availability.timesheet;
+        const response = await fetch('/api/settings', {
+          headers: token ? {
+            'Authorization': `Bearer ${token}`,
+          } : {},
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          availability = data?.settings?.availability;
+        } else if (response.status === 404) {
+          console.log('Settings API not found, using default schedules');
+          return;
+        } else {
+          return;
         }
+      }
 
-        if (patch) {
-          const currentSnap = schedulesRef.current;
-          const next = { ...currentSnap, ...patch } as Record<DayName, DaySchedule>;
-          setSchedules(next);
-          setSavedSchedules(cloneSchedules(next));
-        }
-      } else if (response.status === 404) {
-        // API route doesn't exist yet, use default schedules
-        console.log('Settings API not found, using default schedules');
+      const providerIdForLoad = saveAsProviderId ?? providerUserId;
+      const providerEntry = providerIdForLoad
+        ? availability?.providers?.[providerIdForLoad]
+        : undefined;
+      const providerTimesheet = providerEntry?.timesheet;
+      let patch: Record<string, DaySchedule> | undefined;
+      if (
+        providerIdForLoad &&
+        providerTimesheet &&
+        Object.keys(providerTimesheet).length > 0
+      ) {
+        patch = providerTimesheet;
+      } else if (availability?.timesheet && Object.keys(availability.timesheet).length > 0) {
+        patch = availability.timesheet;
+      }
+
+      if (patch) {
+        const currentSnap = schedulesRef.current;
+        const next = { ...currentSnap, ...patch } as Record<DayName, DaySchedule>;
+        setSchedules(next);
+        setSavedSchedules(cloneSchedules(next));
       }
     } catch (error) {
       console.error('Error loading availability timesheet:', error);

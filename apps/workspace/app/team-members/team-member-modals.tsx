@@ -53,6 +53,32 @@ function ModalErrorBanner({ error }: { error: string | null }) {
   );
 }
 
+function ModalSuccessBanner({ success }: { success: string | null }) {
+  if (!success) return null;
+
+  return (
+    <div className="rounded-xl border border-green-200 bg-green-50 p-3">
+      <div className="flex items-start gap-2">
+        <svg
+          className="mt-0.5 h-4 w-4 shrink-0 text-green-600"
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+          aria-hidden
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
+          />
+        </svg>
+        <p className="text-sm text-green-800">{success}</p>
+      </div>
+    </div>
+  );
+}
+
 function InviteLinkCopyBlock({
   inviteUrl,
   variant,
@@ -238,6 +264,13 @@ function getEditablePrimaryRoleOptions(
         r.value === ROLE_STAFF ||
         r.value === ROLE_MANAGER
     );
+  }
+
+  if (
+    !member.is_workspace_owner &&
+    member.role === ROLE_STAFF
+  ) {
+    options = options.filter((r) => r.value !== ROLE_CUSTOMER);
   }
 
   return options;
@@ -688,6 +721,7 @@ export function StaffInviteModal({
 export function EditTeamMemberModal({
   open,
   loading,
+  success = null,
   editingMember,
   departments,
   memberFormData,
@@ -705,6 +739,7 @@ export function EditTeamMemberModal({
 }: {
   open: boolean;
   loading: boolean;
+  success?: string | null;
   editingMember: TeamMember;
   departments: Department[];
   memberFormData: MemberFormData;
@@ -776,6 +811,7 @@ export function EditTeamMemberModal({
 
         <form onSubmit={onSubmit} className="flex min-h-0 flex-1 flex-col">
           <div className="flex-1 space-y-6 overflow-y-auto px-6 py-5">
+            <ModalSuccessBanner success={success} />
             <div className="grid gap-4 sm:grid-cols-2">
               <div>
                 <label className="mb-2 block text-sm font-medium text-slate-700">
@@ -1007,6 +1043,7 @@ export function EditTeamMemberModal({
 export function ManageRoleModal({
   open,
   loading,
+  success = null,
   member,
   departments,
   memberFormData,
@@ -1023,6 +1060,7 @@ export function ManageRoleModal({
 }: {
   open: boolean;
   loading: boolean;
+  success?: string | null;
   member: TeamMember;
   departments: Department[];
   memberFormData: MemberFormData;
@@ -1072,7 +1110,7 @@ export function ManageRoleModal({
             </span>
             <div>
               <h2 className="text-xl font-semibold tracking-tight text-slate-900 md:text-2xl">
-                Manage Role
+                Manage Role1
               </h2>
               <p className="mt-1 text-sm text-slate-600">
                 Update role access and department permissions for{" "}
@@ -1092,6 +1130,7 @@ export function ManageRoleModal({
 
         <form onSubmit={onSubmit} className="flex min-h-0 flex-1 flex-col">
           <div className="flex-1 space-y-6 overflow-y-auto px-6 py-5">
+            <ModalSuccessBanner success={success} />
             <div>
               <label className="mb-2 block text-sm font-medium text-slate-700">
                 Role <span className="text-red-500">*</span>

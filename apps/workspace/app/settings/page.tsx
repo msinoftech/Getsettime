@@ -25,6 +25,11 @@ import {
 } from "@/src/utils/public_booking_link";
 import { is_whatsapp_user_enabled } from "@/lib/workspace-notification-flags";
 import type { workspace_notifications_settings } from "@/lib/workspace-notification-flags";
+import {
+  sync_settings_response,
+  sync_workspace_response,
+} from "@/src/lib/workspace_shell_sync";
+import type { WorkspaceSettings } from "@/src/types/workspace";
 
 type settings_icon_name =
   | "palette"
@@ -155,7 +160,15 @@ export default function SettingsPage() {
   const router = useRouter();
   const { user } = useAuth();
   const { open: open_create_booking } = useCreateBookingModal();
-  const { refetch: refetchWorkspaceShell } = useWorkspaceSettings();
+  const {
+    settings: shellSettings,
+    workspaceName: shellWorkspaceName,
+    workspaceLogo: shellWorkspaceLogo,
+    workspaceSlug: shellWorkspaceSlug,
+    serviceProviderLinkSlug,
+    loading: shellLoading,
+    applyPatch,
+  } = useWorkspaceSettings();
   const bookingHost = useMemo(() => get_public_booking_host(), []);
   const userRole = user?.user_metadata?.role as string | undefined;
   const isServiceProvider = userRole === ROLE_SERVICE_PROVIDER;
@@ -279,16 +292,16 @@ export default function SettingsPage() {
     setLinkError(null);
   };
 
-  const loadSettings = async () => {
+  const buildSnapshotFromShell = (): snapshot => {
     const snap: snapshot = {
-      accountName: "",
-      workspaceSlug: "",
+      accountName: shellWorkspaceName || "",
+      workspaceSlug: shellWorkspaceSlug || "",
       serviceProviderSlug: "",
       primaryColor: "#2ECC71",
       accentColor: "#673AB7",
       timezone: "",
       logoFileName: "No file selected",
-      logoUrl: null,
+      logoUrl: shellWorkspaceLogo || null,
       tagline: "",
       businessEmail: "",
       businessPhone: "",
@@ -311,165 +324,108 @@ export default function SettingsPage() {
       whatsappReminder: true,
     };
 
-    try {
-      const { supabase } = await import("@/lib/supabaseClient");
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-
-      if (!session?.access_token) {
-        setIsLoading(false);
-        return;
-      }
-
-      const token = session.access_token;
-
-      const workspaceResponse = await fetch("/api/workspace", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      if (!workspaceResponse.ok) {
-        const errorData = await workspaceResponse.json().catch(() => ({}));
-        console.error("Failed to load workspace:", errorData);
-        throw new Error(errorData.error || "Failed to load workspace data");
-      }
-
-      const workspaceData = await workspaceResponse.json();
-      if (workspaceData?.workspace) {
-        const workspace = workspaceData.workspace;
-        snap.accountName = workspace.name || "";
-        snap.workspaceSlug = workspace.slug || "";
-
-        if (workspace.logo_url) {
-          snap.logoUrl = workspace.logo_url;
-          const urlParts = workspace.logo_url.split("/");
-          const fileName = urlParts[urlParts.length - 1];
-          snap.logoFileName = fileName || "No file selected";
-        } else {
-          snap.logoUrl = null;
-          snap.logoFileName = "No file selected";
-        }
-      }
-
-      const settingsResponse = await fetch("/api/settings", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      if (settingsResponse.ok) {
-        const data = await settingsResponse.json();
-        if (data?.settings) {
-          const settings = data.settings;
-          const general = (settings.general || {}) as Record<string, unknown>;
-          if (typeof general.primaryColor === "string") {
-            snap.primaryColor = general.primaryColor;
-          }
-          if (typeof general.accentColor === "string") {
-            snap.accentColor = general.accentColor;
-          }
-          snap.timezone =
-            typeof general.timezone === "string" ? general.timezone : "";
-
-          if (typeof general.tagline === "string") {
-            snap.tagline = general.tagline;
-          }
-          if (typeof general.business_email === "string") {
-            snap.businessEmail = general.business_email;
-          }
-          if (typeof general.business_phone === "string") {
-            snap.businessPhone = general.business_phone;
-          }
-          if (typeof general.address === "string") {
-            snap.address = general.address;
-          }
-          if (typeof general.city === "string") {
-            snap.city = general.city;
-          }
-          if (typeof general.state === "string") {
-            snap.addressState = general.state;
-          }
-          if (typeof general.zipcode === "string") {
-            snap.zipcode = general.zipcode;
-          }
-          if (typeof general.country === "string") {
-            snap.country = general.country;
-          }
-          if (
-            typeof general.date_format === "string" &&
-            DATE_FORMAT_OPTIONS.includes(
-              general.date_format as (typeof DATE_FORMAT_OPTIONS)[number]
-            )
-          ) {
-            snap.dateFormat = general.date_format;
-          }
-          if (
-            typeof general.time_format === "string" &&
-            TIME_FORMAT_OPTIONS.includes(
-              general.time_format as (typeof TIME_FORMAT_OPTIONS)[number]
-            )
-          ) {
-            snap.timeFormat = general.time_format;
-          }
-          if (
-            typeof general.default_language === "string" &&
-            LANGUAGE_OPTIONS.includes(
-              general.default_language as (typeof LANGUAGE_OPTIONS)[number]
-            )
-          ) {
-            snap.language = general.default_language;
-          }
-          if (
-            typeof general.currency === "string" &&
-            CURRENCY_OPTIONS.includes(
-              general.currency as (typeof CURRENCY_OPTIONS)[number]
-            )
-          ) {
-            snap.currency = general.currency;
-          }
-          if (typeof general.booking_page_gradient === "boolean") {
-            snap.useGradientBookingBg = general.booking_page_gradient;
-          }
-          if (typeof general.rounded_ui_style === "boolean") {
-            snap.roundedUiStyle = general.rounded_ui_style;
-          }
-          if (typeof general.allow_customer_reschedule === "boolean") {
-            snap.allowReschedule = general.allow_customer_reschedule;
-          }
-          if (typeof general.allow_customer_cancellation === "boolean") {
-            snap.allowCancellation = general.allow_customer_cancellation;
-          }
-
-          const notifications = (settings.notifications || {}) as Record<
-            string,
-            unknown
-          >;
-          snap.autoConfirm = notifications["auto-confirm-booking"] === true;
-          snap.emailReminder = notifications["email-reminder"] !== false;
-          snap.smsReminder = notifications["sms-reminder"] !== false;
-          snap.whatsappReminder = is_whatsapp_user_enabled(
-            notifications as workspace_notifications_settings
-          );
-
-          const {
-            data: { user: authUser },
-          } = await supabase.auth.getUser();
-          const authRole = authUser?.user_metadata?.role as string | undefined;
-          if (authRole === ROLE_SERVICE_PROVIDER && authUser?.id) {
-            const links = (settings.links || {}) as Record<
-              string,
-              { slug?: string }
-            >;
-            snap.serviceProviderSlug = links[authUser.id]?.slug ?? "";
-          }
-        }
-      }
-
-      snapshotRef.current = snap;
-      applySnapshot(snap);
-    } catch (error) {
-      console.error("Error loading settings:", error);
-    } finally {
-      setIsLoading(false);
+    if (shellWorkspaceLogo) {
+      const urlParts = shellWorkspaceLogo.split("/");
+      const fileName = urlParts[urlParts.length - 1];
+      snap.logoFileName = fileName || "No file selected";
     }
+
+    const settings = shellSettings as WorkspaceSettings;
+    const general = (settings.general || {}) as Record<string, unknown>;
+    if (typeof general.primaryColor === "string") {
+      snap.primaryColor = general.primaryColor;
+    }
+    if (typeof general.accentColor === "string") {
+      snap.accentColor = general.accentColor;
+    }
+    snap.timezone = typeof general.timezone === "string" ? general.timezone : "";
+
+    if (typeof general.tagline === "string") {
+      snap.tagline = general.tagline;
+    }
+    if (typeof general.business_email === "string") {
+      snap.businessEmail = general.business_email;
+    }
+    if (typeof general.business_phone === "string") {
+      snap.businessPhone = general.business_phone;
+    }
+    if (typeof general.address === "string") {
+      snap.address = general.address;
+    }
+    if (typeof general.city === "string") {
+      snap.city = general.city;
+    }
+    if (typeof general.state === "string") {
+      snap.addressState = general.state;
+    }
+    if (typeof general.zipcode === "string") {
+      snap.zipcode = general.zipcode;
+    }
+    if (typeof general.country === "string") {
+      snap.country = general.country;
+    }
+    if (
+      typeof general.date_format === "string" &&
+      DATE_FORMAT_OPTIONS.includes(
+        general.date_format as (typeof DATE_FORMAT_OPTIONS)[number]
+      )
+    ) {
+      snap.dateFormat = general.date_format;
+    }
+    if (
+      typeof general.time_format === "string" &&
+      TIME_FORMAT_OPTIONS.includes(
+        general.time_format as (typeof TIME_FORMAT_OPTIONS)[number]
+      )
+    ) {
+      snap.timeFormat = general.time_format;
+    }
+    if (
+      typeof general.default_language === "string" &&
+      LANGUAGE_OPTIONS.includes(
+        general.default_language as (typeof LANGUAGE_OPTIONS)[number]
+      )
+    ) {
+      snap.language = general.default_language;
+    }
+    if (
+      typeof general.currency === "string" &&
+      CURRENCY_OPTIONS.includes(
+        general.currency as (typeof CURRENCY_OPTIONS)[number]
+      )
+    ) {
+      snap.currency = general.currency;
+    }
+    if (typeof general.booking_page_gradient === "boolean") {
+      snap.useGradientBookingBg = general.booking_page_gradient;
+    }
+    if (typeof general.rounded_ui_style === "boolean") {
+      snap.roundedUiStyle = general.rounded_ui_style;
+    }
+    if (typeof general.allow_customer_reschedule === "boolean") {
+      snap.allowReschedule = general.allow_customer_reschedule;
+    }
+    if (typeof general.allow_customer_cancellation === "boolean") {
+      snap.allowCancellation = general.allow_customer_cancellation;
+    }
+
+    const notifications = (settings.notifications || {}) as Record<string, unknown>;
+    snap.autoConfirm = notifications["auto-confirm-booking"] === true;
+    snap.emailReminder = notifications["email-reminder"] !== false;
+    snap.smsReminder = notifications["sms-reminder"] !== false;
+    snap.whatsappReminder = is_whatsapp_user_enabled(
+      notifications as workspace_notifications_settings
+    );
+
+    if (isServiceProvider && loggedInUserId) {
+      snap.serviceProviderSlug =
+        serviceProviderLinkSlug ||
+        ((settings.links || {}) as Record<string, { slug?: string }>)[loggedInUserId]
+          ?.slug ||
+        "";
+    }
+
+    return snap;
   };
 
   const handleLogoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -515,7 +471,9 @@ export default function SettingsPage() {
       }
       setSaveMessage({ type: "success", text: "Logo uploaded successfully." });
       setTimeout(() => setSaveMessage(null), 2500);
-      void refetchWorkspaceShell();
+      if (user?.id && typeof result.url === "string") {
+        applyPatch({ workspace: { logo_url: result.url } });
+      }
     } catch (error) {
       console.error("Error uploading logo:", error);
       setSaveMessage({
@@ -566,7 +524,9 @@ export default function SettingsPage() {
       }
       setSaveMessage({ type: "success", text: "Logo removed successfully." });
       setTimeout(() => setSaveMessage(null), 2500);
-      void refetchWorkspaceShell();
+      if (user?.id) {
+        applyPatch({ workspace: { logo_url: null } });
+      }
     } catch (error) {
       console.error("Error removing logo:", error);
       setSaveMessage({
@@ -647,9 +607,13 @@ export default function SettingsPage() {
           throw new Error(message);
         }
 
+        const providerSettingsResult = await settingsResponse.json().catch(() => ({}));
+        if (user?.id && providerSettingsResult.settings) {
+          sync_settings_response(user.id, providerSettingsResult);
+        }
+
         setSaveMessage({ type: "success", text: "Provider link saved successfully!" });
         setTimeout(() => setSaveMessage(null), 3000);
-        void refetchWorkspaceShell();
         snapshotRef.current = {
           ...(snapshotRef.current ?? {
             accountName: "",
@@ -702,6 +666,11 @@ export default function SettingsPage() {
       if (!workspaceResponse.ok) {
         const result = await workspaceResponse.json().catch(() => ({}));
         throw new Error(result.error || "Failed to save workspace settings");
+      }
+
+      const workspaceResult = await workspaceResponse.json().catch(() => ({}));
+      if (user?.id && workspaceResult.workspace) {
+        sync_workspace_response(user.id, workspaceResult);
       }
 
       const settingsData: {
@@ -760,9 +729,13 @@ export default function SettingsPage() {
         throw new Error(message);
       }
 
+      const settingsResult = await settingsResponse.json().catch(() => ({}));
+      if (user?.id && settingsResult.settings) {
+        sync_settings_response(user.id, settingsResult);
+      }
+
       setSaveMessage({ type: "success", text: "Settings saved successfully!" });
       setTimeout(() => setSaveMessage(null), 3000);
-      void refetchWorkspaceShell();
       snapshotRef.current = {
         accountName,
         workspaceSlug,
@@ -819,9 +792,14 @@ export default function SettingsPage() {
   };
 
   useEffect(() => {
-    void loadSettings();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- load once on mount
-  }, []);
+    if (shellLoading) return;
+    const snap = buildSnapshotFromShell();
+    snapshotRef.current = snap;
+    applySnapshot(snap);
+    setIsLoading(false);
+    // Hydrate once when shell finishes loading — avoid re-applying while user edits
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shellLoading]);
 
   // When linked from another page (e.g. #business-phone), scroll to and focus the field.
   useEffect(() => {

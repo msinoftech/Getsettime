@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useEffect, useRef, type FormEvent } from "react";
+import { useMemo, useState, useEffect, useRef, useCallback, type FormEvent } from "react";
 import {
   LuCalendarDays as CalendarDays,
   LuPencil as Edit3,
@@ -186,7 +186,12 @@ function format_duration_short(totalMinutes: number | null): string {
 
 export default function EventTypes() {
   const { user } = useAuth();
-  const { general } = useWorkspaceSettings();
+  const {
+    general,
+    settings: workspace_shell_settings,
+    workspaceSlug: cachedWorkspaceSlug,
+    loading: workspaceSettingsLoading,
+  } = useWorkspaceSettings();
   const user_role =
     typeof user?.user_metadata?.role === "string" ? user.user_metadata.role : "";
   const isStaffUser = user_role === ROLE_STAFF;
@@ -199,14 +204,14 @@ export default function EventTypes() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [open_menu_id, set_open_menu_id] = useState<number | null>(null);
   const [panel_animated_open, set_panel_animated_open] = useState(false);
-  const [workspaceSlug, setWorkspaceSlug] = useState<string>("");
+  const workspaceSlug = (cachedWorkspaceSlug ?? "").trim();
   const [providerLinks, setProviderLinks] = useState<workspace_provider_links_settings>({});
   const [serviceProviderOwnerIds, setServiceProviderOwnerIds] = useState<Set<string>>(
     () => new Set()
   );
   const [teamDeactivatedServiceProviderIds, setTeamDeactivatedServiceProviderIds] =
     useState<Set<string>>(() => new Set());
-  const [loadingSlug, setLoadingSlug] = useState(true);
+  const loadingSlug = workspaceSettingsLoading;
   const [copiedId, setCopiedId] = useState<number | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
   const [alertMessage, setAlertMessage] = useState<string | null>(null);
@@ -276,13 +281,27 @@ export default function EventTypes() {
   const default_service_provider_id_for_new_form =
     auto_select_self_as_service_provider && user?.id ? user.id : "";
 
-  const empty_form = (): event_type_form_state => {
+  const build_settings_derived_form_fields = useCallback((): Pick<
+    event_type_form_state,
+    "is_public" | "location_types"
+  > => {
     const default_location_for_form =
       default_location_types.length > 0
         ? default_location_types
         : event_settings.default_location === "custom"
           ? []
           : [event_settings.default_location];
+    return {
+      is_public: event_settings.default_visibility === "public",
+      location_types: default_location_for_form,
+    };
+  }, [
+    default_location_types,
+    event_settings.default_location,
+    event_settings.default_visibility,
+  ]);
+
+  const empty_form = useCallback((): event_type_form_state => {
     return {
       title: "",
       slug: "",
@@ -291,40 +310,44 @@ export default function EventTypes() {
       duration_minutes_part: "",
       buffer_before: "",
       buffer_after: "",
-      location_types: default_location_for_form,
-      is_public: event_settings.default_visibility === "public",
+      ...build_settings_derived_form_fields(),
       status: "active",
       service_provider_id: default_service_provider_id_for_new_form,
     };
-  };
+  }, [build_settings_derived_form_fields, default_service_provider_id_for_new_form]);
 
-  const [form, setForm] = useState<event_type_form_state>(empty_form);
+  const apply_settings_defaults_to_create_form = useCallback(() => {
+    const derived = build_settings_derived_form_fields();
+    setForm((prev) => ({
+      ...prev,
+      is_public: derived.is_public,
+      location_types: derived.location_types,
+    }));
+  }, [build_settings_derived_form_fields]);
 
-  const fetchWorkspaceSlug = async () => {
-    setLoadingSlug(true);
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session?.access_token) return;
-      const response = await fetch("/api/workspace/slug", {
-        method: "GET",
-        headers: { Authorization: `Bearer ${session.access_token}` },
-      });
-      if (!response.ok) return;
-      const result = await response.json();
-      if (result.slug) setWorkspaceSlug(result.slug);
-    } catch (err) {
-      console.error("Exception fetching workspace slug:", err);
-    } finally {
-      setLoadingSlug(false);
-    }
-  };
+  const [form, setForm] = useState<event_type_form_state>(() => ({
+    title: "",
+    slug: "",
+    short_description: "",
+    duration_hours: "",
+    duration_minutes_part: "",
+    buffer_before: "",
+    buffer_after: "",
+    location_types: [],
+    is_public: true,
+    status: "active",
+    service_provider_id: "",
+  }));
 
   useEffect(() => {
     if (!user) return;
     fetchEventTypes();
-    fetchWorkspaceSlug();
-    load_event_settings();
   }, [user]);
+
+  useEffect(() => {
+    if (!user || workspaceSettingsLoading) return;
+    void load_event_settings();
+  }, [user, workspaceSettingsLoading, workspace_shell_settings]);
 
   useEffect(() => {
     if (open_menu_id === null) return;
@@ -353,6 +376,16 @@ export default function EventTypes() {
     );
   }, [showForm, default_service_provider_id_for_new_form]);
 
+  useEffect(() => {
+    if (!settings_loaded || !showForm || editingId !== null) return;
+    apply_settings_defaults_to_create_form();
+  }, [
+    settings_loaded,
+    showForm,
+    editingId,
+    apply_settings_defaults_to_create_form,
+  ]);
+
   const load_event_settings = async () => {
     try {
       const isServiceProvider =
@@ -375,14 +408,7 @@ export default function EventTypes() {
         }
       }
 
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session?.access_token) return;
-      const response = await fetch("/api/settings", {
-        headers: { Authorization: `Bearer ${session.access_token}` },
-      });
-      if (!response.ok) return;
-      const body = await response.json();
-      const workspace_settings = (body?.settings ?? {}) as Record<string, unknown>;
+      const workspace_settings = (workspace_shell_settings ?? {}) as Record<string, unknown>;
       setProviderLinks(parse_workspace_provider_links(workspace_settings.links));
       const rawMeetingOptions = workspace_settings.meeting_options as
         | Record<string, unknown>
@@ -785,6 +811,9 @@ export default function EventTypes() {
         );
       } else {
         set_settings_saved_message("View settings saved successfully.");
+        if (showForm && editingId === null) {
+          apply_settings_defaults_to_create_form();
+        }
       }
     } catch (err) {
       const message =

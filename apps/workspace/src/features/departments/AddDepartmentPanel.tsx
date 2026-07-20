@@ -26,6 +26,7 @@ import {
 } from "@/src/features/departments/DepartmentPanelPrimitives";
 import { useServiceProviders, useUserDepartments } from "@/src/hooks/useBookingLookups";
 import { useAuth } from "@/src/providers/AuthProvider";
+import { useWorkspaceSettings } from "@/src/hooks/useWorkspaceSettings";
 import type { ServiceProvider } from "@/src/types/booking-entities";
 
 const DESCRIPTION_MAX_LENGTH = 150;
@@ -91,6 +92,7 @@ export function AddDepartmentPanel({
   onCreated,
 }: AddDepartmentPanelProps) {
   const { user } = useAuth();
+  const { workspaceAdminProfessionsId } = useWorkspaceSettings();
   const { data: serviceProviders } = useServiceProviders();
   const { byUser: deptIdsByProvider, refetch: refetchUserDepartments } =
     useUserDepartments();
@@ -112,9 +114,7 @@ export function AddDepartmentPanel({
     []
   );
   const [suggestions, setSuggestions] = useState<string[]>([]);
-  const [adminProfessionsId, setAdminProfessionsId] = useState<number | null>(
-    null
-  );
+  const adminProfessionsId = workspaceAdminProfessionsId ?? null;
   const [serviceSuggestions, setServiceSuggestions] = useState<string[]>([]);
 
   const [departmentName, setDepartmentName] = useState("");
@@ -157,14 +157,11 @@ export function AddDepartmentPanel({
     if (!token) return;
 
     try {
-      const [deptRes, servicesRes, workspaceRes] = await Promise.all([
+      const [deptRes, servicesRes] = await Promise.all([
         fetch("/api/departments", {
           headers: { Authorization: `Bearer ${token}` },
         }),
         fetch("/api/services", {
-          headers: { Authorization: `Bearer ${token}` },
-        }),
-        fetch("/api/workspace", {
           headers: { Authorization: `Bearer ${token}` },
         }),
       ]);
@@ -186,32 +183,26 @@ export function AddDepartmentPanel({
         setWorkspaceServices(list.filter((s) => s.flag !== false));
       }
 
-      if (workspaceRes.ok) {
-        const workspaceData = await workspaceRes.json();
-        const adminProfessionsId: number | null =
-          workspaceData?.workspace?.admin_professions_id ?? null;
-        setAdminProfessionsId(adminProfessionsId);
-        if (!adminProfessionsId) {
-          setSuggestions([]);
-        } else {
-          const catalogRes = await fetch(
-            `/api/catalog/departments?profession_id=${adminProfessionsId}`,
-            { headers: { Authorization: `Bearer ${token}` } }
+      if (!adminProfessionsId) {
+        setSuggestions([]);
+      } else {
+        const catalogRes = await fetch(
+          `/api/catalog/departments?profession_id=${adminProfessionsId}`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        if (catalogRes.ok) {
+          const catalogData = await catalogRes.json();
+          setSuggestions(
+            Array.isArray(catalogData?.departments)
+              ? catalogData.departments
+              : []
           );
-          if (catalogRes.ok) {
-            const catalogData = await catalogRes.json();
-            setSuggestions(
-              Array.isArray(catalogData?.departments)
-                ? catalogData.departments
-                : []
-            );
-          }
         }
       }
     } catch (error) {
       console.error("Error loading add-department lookups:", error);
     }
-  }, [getAuthToken]);
+  }, [getAuthToken, adminProfessionsId]);
 
   useEffect(() => {
     if (!open) {

@@ -36,6 +36,7 @@ import {
 } from "@/src/features/services/ServiceFilters";
 import { useServiceProviders, useUserDepartments } from "@/src/hooks/useBookingLookups";
 import { useAuth } from "@/src/providers/AuthProvider";
+import { useWorkspaceSettings } from "@/src/hooks/useWorkspaceSettings";
 import type { ServiceProvider } from "@/src/types/booking-entities";
 
 type DepartmentStatus = "active" | "inactive";
@@ -229,6 +230,7 @@ function parsePriceInput(raw: string): number | null {
 
 export default function ServicesPage() {
   const { user, loading: authLoading } = useAuth();
+  const { general } = useWorkspaceSettings();
   const { data: serviceProviders } = useServiceProviders();
   const {
     byDepartment: providersByDepartmentId,
@@ -289,7 +291,11 @@ export default function ServicesPage() {
   const [serviceToDelete, setServiceToDelete] = useState<Service | null>(null);
   const [alertMessage, setAlertMessage] = useState<string | null>(null);
 
-  const [currency, setCurrency] = useState<string>("USD");
+  const currency =
+    typeof (general as { currency?: string | null } | undefined)?.currency === "string" &&
+    (general as { currency?: string }).currency
+      ? (general as { currency: string }).currency
+      : "USD";
   const currencySign = currencySymbol(currency);
 
   const getAuthToken = useCallback(async () => {
@@ -320,22 +326,6 @@ export default function ServicesPage() {
     const data = await response.json();
     return (data.services ?? []) as Service[];
   }, [getAuthToken]);
-
-  const fetchCurrency = useCallback(async () => {
-    const token = await getAuthToken();
-    if (!token) return;
-    const response = await fetch("/api/settings", {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (!response.ok) return;
-    const data = await response.json();
-    const value = data?.settings?.general?.currency;
-    if (typeof value === "string" && value) setCurrency(value);
-  }, [getAuthToken]);
-
-  useEffect(() => {
-    fetchCurrency();
-  }, [fetchCurrency]);
 
   const loadAll = useCallback(
     async (opts?: { silent?: boolean; selectId?: number | null }) => {

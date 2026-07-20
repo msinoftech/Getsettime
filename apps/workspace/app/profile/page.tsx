@@ -54,6 +54,21 @@ export default function ProfileCreative({ }) {
   const [selectedDepartmentIds, setSelectedDepartmentIds] = useState<string[]>([]);
   const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>([]);
   const [syncingAssignments, setSyncingAssignments] = useState(false);
+  const formDirtyRef = useRef(false);
+
+  const mark_form_dirty = useCallback(() => {
+    formDirtyRef.current = true;
+  }, []);
+
+  const update_form = useCallback(
+    (patch: Partial<typeof form> | ((prev: typeof form) => typeof form)) => {
+      mark_form_dirty();
+      setForm((prev) =>
+        typeof patch === "function" ? patch(prev) : { ...prev, ...patch }
+      );
+    },
+    [mark_form_dirty]
+  );
 
   const getAuthToken = useCallback(async () => {
     const {
@@ -69,6 +84,7 @@ export default function ProfileCreative({ }) {
 
   useEffect(() => {
     if (!user) return;
+    if (formDirtyRef.current) return;
 
     const metadata = (user.user_metadata ?? {}) as Record<string, unknown>;
     const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "";
@@ -101,10 +117,13 @@ export default function ProfileCreative({ }) {
     setSelectedImageFile(null);
     setSelectedImagePreview(null);
     setShowPublic(metadata.show_public_profile !== false);
-  }, [user]);
+    // Only re-init when the authenticated user id changes — not on TOKEN_REFRESHED / USER_UPDATED
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
 
   useEffect(() => {
     if (!user || userDeptsLoading) return;
+    if (formDirtyRef.current) return;
     const fromTable = deptIdsByUser.get(user.id);
     // Table is source of truth once loaded; missing key means no assignments.
     // Do not fall back to user_metadata — it stays stale after removals and re-adds items.
@@ -115,6 +134,7 @@ export default function ProfileCreative({ }) {
 
   useEffect(() => {
     if (!user || userServicesLoading) return;
+    if (formDirtyRef.current) return;
     const fromTable = serviceIdsByUser.get(user.id);
     setSelectedServiceIds(fromTable ? [...fromTable].sort().map(String) : []);
   }, [user, userServicesLoading, serviceIdsByUser]);
@@ -443,6 +463,7 @@ export default function ProfileCreative({ }) {
       }
 
       setFeedback({ type: "success", message: "Profile updated successfully." });
+      formDirtyRef.current = false;
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to save profile changes.";
       setFeedback({ type: "error", message });
@@ -453,6 +474,7 @@ export default function ProfileCreative({ }) {
 
   const handleCancel = () => {
     if (!user) return;
+    formDirtyRef.current = false;
     const metadata = (user.user_metadata ?? {}) as Record<string, unknown>;
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://app.getsettime.com";
     const usernameFromEmail = user.email?.split("@")[0] || "";
@@ -687,7 +709,7 @@ export default function ProfileCreative({ }) {
                                 <input
                                     type="text"
                                     value={form.name}
-                                    onChange={(e) => setForm({ ...form, name: e.target.value })}
+                                    onChange={(e) => update_form({ name: e.target.value })}
                                     className="w-full pl-12 pr-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
                                     placeholder="John Doe"
                                 />
@@ -706,7 +728,7 @@ export default function ProfileCreative({ }) {
                                 <input
                                     type="email"
                                     value={form.email}
-                                    onChange={(e) => setForm({ ...form, email: e.target.value })}
+                                    onChange={(e) => update_form({ email: e.target.value })}
                                     className="w-full pl-12 pr-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
                                     placeholder="john@example.com"
                                 />
@@ -725,7 +747,7 @@ export default function ProfileCreative({ }) {
                                 <input
                                     type="tel"
                                     value={form.phone}
-                                    onChange={(e) => setForm({ ...form, phone: e.target.value })}
+                                    onChange={(e) => update_form({ phone: e.target.value })}
                                     className="w-full pl-12 pr-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
                                     placeholder="+1 (555) 000-0000"
                                 />
@@ -738,7 +760,7 @@ export default function ProfileCreative({ }) {
                             <input
                               type="text"
                               value={form.education}
-                              onChange={(e) => setForm({ ...form, education: e.target.value })}
+                              onChange={(e) => update_form({ education: e.target.value })}
                               className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
                               placeholder="e.g. MBBS, Stanford University"
                             />
@@ -750,7 +772,7 @@ export default function ProfileCreative({ }) {
                             <input
                               type="text"
                               value={form.experience}
-                              onChange={(e) => setForm({ ...form, experience: e.target.value })}
+                              onChange={(e) => update_form({ experience: e.target.value })}
                               className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
                               placeholder="e.g. 10+ years in cardiology"
                             />
@@ -762,7 +784,7 @@ export default function ProfileCreative({ }) {
                             <input
                               type="text"
                               value={form.specialty}
-                              onChange={(e) => setForm({ ...form, specialty: e.target.value })}
+                              onChange={(e) => update_form({ specialty: e.target.value })}
                               className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
                               placeholder="e.g. Cardiology, Dermatology"
                             />
@@ -773,7 +795,7 @@ export default function ProfileCreative({ }) {
                             <label className="block text-sm font-medium text-gray-700 mb-2">Bio</label>
                             <textarea
                             value={form.bio}
-                            onChange={(e) => setForm({ ...form, bio: e.target.value })}
+                            onChange={(e) => update_form({ bio: e.target.value })}
                             rows={4}
                             className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition resize-none"
                             placeholder="Tell us about yourself..."

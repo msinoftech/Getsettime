@@ -3,6 +3,8 @@ import { useState, useEffect } from "react";
 import { FcFeedback, FcClock, FcPhone, FcOk, FcSettings, FcAutomotive, FcBusinessman, FcBusinesswoman } from "react-icons/fc";
 import { IconType } from "react-icons";
 import { useAuth } from "@/src/providers/AuthProvider";
+import { useWorkspaceSettings } from "@/src/hooks/useWorkspaceSettings";
+import { sync_settings_response } from "@/src/lib/workspace_shell_sync";
 
 interface Workflow {
   id: number;
@@ -23,85 +25,60 @@ const WORKFLOW_DEFINITIONS = [
 
 export default function Workflows({ dark = false }) {
   const { user } = useAuth();
+  const { settings, loading: settingsLoading } = useWorkspaceSettings();
   const [flows, setFlows] = useState<Workflow[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Load notification settings from Supabase on mount
+  // Load notification settings from workspace shell cache / provider
   useEffect(() => {
-    const loadSettings = async () => {
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/c18ea6a2-9a56-4a40-8939-326a1784f350',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'page.tsx:35',message:'loadSettings started',data:{hasUser:!!user,settingsLoading},timestamp:Date.now(),sessionId:'debug-session',runId:'initial',hypothesisId:'H1'})}).catch(()=>{});
+    // #endregion
+    if (!user) {
+      setLoading(false);
+      return;
+    }
+    if (settingsLoading) return;
+
+    try {
+      const notificationSettings = settings?.notifications || {};
+
       // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/c18ea6a2-9a56-4a40-8939-326a1784f350',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'page.tsx:35',message:'loadSettings started',data:{hasUser:!!user},timestamp:Date.now(),sessionId:'debug-session',runId:'initial',hypothesisId:'H1'})}).catch(()=>{});
+      fetch('http://127.0.0.1:7242/ingest/c18ea6a2-9a56-4a40-8939-326a1784f350',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'page.tsx:67',message:'Settings loaded',data:{notificationSettings,fullSettings:settings},timestamp:Date.now(),sessionId:'debug-session',runId:'initial',hypothesisId:'H3'})}).catch(()=>{});
       // #endregion
-      if (!user) {
-        setLoading(false);
-        return;
-      }
 
-      try {
-        const { supabase } = await import('@/lib/supabaseClient');
-        const { data: { session } } = await supabase.auth.getSession();
-        
-        // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/c18ea6a2-9a56-4a40-8939-326a1784f350',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'page.tsx:46',message:'Session retrieved',data:{hasSession:!!session,hasToken:!!session?.access_token,workspaceId:user?.user_metadata?.workspace_id},timestamp:Date.now(),sessionId:'debug-session',runId:'initial',hypothesisId:'H1'})}).catch(()=>{});
-        // #endregion
+      const loadedFlows: Workflow[] = WORKFLOW_DEFINITIONS.map((def, index) => ({
+        id: index + 1,
+        name: def.name,
+        description: def.description,
+        active: (notificationSettings as Record<string, boolean | undefined>)[def.settingsKey] ?? true,
+        iconIndex: def.iconIndex,
+        settingsKey: def.settingsKey,
+      }));
 
-        if (!session?.access_token) {
-          setLoading(false);
-          return;
-        }
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/c18ea6a2-9a56-4a40-8939-326a1784f350',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'page.tsx:81',message:'Flows mapped',data:{loadedFlows},timestamp:Date.now(),sessionId:'debug-session',runId:'initial',hypothesisId:'H4'})}).catch(()=>{});
+      // #endregion
 
-        const response = await fetch('/api/settings', {
-          headers: {
-            'Authorization': `Bearer ${session.access_token}`,
-          },
-        });
-
-        if (response.ok) {
-          const result = await response.json();
-          const notificationSettings = result.settings?.notifications || {};
-          
-          // #region agent log
-          fetch('http://127.0.0.1:7242/ingest/c18ea6a2-9a56-4a40-8939-326a1784f350',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'page.tsx:67',message:'Settings loaded',data:{notificationSettings,fullSettings:result.settings},timestamp:Date.now(),sessionId:'debug-session',runId:'initial',hypothesisId:'H3'})}).catch(()=>{});
-          // #endregion
-
-          // Map notification settings to workflows
-          const loadedFlows: Workflow[] = WORKFLOW_DEFINITIONS.map((def, index) => ({
-            id: index + 1,
-            name: def.name,
-            description: def.description,
-            active: notificationSettings[def.settingsKey] ?? true, // Default to true if not set
-            iconIndex: def.iconIndex,
-            settingsKey: def.settingsKey,
-          }));
-
-          // #region agent log
-          fetch('http://127.0.0.1:7242/ingest/c18ea6a2-9a56-4a40-8939-326a1784f350',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'page.tsx:81',message:'Flows mapped',data:{loadedFlows},timestamp:Date.now(),sessionId:'debug-session',runId:'initial',hypothesisId:'H4'})}).catch(()=>{});
-          // #endregion
-
-          setFlows(loadedFlows);
-        }
-      } catch (error) {
-        console.error('Error loading notification settings:', error);
-        // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/c18ea6a2-9a56-4a40-8939-326a1784f350',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'page.tsx:91',message:'Load error',data:{error:error instanceof Error ? error.message : String(error)},timestamp:Date.now(),sessionId:'debug-session',runId:'initial',hypothesisId:'H3'})}).catch(()=>{});
-        // #endregion
-        // Initialize with defaults on error
-        const defaultFlows: Workflow[] = WORKFLOW_DEFINITIONS.map((def, index) => ({
-          id: index + 1,
-          name: def.name,
-          description: def.description,
-          active: true,
-          iconIndex: def.iconIndex,
-          settingsKey: def.settingsKey,
-        }));
-        setFlows(defaultFlows);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    loadSettings();
-  }, [user]);
+      setFlows(loadedFlows);
+    } catch (error) {
+      console.error('Error loading notification settings:', error);
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/c18ea6a2-9a56-4a40-8939-326a1784f350',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'page.tsx:91',message:'Load error',data:{error:error instanceof Error ? error.message : String(error)},timestamp:Date.now(),sessionId:'debug-session',runId:'initial',hypothesisId:'H3'})}).catch(()=>{});
+      // #endregion
+      const defaultFlows: Workflow[] = WORKFLOW_DEFINITIONS.map((def, index) => ({
+        id: index + 1,
+        name: def.name,
+        description: def.description,
+        active: true,
+        iconIndex: def.iconIndex,
+        settingsKey: def.settingsKey,
+      }));
+      setFlows(defaultFlows);
+    } finally {
+      setLoading(false);
+    }
+  }, [user, settings, settingsLoading]);
 
   // Save notification settings to Supabase
   const saveNotificationSettings = async (updatedFlows: Workflow[]) => {
@@ -146,6 +123,7 @@ export default function Workflows({ dark = false }) {
       }
 
       const result = await response.json();
+      if (user?.id && result.settings) sync_settings_response(user.id, result);
       // #region agent log
       fetch('http://127.0.0.1:7242/ingest/c18ea6a2-9a56-4a40-8939-326a1784f350',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'page.tsx:162',message:'Settings saved successfully',data:{savedSettings:result.settings},timestamp:Date.now(),sessionId:'debug-session',runId:'initial',hypothesisId:'H5'})}).catch(()=>{});
       // #endregion

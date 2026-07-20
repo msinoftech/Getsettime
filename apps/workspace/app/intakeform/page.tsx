@@ -3,6 +3,9 @@ import { useState, useEffect, useMemo } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { AlertModal } from "@/src/components/ui/AlertModal";
 import { useAuth } from "@/src/providers/AuthProvider";
+import { useWorkspaceSettings } from "@/src/hooks/useWorkspaceSettings";
+import { sync_settings_response } from "@/src/lib/workspace_shell_sync";
+import type { WorkspaceSettings } from "@/src/types/workspace";
 
 interface CustomField {
   id: string;
@@ -118,6 +121,7 @@ const CUSTOM_FIELD_TYPE_OPTIONS: Array<{ value: CustomField["field_type"]; label
 
 export default function RoutingForm({ dark = false }) {
   const { user } = useAuth();
+  const { settings, loading: settingsLoading } = useWorkspaceSettings();
   const isStaffUser = user?.user_metadata?.role === "staff";
   const [fieldSearch, setFieldSearch] = useState("");
   const [intakeFormSettings, setIntakeFormSettings] = useState({
@@ -155,39 +159,20 @@ export default function RoutingForm({ dark = false }) {
   const [draggedCustomFieldId, setDraggedCustomFieldId] = useState<string | null>(null);
   const [dragOverCustomFieldId, setDragOverCustomFieldId] = useState<string | null>(null);
 
-  // Fetch settings on mount
+  // Load intake form from workspace shell settings
   useEffect(() => {
-    fetchIntakeFormSettings();
-  }, []);
-
-  const fetchIntakeFormSettings = async () => {
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) return;
-
-      const response = await fetch('/api/settings', {
-        headers: {
-          'Authorization': `Bearer ${session.access_token}`,
-        },
+    if (settingsLoading) return;
+    if (settings?.intake_form) {
+      setIntakeFormSettings({
+        name: true,
+        email: true,
+        phone: true,
+        file_upload: settings.intake_form.file_upload ?? false,
+        additional_description: true,
+        custom_fields: (settings.intake_form.custom_fields ?? []) as CustomField[],
       });
-
-      if (response.ok) {
-        const data = await response.json();
-        if (data.settings?.intake_form) {
-          setIntakeFormSettings({
-            name: true,
-            email: true,
-            phone: true,
-            file_upload: data.settings.intake_form.file_upload ?? false,
-            additional_description: true,
-            custom_fields: data.settings.intake_form.custom_fields ?? [],
-          });
-        }
-      }
-    } catch (error) {
-      console.error('Error fetching intake form settings:', error);
     }
-  };
+  }, [settings, settingsLoading]);
 
   const buildIntakeFormPayload = (
     overrides?: Partial<typeof intakeFormSettings>
@@ -224,10 +209,13 @@ export default function RoutingForm({ dark = false }) {
         }),
       });
 
+      const result = await response.json().catch(() => ({}));
       if (!response.ok) {
-        const errorData = await response.json();
-        setAlertMessage(`Error: ${errorData.error || 'Failed to save settings'}`);
+        setAlertMessage(`Error: ${(result as { error?: string }).error || 'Failed to save settings'}`);
         return false;
+      }
+      if (user?.id && (result as { settings?: WorkspaceSettings }).settings) {
+        sync_settings_response(user.id, result as { settings?: WorkspaceSettings | null });
       }
       return true;
     } catch (error) {
