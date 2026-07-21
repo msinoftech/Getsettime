@@ -73,6 +73,10 @@ const BOOKING_STATUS_EDIT_OPTIONS = BOOKING_STATUSES.filter(
   (s) => s.value !== 'deleted'
 );
 
+const CANCELLED_STATUS_EDIT_OPTIONS = BOOKING_STATUSES.filter(
+  (s) => s.value === 'cancelled' || s.value === 'reschedule'
+);
+
 function normalize_booking_status_for_edit(
   status: string | null | undefined
 ): string {
@@ -303,6 +307,7 @@ export function BookingDetailsCard({
 
   const start_all_inline_edits_ref = useRef<() => void>(() => {});
   start_all_inline_edits_ref.current = () => {
+    if ((booking.status || '').trim().toLowerCase() === 'cancelled') return;
     if (invitee_inline_edit) start_invitee_edit();
     if (booking_inline_edit) start_booking_info_edit();
   };
@@ -697,6 +702,17 @@ export function BookingDetailsCard({
   const is_booking_cancelled = booking_status_normalized === 'cancelled';
   const hide_booking_change_actions =
     is_booking_cancelled || booking_status_normalized === 'completed';
+  const status_edit_options = is_booking_cancelled
+    ? CANCELLED_STATUS_EDIT_OPTIONS
+    : BOOKING_STATUS_EDIT_OPTIONS;
+
+  const handle_draft_status_change = (value: string) => {
+    if (is_booking_cancelled && value === 'reschedule') {
+      onReschedule?.();
+      return;
+    }
+    set_draft_status(value);
+  };
 
   const handle_save_admin_notice = async () => {
     if (!onSaveAdminNotice) return;
@@ -920,7 +936,9 @@ export function BookingDetailsCard({
               <h2 className="text-sm font-bold uppercase tracking-[0.18em] text-slate-500">
                 Customer Information
               </h2>
-              {(invitee_inline_edit || onEditInvitee) && (
+              {(invitee_inline_edit || onEditInvitee) &&
+                (!is_booking_cancelled ||
+                  (invitee_editing && invitee_inline_edit)) && (
                 <div className="flex shrink-0 items-center gap-2 print:hidden">
                   {invitee_editing && invitee_inline_edit ? (
                     <>
@@ -1012,7 +1030,9 @@ export function BookingDetailsCard({
               <h2 className="text-sm font-bold uppercase tracking-[0.18em] text-slate-500">
                 Booking Information
               </h2>
-              {(booking_inline_edit || onEditBooking) && (
+              {(booking_inline_edit || onEditBooking) &&
+                (!is_booking_cancelled ||
+                  (booking_info_editing && booking_inline_edit)) && (
                 <div className="flex shrink-0 items-center gap-2 print:hidden">
                   {booking_info_editing && booking_inline_edit ? (
                     <>
@@ -1143,9 +1163,11 @@ export function BookingDetailsCard({
                     <select
                       className={booking_select_class}
                       value={draft_status}
-                      onChange={(e) => set_draft_status(e.target.value)}
+                      onChange={(e) =>
+                        handle_draft_status_change(e.target.value)
+                      }
                     >
-                      {BOOKING_STATUS_EDIT_OPTIONS.map(({ value, label }) => (
+                      {status_edit_options.map(({ value, label }) => (
                         <option key={value} value={value}>
                           {label}
                         </option>

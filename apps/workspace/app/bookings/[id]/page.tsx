@@ -149,8 +149,14 @@ export default function BookingDetailsPage() {
     }
   }, [toolbar_edit_session, is_inline_editing, inline_save_pending]);
 
+  const is_booking_cancelled =
+    fetch_state.status === 'ready' &&
+    (fetch_state.booking.status || '').trim().toLowerCase() === 'cancelled';
+
   const show_toolbar_save =
-    toolbar_edit_session && (is_inline_editing || inline_save_pending);
+    !is_booking_cancelled &&
+    toolbar_edit_session &&
+    (is_inline_editing || inline_save_pending);
 
   const handle_delete_confirm = useCallback(async () => {
     if (fetch_state.status !== 'ready') return;
@@ -234,7 +240,7 @@ export default function BookingDetailsPage() {
             </button>
             {fetch_state.status === 'ready' && (
               <>
-                {!show_toolbar_save && (
+                {!is_booking_cancelled && !show_toolbar_save && (
                   <button
                     type="button"
                     onClick={() => {
