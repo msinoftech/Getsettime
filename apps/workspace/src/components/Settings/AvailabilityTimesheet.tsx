@@ -38,6 +38,8 @@ export type availability_timesheet_handle = {
   copyMondayToWeekdays: () => void;
   /** Resolves true when the timesheet saved successfully. */
   saveChanges: () => Promise<boolean>;
+  /** Validates and returns the current timesheet payload without persisting. */
+  getTimesheetPayload: () => Record<DayName, DaySchedule> | null;
   isBusy: () => boolean;
 };
 
@@ -63,6 +65,8 @@ interface AvailabilityTimesheetProps {
   displayTimezone?: string;
   /** When true, hides edit actions (e.g. staff view-only) */
   readOnly?: boolean;
+  /** When true, save actions validate locally and skip HTTP persistence (onboarding). */
+  deferPersist?: boolean;
 }
 
 function classNames(...parts: Array<string | false | null | undefined>) {
@@ -247,6 +251,7 @@ const AvailabilityTimesheet = forwardRef<
     sourceTimezone = "UTC",
     displayTimezone = "UTC",
     readOnly = false,
+    deferPersist = false,
   },
   ref
 ) {
@@ -655,25 +660,41 @@ const AvailabilityTimesheet = forwardRef<
     }
   };
 
+  const prepareValidatedTimesheet = (
+    source: Record<DayName, DaySchedule>
+  ): Record<DayName, DaySchedule> => {
+    const clampedSchedules = {} as Record<DayName, DaySchedule>;
+    for (const day of DAYS) {
+      clampedSchedules[day] = clampBreaksForDay(source[day]);
+    }
+
+    const validationErrors: string[] = [];
+    for (const day of DAYS) {
+      validationErrors.push(...validateDaySchedule(day, clampedSchedules[day]));
+    }
+
+    if (validationErrors.length > 0) {
+      throw new Error(`Validation failed:\n${validationErrors.join('\n')}`);
+    }
+
+    return clampedSchedules;
+  };
+
   const handleSave = async (): Promise<boolean> => {
     setIsSaving(true);
     setSaveMessage(null);
     onSaveFeedback?.(null);
 
     try {
-      const clampedSchedules = {} as Record<DayName, DaySchedule>;
-      for (const day of DAYS) {
-        clampedSchedules[day] = clampBreaksForDay(schedules[day]);
-      }
+      const clampedSchedules = prepareValidatedTimesheet(schedules);
       setSchedules(cloneSchedules(clampedSchedules));
 
-      const validationErrors: string[] = [];
-      for (const day of DAYS) {
-        validationErrors.push(...validateDaySchedule(day, clampedSchedules[day]));
-      }
-
-      if (validationErrors.length > 0) {
-        throw new Error(`Validation failed:\n${validationErrors.join('\n')}`);
+      if (deferPersist) {
+        const frozen = cloneSchedules(clampedSchedules);
+        setSavedSchedules(frozen);
+        pushSaveFeedback({ type: 'success', text: 'Availability timesheet saved successfully!' }, 3000);
+        onSave?.(clampedSchedules);
+        return true;
       }
 
       await persistTimesheet(clampedSchedules);
@@ -715,6 +736,24 @@ const AvailabilityTimesheet = forwardRef<
         ...savedSchedules,
         [day]: cloneDaySchedule(clampedDay),
       };
+
+      if (deferPersist) {
+        setSavedSchedules(cloneSchedules(merged));
+        setSchedules((prev) => ({
+          ...prev,
+          [day]: cloneDaySchedule(merged[day]),
+        }));
+        pushDaySaveFeedback(
+          day,
+          { type: 'success', text: `${DAY_NAMES[day]} availability saved successfully!` },
+          3000
+        );
+        onSave?.({
+          ...schedules,
+          [day]: cloneDaySchedule(clampedDay),
+        });
+        return true;
+      }
 
       await persistTimesheet(merged);
       setSavedSchedules(cloneSchedules(merged));
@@ -1096,6 +1135,13 @@ const AvailabilityTimesheet = forwardRef<
       copyMondayToWeekdays,
       saveChanges: async () => {
         return await handleSave();
+      },
+      getTimesheetPayload: () => {
+        try {
+          return prepareValidatedTimesheet(schedules);
+        } catch {
+          return null;
+        }
       },
       isBusy: () => isBusy,
     }),

@@ -57,6 +57,20 @@ export function clearInviteOnboardingContext(): void {
   sessionStorage.removeItem(ONBOARDING_KIND_STORAGE_KEY);
 }
 
+/** Workspace id from user metadata (invite SP / team members). */
+export function workspaceOnboardingInviteWorkspaceId(
+  userMetadata: Record<string, unknown> | null | undefined
+): number | undefined {
+  const raw = userMetadata?.workspace_id;
+  const n =
+    typeof raw === "number"
+      ? raw
+      : typeof raw === "string"
+        ? parseInt(raw, 10)
+        : NaN;
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
 /** Register URL with `step` query for incomplete onboarding (uses metadata). */
 export function workspaceOnboardingRegisterUrl(
   userMetadata: Record<string, unknown> | null | undefined,
@@ -64,12 +78,10 @@ export function workspaceOnboardingRegisterUrl(
 ): string {
   const step = workspaceOnboardingResumeStep(userMetadata);
   const params = new URLSearchParams({ onboarding: "1", step: String(step) });
-  if (
-    options?.inviteWorkspaceId != null &&
-    Number.isFinite(options.inviteWorkspaceId) &&
-    options.inviteWorkspaceId > 0
-  ) {
-    params.set("invite_workspace_id", String(options.inviteWorkspaceId));
+  const inviteWorkspaceId =
+    options?.inviteWorkspaceId ?? workspaceOnboardingInviteWorkspaceId(userMetadata);
+  if (inviteWorkspaceId != null && Number.isFinite(inviteWorkspaceId) && inviteWorkspaceId > 0) {
+    params.set("invite_workspace_id", String(inviteWorkspaceId));
   }
   return `/register?${params.toString()}`;
 }
@@ -185,7 +197,9 @@ export async function resolvePostAuthNavigationPath(
   if (role === "service_provider") {
     if (serviceProviderIncompleteOnboarding(user)) {
       const meta = user.user_metadata as Record<string, unknown> | undefined;
-      return workspaceOnboardingRegisterUrl(meta ?? {});
+      return workspaceOnboardingRegisterUrl(meta ?? {}, {
+        inviteWorkspaceId: workspaceOnboardingInviteWorkspaceId(meta),
+      });
     }
     if (requestedNext.includes("onboarding=1")) {
       return "/";

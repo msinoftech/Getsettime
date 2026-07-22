@@ -145,7 +145,6 @@ export default function RegisterForm() {
   const [onboardingMode, setOnboardingMode] = useState<boolean | null>(null);
   const [onboardingRole, setOnboardingRole] = useState<OnboardingRole | null>(null);
   const [onboardingStep, setOnboardingStep] = useState(1);
-  const [onboardingSaving, setOnboardingSaving] = useState(false);
   const [workspaceId, setWorkspaceId] = useState<number | null>(null);
   const [workspaceType, setWorkspaceType] = useState<string | null>(null);
   const [workspaceCatalogProfessionId, setWorkspaceCatalogProfessionId] = useState("");
@@ -212,9 +211,22 @@ export default function RegisterForm() {
   /** Apply metadata resume step only once per user after login / first load; do not override Back/Next. */
   const resumeStepHydratedUserIdRef = useRef<string | null>(null);
 
-  // Optimistic step-1 save: started when leaving step 1, awaited before any step
-  // that depends on the saved departments/profession (and surfaced as an error there).
-  const step1SavePromiseRef = useRef<Promise<boolean> | null>(null);
+  // Background step-save registry (steps 1–3 persist via /api/onboarding/step).
+  type OnboardingStepNumber = 1 | 2 | 3;
+  type StepSaveEntry = {
+    attempt: number;
+    promise: Promise<void>;
+    error: string | null;
+  };
+  const stepSaveAttemptRef = useRef<Record<OnboardingStepNumber, number>>({ 1: 0, 2: 0, 3: 0 });
+  const stepSaveRegistryRef = useRef<Partial<Record<OnboardingStepNumber, StepSaveEntry>>>({});
+  const lastStepPayloadRef = useRef<
+    Partial<Record<OnboardingStepNumber, Record<string, unknown>>>
+  >({});
+  const [backgroundSaveError, setBackgroundSaveError] = useState<string | null>(null);
+  const [pendingCriticalWrites, setPendingCriticalWrites] = useState(0);
+  const [finishProgressOpen, setFinishProgressOpen] = useState(false);
+  const [finishProgressMessage, setFinishProgressMessage] = useState("Setting up your workspace...");
   /** Locked for full invite onboarding so auth refresh cannot create a personal workspace. */
   const onboardingKindRef = useRef<"invite" | "owner" | null>(null);
   const lockedWorkspaceIdRef = useRef<number | null>(null);
@@ -276,6 +288,89 @@ export default function RegisterForm() {
   );
 
   const EMAIL_PARAM_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+  const startBackgroundStepSave = useCallback(
+    (step: OnboardingStepNumber, body: Record<string, unknown>): Promise<void> => {
+      lastStepPayloadRef.current[step] = body;
+      const attempt = stepSaveAttemptRef.current[step] + 1;
+      stepSaveAttemptRef.current[step] = attempt;
+      setPendingCriticalWrites((n) => n + 1);
+
+      const entry: StepSaveEntry = { attempt, promise: Promise.resolve(), error: null };
+
+      const run = async (): Promise<void> => {
+        const headers = await headers_for_workspace_api();
+        const res = await fetch("/api/onboarding/step", {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ step, ...body }),
+        });
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        if (!res.ok) {
+          throw new Error(data.error ?? "Failed to save onboarding step");
+        }
+        if (stepSaveAttemptRef.current[step] !== attempt) return;
+        if (step === 1 && onboardingRole === "service_provider") {
+          setSpDepartmentsLockedFromInvite(false);
+        }
+        if (step === 1 && onboardingRole === "workspace_admin") {
+          const isOtherProfession = selectedProfessionId === OTHER_VALUE;
+          const professionName = isOtherProfession
+            ? customProfession.trim()
+            : professions.find((p) => p.id === Number(selectedProfessionId))?.name ?? "";
+          if (professionName) setWorkspaceType(professionName);
+        }
+        entry.error = null;
+        setBackgroundSaveError(null);
+      };
+
+      entry.promise = run()
+        .catch((e: unknown) => {
+          const message = e instanceof Error ? e.message : "Failed to save";
+          if (stepSaveAttemptRef.current[step] !== attempt) return;
+          entry.error = message;
+          setBackgroundSaveError(message);
+          throw e;
+        })
+        .finally(() => {
+          if (stepSaveAttemptRef.current[step] === attempt) {
+            setPendingCriticalWrites((n) => Math.max(0, n - 1));
+          }
+        });
+
+      stepSaveRegistryRef.current[step] = entry;
+      return entry.promise;
+    },
+    [customProfession, onboardingRole, professions, selectedProfessionId]
+  );
+
+  const retryPendingStepSaves = useCallback(async () => {
+    const steps: OnboardingStepNumber[] = [1, 2, 3];
+    for (const step of steps) {
+      const entry = stepSaveRegistryRef.current[step];
+      if (!entry) continue;
+      if (entry.error) {
+        const payload = lastStepPayloadRef.current[step];
+        if (!payload) throw new Error(entry.error);
+        await startBackgroundStepSave(step, payload);
+      } else {
+        await entry.promise.catch(() => undefined);
+      }
+      if (stepSaveRegistryRef.current[step]?.error) {
+        throw new Error(stepSaveRegistryRef.current[step]!.error!);
+      }
+    }
+  }, [startBackgroundStepSave]);
+
+  useEffect(() => {
+    if (pendingCriticalWrites <= 0) return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [pendingCriticalWrites]);
 
   const goToOnboardingStep = useCallback(
     (step: number) => {
@@ -866,6 +961,7 @@ export default function RegisterForm() {
         const normalized = Array.isArray(list) ? list : [];
         setDepartmentSuggestions(normalized);
         setSelectedDepartments((prev) => {
+          if (spDepartmentsLockedFromInvite) return prev;
           const stillValid = prev.filter((name) => normalized.includes(name));
           return stillValid;
         });
@@ -881,15 +977,7 @@ export default function RegisterForm() {
     return () => {
       cancelled = true;
     };
-  }, [onboardingMode, onboardingRole, selectedProfessionId, workspaceCatalogProfessionId]);
-
-  const persistOnboardingStep = async (lastCompleted: number) => {
-    await ensureSupabaseSessionOrThrow();
-    const { error: uerr } = await supabase.auth.updateUser({
-      data: { onboarding_last_completed_step: lastCompleted },
-    });
-    if (uerr) throw new Error(uerr.message);
-  };
+  }, [onboardingMode, onboardingRole, selectedProfessionId, workspaceCatalogProfessionId, spDepartmentsLockedFromInvite]);
 
   const collectStep1DepartmentNames = (): string[] => {
     const isOtherProfession = selectedProfessionId === OTHER_VALUE;
@@ -913,147 +1001,36 @@ export default function RegisterForm() {
     return true;
   };
 
-  // Persists profession + departments in a single batched request. Runs optimistically
-  // in the background (see handleOnboardingNext); does not toggle onboardingSaving.
-  const saveStep1 = async (): Promise<boolean> => {
-    if (!validateStep1()) return false;
-
+  const buildStep1Payload = (): Record<string, unknown> => {
     const isSpOnboarding = onboardingRole === "service_provider";
     const isOtherProfession = selectedProfessionId === OTHER_VALUE;
-    const uniqueDepartmentNames = collectStep1DepartmentNames();
-
-    try {
-      const headers = await headers_for_workspace_api();
-
-      if (!isSpOnboarding) {
-        const professionName = isOtherProfession
-          ? customProfession.trim()
-          : professions.find((p) => p.id === Number(selectedProfessionId))?.name ?? "";
-
-        const workspaceBody = isOtherProfession
-          ? { custom_profession: professionName }
-          : { professions_list_id: Number(selectedProfessionId) };
-
-        const workspaceRes = await fetch("/api/workspace", {
-          method: "PUT",
-          headers,
-          body: JSON.stringify(workspaceBody),
-        });
-        if (!workspaceRes.ok) {
-          const err = await workspaceRes.json().catch(() => ({}));
-          throw new Error(err.error ?? "Failed to save profession");
-        }
+    const payload: Record<string, unknown> = {
+      department_names: collectStep1DepartmentNames(),
+    };
+    if (!isSpOnboarding) {
+      if (isOtherProfession) {
+        payload.custom_profession = customProfession.trim();
+      } else {
+        payload.professions_list_id = Number(selectedProfessionId);
       }
-
-      // Single batched call: create/restore all selected departments and link the
-      // current user (workspace owner, or the onboarding service provider) at once.
-      const deptRes = await fetch("/api/departments", {
-        method: "POST",
-        headers: { ...headers, "Content-Type": "application/json" },
-        body: JSON.stringify({ names: uniqueDepartmentNames, link_self: true }),
-      });
-      if (!deptRes.ok) {
-        const err = await deptRes.json().catch(() => ({}));
-        throw new Error(err.error ?? "Failed to create departments");
-      }
-
-      if (isSpOnboarding) {
-        await ensureSupabaseSessionOrThrow();
-        await supabase.auth.updateUser({
-          data: {
-            pending_department_ids: null,
-            pending_department_names: null,
-          },
-        });
-        setSpDepartmentsLockedFromInvite(false);
-      }
-
-      if (!isSpOnboarding) {
-        const professionName = isOtherProfession
-          ? customProfession.trim()
-          : professions.find((p) => p.id === Number(selectedProfessionId))?.name ?? "";
-        setWorkspaceType(professionName);
-      }
-      await persistOnboardingStep(1);
-      return true;
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Failed to save");
-      return false;
     }
+    return payload;
   };
 
-  const SP_DEFAULT_NOTIFICATIONS = {
-    "sms-reminder": true,
-    "email-reminder": true,
-    "auto-confirm-booking": true,
-    "post-meeting-follow-up": true,
-    whatsapp: true,
-    "whatsapp-user": true,
-  } as const;
-
-  const saveStep4 = async (): Promise<boolean> => {
-    setOnboardingSaving(true);
-    setError("");
-    try {
-      const headers = await headers_for_workspace_api();
-      const meetingPayload = {
-        in_person: meetingOptions.in_person,
-        phone_call: meetingOptions.phone_call,
-        google_meet: meetingOptions.google_meet,
-      };
-
-      if (onboardingRole === "service_provider") {
-        const postRes = await fetch("/api/settings/provider-settings", {
-          method: "POST",
-          headers,
-          body: JSON.stringify({
-            notifications: { ...SP_DEFAULT_NOTIFICATIONS },
-            meeting_options: meetingPayload,
-          }),
-        });
-        if (!postRes.ok) {
-          const err = await postRes.json().catch(() => ({}));
-          throw new Error(err.error ?? "Failed to save meeting options");
-        }
-        return true;
-      }
-
-      const getRes = await fetch("/api/settings", {
-        headers: { Authorization: headers.Authorization },
-      });
-      const existingSettings = getRes.ok ? (await getRes.json()).settings ?? {} : {};
-      const merged = {
-        ...existingSettings,
-        meeting_options: meetingPayload,
-      };
-      const postRes = await fetch("/api/settings", {
-        method: "POST",
-        headers,
-        body: JSON.stringify({ settings: merged }),
-      });
-      if (!postRes.ok) {
-        const err = await postRes.json().catch(() => ({}));
-        throw new Error(err.error ?? "Failed to save meeting options");
-      }
-      return true;
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Failed to save meeting options");
-      return false;
-    } finally {
-      setOnboardingSaving(false);
-    }
+  const buildStep3Payload = (): Record<string, unknown> | null => {
+    const timesheet = timesheetRef.current?.getTimesheetPayload();
+    if (!timesheet) return null;
+    return { timesheet };
   };
 
-  const advanceFromStep3 = async () => {
-    setOnboardingSaving(true);
-    try {
-      await persistOnboardingStep(3);
-      goToOnboardingStep(4);
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Failed to save progress");
-    } finally {
-      setOnboardingSaving(false);
+  const advanceFromStep3 = () => {
+    const payload = buildStep3Payload();
+    if (!payload) {
+      setError("Please save valid working hours before continuing.");
+      return;
     }
+    void startBackgroundStepSave(3, payload);
+    goToOnboardingStep(4);
   };
 
   const handleStep3SaveHours = async () => {
@@ -1061,93 +1038,76 @@ export default function RegisterForm() {
     try {
       const ok = (await timesheetRef.current?.saveChanges()) ?? false;
       setStep3SaveChoiceOpen(false);
-      if (!ok) return; // the timesheet's feedback banner explains the failure
-      await advanceFromStep3();
+      if (!ok) return;
+      advanceFromStep3();
     } finally {
       setStep3SavingHours(false);
+    }
+  };
+
+  const handleOnboardingFinish = async () => {
+    setFinishProgressOpen(true);
+    setFinishProgressMessage("Setting up your workspace...");
+    setError("");
+    try {
+      await retryPendingStepSaves();
+      setFinishProgressMessage("Almost ready...");
+      const headers = await headers_for_workspace_api();
+      const res = await fetch("/api/onboarding/complete", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          meeting_options: {
+            in_person: meetingOptions.in_person,
+            phone_call: meetingOptions.phone_call,
+            google_meet: meetingOptions.google_meet,
+          },
+        }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) {
+        throw new Error(data.error ?? "Failed to finish setup");
+      }
+
+      await enqueueAuthRefresh();
+      const { data: userResult, error: userErr } = await supabase.auth.getUser();
+      if (userErr || !userResult.user) {
+        throw new Error(userErr?.message ?? "Failed to refresh session");
+      }
+
+      const completed = userResult.user.user_metadata?.onboarding_completed === true;
+      if (!completed) {
+        throw new Error("Setup did not complete. Please try again.");
+      }
+
+      if (onboardingRole === "service_provider") {
+        clearInviteOnboardingContext();
+      }
+      router.replace("/");
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Failed to finish setup");
+    } finally {
+      setFinishProgressOpen(false);
     }
   };
 
   const handleOnboardingNext = async () => {
     setError("");
     if (onboardingStep === 1) {
-      // Optimistic: validate locally, kick off the single batched save in the
-      // background, and advance immediately so the user doesn't wait. The promise
-      // is awaited on step 2 (below) to surface any failure before dependent work.
       if (!validateStep1()) return;
-      step1SavePromiseRef.current = saveStep1();
+      void startBackgroundStepSave(1, buildStep1Payload());
       goToOnboardingStep(2);
     } else if (onboardingStep === 2) {
-      setOnboardingSaving(true);
-      try {
-        if (step1SavePromiseRef.current) {
-          const step1Ok = await step1SavePromiseRef.current;
-          if (!step1Ok) {
-            goToOnboardingStep(1);
-            return;
-          }
-        }
-        if (onboardingRole === "service_provider") {
-          const headers = await headers_for_workspace_api();
-          await fetch("/api/settings/provider-settings", {
-            method: "POST",
-            headers,
-            body: JSON.stringify({ init_defaults: true }),
-          });
-        }
-        await persistOnboardingStep(2);
-        goToOnboardingStep(3);
-      } catch (e: unknown) {
-        setError(e instanceof Error ? e.message : "Failed to save progress");
-      } finally {
-        setOnboardingSaving(false);
-      }
+      void startBackgroundStepSave(2, {});
+      goToOnboardingStep(3);
     } else if (onboardingStep === 3) {
       if (!step3Saved) {
-        // Offer to save the current hours or keep editing instead of blocking.
         setStep3SaveChoiceOpen(true);
         return;
       }
-      await advanceFromStep3();
+      advanceFromStep3();
     } else if (onboardingStep === 4) {
-      const ok = await saveStep4();
-      if (!ok) return;
-      try {
-        await ensureSupabaseSessionOrThrow();
-      } catch (e: unknown) {
-        setError(e instanceof Error ? e.message : "Failed to save progress");
-        return;
-      }
-      if (onboardingRole === "service_provider") {
-        try {
-          const headers = await headers_for_workspace_api();
-          const etRes = await fetch("/api/onboarding/service-provider-event-type", {
-            method: "POST",
-            headers,
-          });
-          if (!etRes.ok) {
-            const err = await etRes.json().catch(() => ({}));
-            throw new Error(
-              (err as { error?: string }).error ?? "Failed to create your event type"
-            );
-          }
-        } catch (e: unknown) {
-          setError(e instanceof Error ? e.message : "Failed to create your event type");
-          return;
-        }
-      }
-      const { error: onboardErr } = await supabase.auth.updateUser({
-        data: { onboarding_completed: true, onboarding_last_completed_step: 4 },
-      });
-      if (onboardErr) {
-        setError(onboardErr.message || "Failed to finish setup");
-        return;
-      }
-      if (onboardingRole === "service_provider") {
-        clearInviteOnboardingContext();
-      }
-      await supabase.auth.getUser();
-      router.replace("/");
+      await handleOnboardingFinish();
     }
   };
 
@@ -1245,7 +1205,7 @@ export default function RegisterForm() {
       providerLinkSlug
     );
     const onboardingNextDisabled =
-      onboardingSaving ||
+      finishProgressOpen ||
       (onboardingStep === 1 &&
         (isSpOnboardingUi
           ? providerLinkLoading ||
@@ -1285,6 +1245,15 @@ export default function RegisterForm() {
             </div>
           )}
 
+          {backgroundSaveError && (
+            <div className="mb-4">
+              <AlertMessage
+                type="error"
+                message={`Background save failed: ${backgroundSaveError}. We'll retry when you click Finish.`}
+              />
+            </div>
+          )}
+
           {onboardingStep === 3 && timesheetSaveFeedback !== null && (
             <div className="mb-4">
               <AlertMessage
@@ -1311,7 +1280,7 @@ export default function RegisterForm() {
                 disabled={onboardingNextDisabled}
                 className="px-6 py-3 rounded-lg bg-blue-600 text-white font-medium hover:bg-blue-700 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {onboardingSaving ? "Saving…" : "Next"}
+                {finishProgressOpen ? "Setting up…" : "Next"}
               </button>
             </div>
           )}
@@ -1679,6 +1648,7 @@ export default function RegisterForm() {
               <p className="text-sm text-gray-600 mb-4">Configure your availability and break times, then click Save Timesheet before continuing.</p>
               <AvailabilityTimesheet
                 ref={timesheetRef}
+                deferPersist
                 providerUserId={isSpOnboardingUi ? onboardingProviderUserId ?? undefined : undefined}
                 onSave={() => {
                   setStep3Saved(true);
@@ -1723,7 +1693,7 @@ export default function RegisterForm() {
                     setError("");
                     goToOnboardingStep(onboardingStep - 1);
                   }}
-                  disabled={onboardingSaving}
+                  disabled={finishProgressOpen}
                   className="px-6 py-3 rounded-lg border border-gray-300 text-gray-700 font-medium hover:bg-gray-50 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Back
@@ -1736,10 +1706,32 @@ export default function RegisterForm() {
                 disabled={onboardingNextDisabled}
                 className="px-6 py-3 rounded-lg bg-blue-600 text-white font-medium hover:bg-blue-700 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {onboardingSaving ? "Saving…" : onboardingStep === 4 ? "Finish" : "Next"}
+                {finishProgressOpen
+                  ? "Setting up…"
+                  : onboardingStep === 4
+                    ? "Finish"
+                    : "Next"}
               </button>
             </div>
           </div>
+
+          {finishProgressOpen && (
+            <div
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-6"
+              role="status"
+              aria-live="polite"
+              aria-label={finishProgressMessage}
+            >
+              <div className="w-full max-w-md rounded-2xl bg-white p-8 text-center shadow-xl">
+                <div
+                  className="mx-auto mb-4 h-10 w-10 animate-spin rounded-full border-2 border-blue-600 border-t-transparent"
+                  aria-hidden
+                />
+                <p className="text-lg font-semibold text-gray-800">{finishProgressMessage}</p>
+                <p className="mt-2 text-sm text-gray-500">This usually takes just a moment.</p>
+              </div>
+            </div>
+          )}
 
           {step3SaveChoiceOpen && (
             <ConfirmModal

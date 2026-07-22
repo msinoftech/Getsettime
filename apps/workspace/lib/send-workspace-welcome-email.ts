@@ -16,9 +16,10 @@ function getAppOrigin(): string {
 export async function sendWorkspaceWelcomeEmail(params: {
   to: string;
   workspaceId: number;
+  adminName: string;
   supabaseAdmin: SupabaseClient;
 }): Promise<void> {
-  const { to, workspaceId, supabaseAdmin } = params;
+  const { to, workspaceId, adminName, supabaseAdmin } = params;
   const origin = getAppOrigin();
 
   const { data: workspace } = await supabaseAdmin
@@ -34,6 +35,7 @@ export async function sendWorkspaceWelcomeEmail(params: {
   await sendWelcomeEmail({
     to,
     workspaceName,
+    adminName: adminName.trim() || 'there',
     dashboardUrl: `${origin}/`,
     upgradeUrl: `${origin}/billings`,
     planName: snapshot.plan.name,

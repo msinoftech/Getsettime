@@ -3,6 +3,7 @@ import {
   workspaceAdminNeedsOnboardingWizard,
   serviceProviderNeedsOnboardingWizard,
   workspaceOnboardingRegisterUrl,
+  workspaceOnboardingInviteWorkspaceId,
 } from "@/lib/auth_onboarding";
 import { supabase } from "@/lib/supabaseClient";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -343,7 +344,11 @@ export default function LoginForm() {
       }
 
       if (finalRole === "service_provider" && serviceProviderNeedsOnboardingWizard(meta)) {
-        router.push(workspaceOnboardingRegisterUrl(meta));
+        router.push(
+          workspaceOnboardingRegisterUrl(meta, {
+            inviteWorkspaceId: workspaceOnboardingInviteWorkspaceId(meta),
+          })
+        );
         return;
       }
 

@@ -14,6 +14,7 @@ import {
   serviceProviderIncompleteOnboarding,
   isAllowedPathDuringWorkspaceOnboarding,
   workspaceOnboardingRegisterUrl,
+  workspaceOnboardingInviteWorkspaceId,
 } from '@/lib/auth_onboarding'
 import { logAuthActivityFromSession, logAuthActivityLoginDeduped, signOutWithAuthLog } from '@/src/lib/auth_activity_log_client'
 import { is_public_embed_booking_path } from '@/lib/public_embed_route'
@@ -281,7 +282,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       ) {
         if (serviceProviderIncompleteOnboarding(currentUser as SupabaseUser)) {
           const meta = currentUser.user_metadata as Record<string, unknown> | undefined
-          router_ref.current.push(workspaceOnboardingRegisterUrl(meta ?? {}))
+          router_ref.current.push(
+            workspaceOnboardingRegisterUrl(meta ?? {}, {
+              inviteWorkspaceId: workspaceOnboardingInviteWorkspaceId(meta),
+            })
+          )
           setUser(currentUser)
           return
         }

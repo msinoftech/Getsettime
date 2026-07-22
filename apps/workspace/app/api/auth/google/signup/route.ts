@@ -275,6 +275,7 @@ export async function GET(req: Request) {
         sendWorkspaceWelcomeEmail({
           to: email,
           workspaceId: workspaceResult.workspaceId,
+          adminName: name,
           supabaseAdmin,
         }).catch((err) => console.error('Welcome email failed (non-critical):', err));
       }

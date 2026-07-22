@@ -142,6 +142,7 @@ export async function POST(req: Request) {
       sendWorkspaceWelcomeEmail({
         to: userEmail,
         workspaceId: workspaceResult.workspaceId,
+        adminName: name,
         supabaseAdmin,
       }).catch((err) => console.error("Welcome email failed (non-critical):", err));
     }

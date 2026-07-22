@@ -1165,6 +1165,7 @@ export const sendBookingStatusChangeEmails = async (
 export interface WelcomeEmailParams {
   to: string;
   workspaceName: string;
+  adminName: string;
   dashboardUrl: string;
   upgradeUrl: string;
   planName: string;
@@ -1177,6 +1178,7 @@ export const sendWelcomeEmail = async (params: WelcomeEmailParams): Promise<void
   const {
     to,
     workspaceName,
+    adminName,
     dashboardUrl,
     upgradeUrl,
     planName,
@@ -1200,7 +1202,7 @@ export const sendWelcomeEmail = async (params: WelcomeEmailParams): Promise<void
     .container { max-width: 600px; margin: 0 auto; padding: 20px; }
     .header { background-color: #4F46E5; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
     .content { background-color: #f9f9f9; padding: 30px; border: 1px solid #ddd; border-radius: 0 0 8px 8px; }
-    .button { display: inline-block; background-color: #4F46E5; color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px; margin: 8px 8px 8px 0; }
+    .button { display: inline-block; background-color: #4F46E5; color: #fff !important; padding: 12px 24px; text-decoration: none; border-radius: 8px; margin: 8px 8px 8px 0; }
     .button-secondary { background-color: #1de4a9; color: #111; }
     ul { padding-left: 20px; }
     .footer { text-align: center; margin-top: 20px; padding-top: 20px; border-top: 1px solid #ddd; color: #666; font-size: 12px; }
@@ -1212,6 +1214,7 @@ export const sendWelcomeEmail = async (params: WelcomeEmailParams): Promise<void
       <h1>Welcome to GetSetTime 🎉</h1>
     </div>
     <div class="content">
+      <p>Hello ${adminName},</p>
       <p>Your workspace <strong>${workspaceName}</strong> is ready.</p>
       <p>You are on the <strong>${planName}</strong> plan:</p>
       <ul>
@@ -1223,8 +1226,7 @@ export const sendWelcomeEmail = async (params: WelcomeEmailParams): Promise<void
         <li>Public booking page</li>
       </ul>
       <p>
-        <a href="${dashboardUrl}" class="button" style="color:#fff !important;">Go to dashboard</a>
-        <a href="${upgradeUrl}" class="button button-secondary" style="color:#000 !important;">Upgrade plan</a>
+        <a href="${dashboardUrl}" class="button">Go to dashboard</a>
       </p>
       <div class="footer">
         <p>&copy; ${new Date().getFullYear()} GetSetTime. All rights reserved.</p>
@@ -1234,6 +1236,19 @@ export const sendWelcomeEmail = async (params: WelcomeEmailParams): Promise<void
 </body>
 </html>
     `,
+    text: `
+Hello ${adminName},
+Your workspace ${workspaceName} is ready.
+You are on the ${planName} plan:
+${formatBookingLimitFeature(bookingLimit)}
+${adminLimit} admin
+Up to ${serviceProviderLimit} service providers
+Google Calendar sync
+Email notifications
+Public booking page
+Go to ${dashboardUrl}
+    `,
+    replyTo: process.env.SMTP_USER,
   });
 };
 
