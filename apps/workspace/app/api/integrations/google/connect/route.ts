@@ -36,7 +36,6 @@ export async function GET(req: Request) {
     const scopes = [
       'https://www.googleapis.com/auth/userinfo.email',
       'https://www.googleapis.com/auth/calendar',
-      'https://www.googleapis.com/auth/calendar.events',
     ];
 
     let linkedAuthUserId: string | null = null;
