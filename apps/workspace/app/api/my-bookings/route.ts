@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createSupabaseServerClient } from '@app/db';
 import { createClient } from '@supabase/supabase-js';
+import { findBookingsForPhone } from '@/lib/my-bookings-phone-match';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -76,30 +77,8 @@ export async function GET(req: NextRequest) {
       phoneE164 = session.phone_e164;
     }
 
-    const phoneDigits = phoneE164?.replace(/\D/g, '') || '';
-
-    const phoneMatches = (value: string | null): boolean => {
-      if (!value || !phoneDigits) return false;
-      if (value === phoneE164) return true;
-      const valueDigits = value.replace(/\D/g, '');
-      if (!valueDigits) return false;
-      if (valueDigits === phoneDigits) return true;
-      return phoneDigits.endsWith(valueDigits) || valueDigits.endsWith(phoneDigits);
-    };
-
-    const emailMatches = (value: string | null): boolean => {
-      if (!value || !customerEmail) return false;
-      return value.toLowerCase() === customerEmail.toLowerCase();
-    };
-
-    const { data: contacts } = await supabase
-      .from('contacts')
-      .select('id, phone, email')
-      .or('phone.not.is.null,email.not.is.null');
-
-    const contactIds = (contacts || [])
-      .filter((c) => phoneMatches(c.phone) || emailMatches(c.email))
-      .map((c) => c.id);
+    const matchedRows = await findBookingsForPhone(phoneE164, customerEmail);
+    const filteredIds = new Set(matchedRows.map((b) => String(b.id)));
 
     const { data: bookings, error: bookingsError } = await supabase
       .from('bookings')
@@ -119,16 +98,7 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const seenIds = new Set<string>();
-    const filtered = (bookings || []).filter((b) => {
-      const byPhone = phoneMatches(b.invitee_phone);
-      const byEmail = emailMatches(b.invitee_email);
-      const byContact = b.contact_id != null && contactIds.includes(b.contact_id);
-      if (!byPhone && !byEmail && !byContact) return false;
-      if (seenIds.has(String(b.id))) return false;
-      seenIds.add(String(b.id));
-      return true;
-    });
+    const filtered = (bookings || []).filter((b) => filteredIds.has(String(b.id)));
 
     // Resolve workspace names
     const workspaceIds = [
@@ -153,9 +123,9 @@ export async function GET(req: NextRequest) {
       const contact = b.contacts as unknown as { name: string | null; phone: string | null; email: string | null } | null;
       return {
         id: b.id,
-        invitee_name: b.invitee_name || contact?.name || null,
-        invitee_email: b.invitee_email || contact?.email || null,
-        invitee_phone: b.invitee_phone || contact?.phone || null,
+        name: b.invitee_name || contact?.name || null,
+        email: b.invitee_email || contact?.email || null,
+        phone: b.invitee_phone || contact?.phone || null,
         start_at: b.start_at,
         end_at: b.end_at,
         status: b.status,
@@ -169,7 +139,7 @@ export async function GET(req: NextRequest) {
     // Server-side pagination
     const { searchParams } = new URL(req.url);
     const page = Math.max(1, parseInt(searchParams.get('page') || '1', 10));
-    const limit = Math.min(50, Math.max(1, parseInt(searchParams.get('limit') || '10', 10)));
+    const limit = Math.min(20, Math.max(1, parseInt(searchParams.get('limit') || '10', 10)));
     const total = matched.length;
     const totalPages = Math.ceil(total / limit);
     const offset = (page - 1) * limit;

@@ -94,9 +94,10 @@ function ToggleCell({
   action: string;
   on_toggle: (row_index: number, col_index: number) => void;
 }) {
-  const label = `${ROLE_HEADERS[col_index]} — ${resource} — ${action}: ${allowed ? "allowed" : "not allowed"}. Click to toggle.`;
+  //const label = `${ROLE_HEADERS[col_index]} — ${resource} — ${action}: ${allowed ? "allowed" : "not allowed"}. Click to toggle.`;
+  const label = `${ROLE_HEADERS[col_index]}`;
   return (
-    <td className="px-3 py-3 text-center">
+    <td className="px-3 py-3 text-center border-b border-slate-100" data-label={label}>
       <button
         type="button"
         onClick={() => on_toggle(row_index, col_index)}
@@ -254,7 +255,7 @@ export default function RolesPermissionsPage() {
                       className="border-t border-slate-200"
                     >
                       <div className="max-h-[min(70vh,480px)] overflow-auto">
-                        <table className="w-full min-w-[640px] border-collapse text-left text-sm">
+                        <table className="w-full border-collapse text-left text-sm">
                           <AccordionSectionTableHead />
                           <tbody>
                             {row_indices.map((row_index) => {
@@ -266,7 +267,7 @@ export default function RolesPermissionsPage() {
                                 >
                                   <th
                                     scope="row"
-                                    className="sticky left-0 z-10 border-r border-slate-100 bg-white px-4 py-3 text-left font-medium text-slate-700"
+                                    className="w-full min-[1300px]:w-fit z-10 border-r border-slate-100 bg-white px-4 py-3 text-left font-medium text-slate-700"
                                   >
                                     {row.action}
                                   </th>

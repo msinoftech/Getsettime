@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { Z_MODAL_NESTED } from "@/src/constants/z-index";
 
 interface UpgradePlanModalProps {
   open: boolean;
@@ -19,7 +20,8 @@ export function UpgradePlanModal({
 
   return (
     <div
-      className="fixed inset-0 z-[110] flex items-center justify-center overflow-y-auto bg-black/40 p-4"
+      className="fixed inset-0 flex items-center justify-center overflow-y-auto bg-black/40 p-4"
+      style={{ zIndex: Z_MODAL_NESTED }}
       onClick={onClose}
       role="dialog"
       aria-modal="true"

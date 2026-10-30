@@ -1,6 +1,8 @@
+import type { booking_step_id } from '@/src/features/booking-flow';
+
 export type booking_step_nav_context = {
-  step: number;
-  totalSteps: number;
+  current_step_id: booking_step_id;
+  step_order: readonly booking_step_id[];
   departmentsCount: number;
   showProviderPicker: boolean;
   hasSelectedDepartment: boolean;
@@ -11,20 +13,19 @@ export type booking_step_nav_context = {
   hasSelectedTime: boolean;
   isRescheduleMode?: boolean;
   rescheduleContinueDisabled?: boolean;
-  /** True on post-submit success screens where step navigation should be disabled. */
   isSuccessScreen?: boolean;
 };
 
 function is_continue_enabled(ctx: booking_step_nav_context): boolean {
-  switch (ctx.step) {
-    case 1:
+  switch (ctx.current_step_id) {
+    case 'department_provider':
       return (
         ctx.hasSelectedDepartment &&
         (!ctx.showProviderPicker || ctx.hasSelectedProvider)
       );
-    case 2:
+    case 'event_type':
       return ctx.hasSelectedType && !ctx.loadingEventTypes;
-    case 3:
+    case 'date_time':
       if (ctx.isRescheduleMode) {
         return (
           ctx.hasSelectedDate &&
@@ -40,15 +41,19 @@ function is_continue_enabled(ctx: booking_step_nav_context): boolean {
 
 function can_navigate_back_to(
   ctx: booking_step_nav_context,
-  target: number
+  target: booking_step_id
 ): boolean {
-  if (target >= ctx.step) return false;
+  const current_index = ctx.step_order.indexOf(ctx.current_step_id);
+  const target_index = ctx.step_order.indexOf(target);
+  if (target_index < 0 || target_index >= current_index) return false;
 
-  if (ctx.departmentsCount === 0 && target === 1) return false;
+  if (ctx.departmentsCount === 0 && target === 'department_provider') return false;
 
   if (ctx.isRescheduleMode) {
-    if (ctx.step === 3 && target < 3) return false;
-    if (ctx.step === 2 && target === 1) return false;
+    if (ctx.current_step_id === 'date_time' && target !== 'date_time') return false;
+    if (ctx.current_step_id === 'event_type' && target === 'department_provider') {
+      return false;
+    }
   }
 
   return true;
@@ -56,18 +61,21 @@ function can_navigate_back_to(
 
 export function can_navigate_to_booking_step(
   ctx: booking_step_nav_context,
-  target: number
+  target: booking_step_id
 ): boolean {
-  if (target === ctx.step) return false;
-  if (target < 1 || target > ctx.totalSteps) return false;
+  if (target === ctx.current_step_id) return false;
   if (ctx.isSuccessScreen) return false;
+  if (!ctx.step_order.includes(target)) return false;
 
-  if (target === ctx.step + 1) {
-    if (ctx.isRescheduleMode && ctx.step === 3) return false;
+  const current_index = ctx.step_order.indexOf(ctx.current_step_id);
+  const target_index = ctx.step_order.indexOf(target);
+
+  if (target_index === current_index + 1) {
+    if (ctx.isRescheduleMode && ctx.current_step_id === 'date_time') return false;
     return is_continue_enabled(ctx);
   }
 
-  if (target < ctx.step) {
+  if (target_index < current_index) {
     return can_navigate_back_to(ctx, target);
   }
 

@@ -4,9 +4,13 @@ import React, { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspens
 import type { Workspace } from '@app/db';
 import type { Department, EventType, IntakeValues, ServiceProvider, Timeslot } from '@/src/types/bookingForm';
 import { useEmbedBookingFormData } from '@/src/hooks/useEmbedBookingFormData';
-import { useAutoAdvanceStep1 } from '@/src/hooks/useAutoAdvanceStep1';
+import { useAutoSelectSoleBookingOptions } from '@/src/hooks/useAutoSelectSoleBookingOptions';
+import { useAutoAdvanceSkippableBookingSteps } from '@/src/hooks/useAutoAdvanceSkippableBookingSteps';
+import { useBookingStepStates } from '@/src/hooks/useBookingStepStates';
 import { useTimeslots } from '@/src/hooks/useTimeslots';
 import { useIntakeValidation } from '@/src/hooks/useIntakeValidation';
+import { useBookingStepFlow } from '@/src/hooks/useBookingStepFlow';
+import { useBookSeriesOption } from '@/src/hooks/useBookSeriesOption';
 import {
   DEFAULT_ACCENT_COLOR,
   DEFAULT_PRIMARY_COLOR,
@@ -37,6 +41,7 @@ import {
   type meeting_option_key,
 } from '@/src/utils/meeting_options';
 import { BookingPreviewSidebar } from './MultiStepBooking/BookingPreviewSidebar';
+import { format_workspace_public_address } from '@/src/utils/workspace_public_address';
 import { ProgressIndicator } from './MultiStepBooking/ProgressIndicator';
 import { Step1DepartmentProvider } from './MultiStepBooking/Step1DepartmentProvider';
 import { Step2ServiceSelection } from './MultiStepBooking/Step2ServiceSelection';
@@ -52,7 +57,30 @@ import {
   can_navigate_to_booking_step,
   type booking_step_nav_context,
 } from '@/src/utils/booking_step_navigation';
+import {
+  booking_step_number,
+  event_type_max_window_days,
+  event_type_session_duration_minutes,
+  event_type_slot_capacity,
+  department_step_is_ready,
+  event_type_step_is_ready,
+  indicator_booking_step_ids,
+  is_booking_step_resolving,
+  is_event_type_before_department,
+  parse_booking_step_order,
+  previous_booking_step_id,
+  resolve_next_booking_step_id,
+} from '@/src/features/booking-flow';
 import { resolve_provider_scoped_service_gate } from '@/src/utils/provider_scoped_service_gate';
+import { slot_occupancy_context_from_event_type } from '@/lib/booking_capacity';
+import { InviteeDuplicateBookingAlert } from './InviteeDuplicateBookingAlert';
+import { EmbedBookingOtpModal } from './EmbedBookingOtpModal';
+import {
+  apply_booking_form_error,
+  BookingFormSubmitError,
+  find_client_duplicate_invitee_error,
+  throw_if_booking_api_error,
+} from '@/src/utils/bookingFormDuplicateInvitee';
 
 const Step3DateTime = lazy(() =>
   import('./MultiStepBooking/Step3DateTime').then((m) => ({ default: m.Step3DateTime }))
@@ -79,22 +107,15 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
   const [rescheduleNotAllowed, setRescheduleNotAllowed] = useState(false);
   const [previousStartAt, setPreviousStartAt] = useState<string | null>(null);
   const [previousEndAt, setPreviousEndAt] = useState<string | null>(null);
-  const [step, setStep] = useState(1);
-  // Once the user manually steps backward, stop auto-advancing/masking so they can
-  // review earlier steps (department, event type) even when each has a single option.
+  const [rescheduleBookingMeta, setRescheduleBookingMeta] = useState<{
+    id?: string | number;
+    invitee_email?: string | null;
+    invitee_phone?: string | null;
+    contact_id?: string | number | null;
+  } | null>(null);
   const [disableAutoAdvance, setDisableAutoAdvance] = useState(false);
   const stepTopRef = useRef<HTMLDivElement | null>(null);
   const hasMountedRef = useRef(false);
-
-  // Scroll the step content back to the top whenever the step changes (skip the
-  // initial render so loading the form doesn't trigger an unwanted scroll).
-  useEffect(() => {
-    if (!hasMountedRef.current) {
-      hasMountedRef.current = true;
-      return;
-    }
-    stepTopRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-  }, [step]);
 
   const [selectedDepartment, setSelectedDepartment] = useState<Department | null>(null);
   const [selectedProvider, setSelectedProvider] = useState<ServiceProvider | null>(null);
@@ -121,9 +142,24 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [duplicatePreviewPath, setDuplicatePreviewPath] = useState<string | null>(null);
+  const [otpModalOpen, setOtpModalOpen] = useState(false);
+  const [verificationToken, setVerificationToken] = useState<string | null>(null);
+  const showFormError = useCallback((message: string, previewPath?: string | null) => {
+    setError(message);
+    setDuplicatePreviewPath(previewPath ?? null);
+  }, []);
+  const clearFormError = useCallback(() => {
+    setError(null);
+    setDuplicatePreviewPath(null);
+  }, []);
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [showCalendar, setShowCalendar] = useState(false);
   const [selectedMeetingOption, setSelectedMeetingOption] = useState('');
+  const { bookSeries, setBookSeries, showBookSeriesOption } = useBookSeriesOption({
+    selectedType,
+    enabled: !isRescheduleMode,
+  });
 
   const targetDuration = parseEventTypeDurationParam(eventType);
   const [days, setDays] = useState<Date[]>(() =>
@@ -138,6 +174,10 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
     setSelectedDate(null);
     setSelectedTime('');
   }, []);
+
+  useEffect(() => {
+    setVerificationToken(null);
+  }, [phone, email]);
 
   const {
     departments,
@@ -163,6 +203,9 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
     generalSettings,
     workspaceOwnerAdminNotice,
     meetingOptions,
+    bookingStepOrder,
+    workspaceHostProfileHighlights,
+    providerHostProfileHighlights,
   } = useEmbedBookingFormData({
     workspace,
     eventTypeSlug,
@@ -170,10 +213,39 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
     selectedDepartment,
     selectedProvider,
     selectedType,
+    lockEventTypeCatalog: !!selectedType,
     days,
     intakeForm: undefined,
     onAvailabilityChange,
   });
+
+  const parsed_step_order = useMemo(
+    () => parse_booking_step_order(bookingStepOrder),
+    [bookingStepOrder]
+  );
+  const {
+    current_step_id,
+    step_order,
+    is_step,
+    go_to_step,
+    progress_ids,
+  } = useBookingStepFlow({
+    step_order: parsed_step_order,
+  });
+
+  useEffect(() => {
+    if (!hasMountedRef.current) {
+      hasMountedRef.current = true;
+      return;
+    }
+    stepTopRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [current_step_id]);
+
+  useEffect(() => {
+    if (error) {
+      stepTopRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, [error, duplicatePreviewPath]);
 
   useEffect(() => {
     if (!serviceProviderId || selectedDepartment || loadingDepartments) return;
@@ -181,6 +253,15 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
       setSelectedDepartment(departments[0]);
     }
   }, [serviceProviderId, selectedDepartment, loadingDepartments, departments]);
+
+  const event_type_before_department = is_event_type_before_department(step_order);
+
+  useEffect(() => {
+    if (!selectedType || !event_type_before_department) return;
+    setSelectedDepartment(null);
+    setSelectedProvider(null);
+    setSelectedServiceIds([]);
+  }, [selectedType?.id, event_type_before_department]);
 
   useEffect(() => {
     if (
@@ -234,9 +315,24 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
     setSelectedServiceIds((prev) => (prev.length === 1 && prev[0] === id ? prev : [id]));
   }, []);
 
-  useAutoAdvanceStep1({
-    enabled: !isRescheduleMode && !disableAutoAdvance,
-    step,
+  const sortedEventTypes = getSortedFilteredEventTypes(eventTypes, {
+    slug: eventTypeSlug,
+    duration: targetDuration,
+  });
+
+  const department_step_ready = department_step_is_ready(step_order, selectedType);
+
+  const event_type_context_ready = event_type_step_is_ready(step_order, {
+    departmentsCount: departments.length,
+    hasSelectedDepartment: !!selectedDepartment,
+    showProviderPicker,
+    hasSelectedProvider: !!selectedProvider,
+  });
+
+  useAutoSelectSoleBookingOptions({
+    enabled: !isRescheduleMode && !disableAutoAdvance && department_step_ready,
+    autoSelectEventTypeEnabled:
+      !isRescheduleMode && !disableAutoAdvance && event_type_context_ready,
     loadingDepartments,
     departments,
     selectedDepartment,
@@ -246,17 +342,35 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
     showProviderPicker,
     serviceProviders,
     onClearOptionalServices: () => setSelectedServiceIds([]),
-    advanceToNextStep: () => setStep(2),
     loadingProviderScopedCatalog,
     providerScopedCatalogServices,
     providerCatalogContextReady,
     providerScopedCatalogSettled,
     onAutoSelectSingleService: handleAutoSelectSingleService,
+    loadingEventTypes,
+    eventTypes: sortedEventTypes,
+    selectedType,
+    setSelectedType,
+    eventTypeContextReady: event_type_context_ready,
   });
 
-  const sortedEventTypes = getSortedFilteredEventTypes(eventTypes, {
-    slug: eventTypeSlug,
-    duration: targetDuration,
+  const step_states = useBookingStepStates({
+    step_order,
+    loadingEventTypes,
+    eventTypesCount: sortedEventTypes.length,
+    selectedType,
+    departmentsCount: departments.length,
+    loadingDepartments,
+    selectedDepartment,
+    showProviderPicker,
+    serviceProvidersCount: serviceProviders.length,
+    loadingProviders,
+    selectedProvider,
+    providerCatalogContextReady,
+    loadingProviderScopedCatalog,
+    providerScopedCatalogServices,
+    providerScopedCatalogSettled,
+    selectedServiceIds,
   });
 
   const serviceCatalogForSlots = useMemo(
@@ -364,10 +478,22 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
   );
   const isStep4Valid = Object.keys(intakeValidation).length === 0;
 
+  const visible_progress_ids = useMemo(
+    () => indicator_booking_step_ids(progress_ids),
+    [progress_ids]
+  );
+
+  const visible_progress_step = useMemo(
+    () => booking_step_number(visible_progress_ids, current_step_id),
+    [visible_progress_ids, current_step_id]
+  );
+
+  // Navigation adjacency follows the steps the user actually sees, so a skipped
+  // single-option step never blocks the progress indicator.
   const step_nav_context = useMemo(
     (): booking_step_nav_context => ({
-      step,
-      totalSteps: 5,
+      current_step_id,
+      step_order: visible_progress_ids,
       departmentsCount: departments.length,
       showProviderPicker,
       hasSelectedDepartment: !!selectedDepartment,
@@ -378,10 +504,11 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
       hasSelectedTime: !!selectedTime,
       isRescheduleMode,
       rescheduleContinueDisabled: loading,
-      isSuccessScreen: step === 5,
+      isSuccessScreen: is_step('success'),
     }),
     [
-      step,
+      current_step_id,
+      visible_progress_ids,
       departments.length,
       showProviderPicker,
       selectedDepartment,
@@ -392,67 +519,75 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
       selectedTime,
       isRescheduleMode,
       loading,
+      is_step,
     ]
   );
 
   const can_click_booking_step = useCallback(
-    (target: number) => can_navigate_to_booking_step(step_nav_context, target),
-    [step_nav_context]
+    (target: number) => {
+      const target_id = visible_progress_ids[target - 1];
+      return !!target_id && can_navigate_to_booking_step(step_nav_context, target_id);
+    },
+    [visible_progress_ids, step_nav_context]
   );
 
   const handle_step_click = useCallback(
     (target: number) => {
-      if (!can_navigate_to_booking_step(step_nav_context, target)) return;
-      if (target < step) setDisableAutoAdvance(true);
-      if (step === 3 && target < 3) {
+      const target_id = visible_progress_ids[target - 1];
+      if (!target_id || !can_navigate_to_booking_step(step_nav_context, target_id)) return;
+      const current_index = step_order.indexOf(current_step_id);
+      const target_index = step_order.indexOf(target_id);
+      setDisableAutoAdvance(true);
+      if (is_step('date_time') && target_index < current_index) {
         setSelectedDate(null);
         setSelectedTime('');
       }
-      setStep(target);
+      go_to_step(target_id);
     },
-    [step_nav_context, step]
+    [step_nav_context, current_step_id, step_order, visible_progress_ids, is_step, go_to_step]
+  );
+
+  const go_to_next_step = useCallback(() => {
+    const next_id = resolve_next_booking_step_id(step_order, current_step_id, step_states);
+    if (next_id) go_to_step(next_id);
+  }, [current_step_id, go_to_step, step_order, step_states]);
+
+  const previous_step_id = useMemo(
+    () => previous_booking_step_id(step_order, current_step_id),
+    [current_step_id, step_order]
+  );
+
+  const go_to_previous_step = useCallback(() => {
+    if (!previous_step_id) return;
+    setDisableAutoAdvance(true);
+    go_to_step(previous_step_id);
+  }, [go_to_step, previous_step_id]);
+
+  const workspaceAddress = useMemo(
+    () =>
+      format_workspace_public_address(
+        (generalSettings ?? undefined) as Record<string, unknown> | undefined
+      ),
+    [generalSettings]
   );
 
   const workspacePrimaryColor = generalSettings?.primaryColor ?? DEFAULT_PRIMARY_COLOR;
   const workspaceAccentColor = generalSettings?.accentColor ?? null;
-  // The event type is auto-resolvable whenever exactly one bookable type remains,
-  // whether narrowed by a slug/duration link or simply the only type available.
-  const eventTypeAutoResolved = Boolean(
-    selectedType && sortedEventTypes.length === 1 && !loadingEventTypes
-  );
-  const canSkipToStep3 = eventTypeAutoResolved && serviceGate.canAutoAdvancePastStep1;
 
-  // Step 1 only needs the user when there is a genuine choice to make: multiple
-  // departments, multiple providers in the chosen department, or multiple services.
-  const step1RequiresUserInput =
-    departments.length > 1 ||
-    (!!selectedDepartment && showProviderPicker && serviceProviders.length > 1) ||
-    serviceGate.requiresManualSelection;
-
-  // While single-option levels are still resolving (or about to skip ahead), show a
-  // loader instead of flashing Step 1/2 so single-option links open straight on Step 3.
-  const autoAdvanceResolving =
+  // While a step with nothing to choose settles its sole option, show a loader
+  // instead of flashing the step we are about to skip.
+  const current_step_resolving =
     !isRescheduleMode &&
     !disableAutoAdvance &&
-    ((step === 1 && !step1RequiresUserInput) ||
-      (step === 2 && (loadingEventTypes || canSkipToStep3)));
+    is_booking_step_resolving(step_states, current_step_id);
 
-  useEffect(() => {
-    if (!loadingEventTypes && sortedEventTypes.length === 1 && !selectedType) {
-      setSelectedType(sortedEventTypes[0]);
-    }
-  }, [loadingEventTypes, sortedEventTypes, selectedType]);
-
-  useEffect(() => {
-    if (isRescheduleMode || disableAutoAdvance) return;
-    if (!loadingDepartments && departments.length === 0 && step === 1) {
-      setStep(canSkipToStep3 ? 3 : 2);
-    }
-  }, [loadingDepartments, departments.length, step, canSkipToStep3, isRescheduleMode, disableAutoAdvance]);
-
-  useEffect(() => {
-    if (canSkipToStep3 && step === 2 && !disableAutoAdvance) setStep(3);
-  }, [canSkipToStep3, step, disableAutoAdvance]);
+  useAutoAdvanceSkippableBookingSteps({
+    enabled: !isRescheduleMode && !disableAutoAdvance,
+    current_step_id,
+    step_order,
+    step_states,
+    go_to_step,
+  });
 
   useEffect(() => {
     if (selectedType) {
@@ -462,14 +597,14 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
   }, [selectedType]);
 
   useEffect(() => {
-    if (step === 3 && !selectedDate) setCurrentMonth(new Date());
-  }, [step, selectedDate]);
+    if (is_step('date_time') && !selectedDate) setCurrentMonth(new Date());
+  }, [current_step_id, selectedDate, is_step]);
 
   useEffect(() => {
-    if (step === 3 && !hasManualTimezone) {
+    if (is_step('date_time') && !hasManualTimezone) {
       void refreshLocation();
     }
-  }, [step, hasManualTimezone, refreshLocation]);
+  }, [current_step_id, hasManualTimezone, refreshLocation, is_step]);
 
   useEffect(() => {
     if (selectedDate && selectedTime) {
@@ -487,11 +622,11 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
   }, [intakeForm]);
 
   useEffect(() => {
-    if (step === 4) {
+    if (is_step('intake')) {
       setTouched({ name: false, email: false, phone: false });
       setTouchedCustomFields({});
     }
-  }, [step]);
+  }, [current_step_id, is_step]);
 
   useEffect(() => {
     setSelectedMeetingOption((prev) => {
@@ -552,6 +687,24 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
         if (etId) setRescheduleEventTypeId(etId);
         if (json.booking?.start_at) setPreviousStartAt(json.booking.start_at);
         if (json.booking?.end_at) setPreviousEndAt(json.booking.end_at);
+        if (json.booking) {
+          setRescheduleBookingMeta({
+            id: json.booking.id as string | number | undefined,
+            invitee_email:
+              typeof json.booking.invitee_email === 'string'
+                ? json.booking.invitee_email
+                : null,
+            invitee_phone:
+              typeof json.booking.invitee_phone === 'string'
+                ? json.booking.invitee_phone
+                : null,
+            contact_id:
+              typeof json.booking.contact_id === 'number' ||
+              typeof json.booking.contact_id === 'string'
+                ? json.booking.contact_id
+                : null,
+          });
+        }
         const intakeIds = intakeServiceIdsFromMetadata(json.booking?.metadata);
         if (intakeIds.length > 0) setSelectedServiceIds(intakeIds);
         setRescheduleReady(true);
@@ -569,7 +722,7 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
     const match = eventTypes.find((et) => et.id === rescheduleEventTypeId);
     if (match) {
       setSelectedType(match);
-      setStep(3);
+      go_to_step('date_time');
     }
   }, [isRescheduleMode, rescheduleReady, rescheduleEventTypeId, loadingEventTypes, eventTypes, selectedType]);
 
@@ -611,38 +764,69 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
 
   const handleRescheduleConfirm = async () => {
     if (!selectedType || !selectedDate || !selectedTime || !rescheduleCode) {
-      setError('Please select a date and time');
+      showFormError('Please select a date and time');
       return;
     }
     const selectedSlot = timeslots.find((s) =>
       selectedStartUtc ? s.startUtc === selectedStartUtc : s.time === selectedTime
     );
     if (selectedSlot?.disabled || !selectedSlot?.startUtc) {
-      setError('This time slot is not available. Please select another time.');
+      showFormError('This time slot is not available. Please select another time.');
       return;
     }
 
     setLoading(true);
-    setError(null);
+    clearFormError();
 
     try {
-      const durationMin = resolveEffectiveBookingDurationMinutes(
+      const durationMin = event_type_session_duration_minutes(
         selectedType,
-        selectedServiceIds,
-        serviceCatalogForSlots
+        resolveEffectiveBookingDurationMinutes(
+          selectedType,
+          selectedServiceIds,
+          serviceCatalogForSlots
+        )
       );
       const startDate = new Date(selectedSlot.startUtc);
       if (startDate < new Date()) {
-        setError('Cannot reschedule to a time in the past.');
+        showFormError('Cannot reschedule to a time in the past.');
         setLoading(false);
         return;
       }
 
       const endDate = new Date(startDate.getTime() + durationMin * 60_000);
-      if (isTimeSlotBooked(startDate, endDate, selectedDate, existingBookings)) {
-        setError('This time slot has already been booked. Please select another time.');
+      if (
+        isTimeSlotBooked(
+          startDate,
+          endDate,
+          selectedDate,
+          existingBookings,
+          event_type_slot_capacity(selectedType),
+          slot_occupancy_context_from_event_type(selectedType)
+        )
+      ) {
+        showFormError('This time slot has already been booked. Please select another time.');
         setLoading(false);
         return;
+      }
+
+      if (rescheduleBookingMeta) {
+        const duplicateError = find_client_duplicate_invitee_error(existingBookings, {
+          start_at: startDate.toISOString(),
+          timezone: viewerTimezone,
+          event_type_id: selectedType.id,
+          invitee: {
+            invitee_email: rescheduleBookingMeta.invitee_email,
+            invitee_phone: rescheduleBookingMeta.invitee_phone,
+            contact_id: rescheduleBookingMeta.contact_id,
+          },
+          exclude_booking_id: rescheduleBookingMeta.id,
+        });
+        if (duplicateError) {
+          apply_booking_form_error(setError, setDuplicatePreviewPath, duplicateError);
+          setLoading(false);
+          return;
+        }
       }
 
       const res = await fetch('/api/embed/bookings/reschedule', {
@@ -659,22 +843,27 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
       });
 
       const result = await res.json();
-      if (!res.ok) {
-        throw new Error(result.error || 'Failed to reschedule booking');
-      }
+      throw_if_booking_api_error(res, result, 'Failed to reschedule booking');
       if (result.preview_url) setPreviewUrl(result.preview_url);
       setConfirmed(true);
-      setStep(5);
+      go_to_step('success');
     } catch (err) {
-      setError((err as Error).message || 'An error occurred');
+      if (err instanceof BookingFormSubmitError) {
+        apply_booking_form_error(setError, setDuplicatePreviewPath, {
+          message: err.message,
+          duplicatePreviewPath: err.duplicatePreviewPath,
+        });
+      } else {
+        showFormError((err as Error).message || 'An error occurred');
+      }
     } finally {
       setLoading(false);
     }
   };
 
-  const handleConfirm = async () => {
+  const handleConfirmRequest = () => {
     if (!selectedType || !selectedDate || !selectedTime) {
-      setError('Please fill in all required fields');
+      showFormError('Please fill in all required fields');
       return;
     }
     if (!isStep4Valid) {
@@ -685,18 +874,51 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
         intakeValidation.phone ||
         intakeValidation.services ||
         intakeValidation.meeting_option;
-      setError(first || 'Please fill in all required fields');
+      showFormError(first || 'Please fill in all required fields');
+      return;
+    }
+    if (!isRescheduleMode) {
+      const phoneEnabled = intakeForm?.phone === true;
+      const emailEnabled = intakeForm?.email !== false;
+      if (!phoneEnabled || !emailEnabled) {
+        showFormError(
+          'Phone and email are required on this booking form before you can verify and confirm.'
+        );
+        return;
+      }
+      if (!verificationToken) {
+        setOtpModalOpen(true);
+        return;
+      }
+    }
+    void handleConfirm(verificationToken);
+  };
+
+  const handleConfirm = async (activeVerificationToken: string | null = verificationToken) => {
+    if (!selectedType || !selectedDate || !selectedTime) {
+      showFormError('Please fill in all required fields');
+      return;
+    }
+    if (!isStep4Valid) {
+      const first =
+        intakeValidation._config ||
+        intakeValidation.name ||
+        intakeValidation.email ||
+        intakeValidation.phone ||
+        intakeValidation.services ||
+        intakeValidation.meeting_option;
+      showFormError(first || 'Please fill in all required fields');
       return;
     }
     const usesExplicitProviderPicker =
       departments.length > 0 && selectedDepartment !== null && showProviderPicker;
     if (departments.length > 0) {
       if (!selectedDepartment) {
-        setError('Please select a department');
+        showFormError('Please select a department');
         return;
       }
       if (usesExplicitProviderPicker && !selectedProvider) {
-        setError('Please select a service provider');
+        showFormError('Please select a service provider');
         return;
       }
     }
@@ -704,29 +926,46 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
       selectedStartUtc ? s.startUtc === selectedStartUtc : s.time === selectedTime
     );
     if (selectedSlot?.disabled || !selectedSlot?.startUtc) {
-      setError('This time slot is not available. Please select another time.');
+      showFormError('This time slot is not available. Please select another time.');
+      return;
+    }
+
+    if (!isRescheduleMode && !activeVerificationToken) {
+      setOtpModalOpen(true);
       return;
     }
 
     setLoading(true);
-    setError(null);
+    clearFormError();
 
     try {
-      const durationMin = resolveEffectiveBookingDurationMinutes(
+      const durationMin = event_type_session_duration_minutes(
         selectedType,
-        selectedServiceIds,
-        serviceCatalogForSlots
+        resolveEffectiveBookingDurationMinutes(
+          selectedType,
+          selectedServiceIds,
+          serviceCatalogForSlots
+        )
       );
       const startDate = new Date(selectedSlot.startUtc);
       if (startDate < new Date()) {
-        setError('Cannot book a time slot in the past. Please select a future time.');
+        showFormError('Cannot book a time slot in the past. Please select a future time.');
         setLoading(false);
         return;
       }
 
       const endDate = new Date(startDate.getTime() + durationMin * 60_000);
-      if (isTimeSlotBooked(startDate, endDate, selectedDate, existingBookings)) {
-        setError('This time slot has already been booked. Please refresh and select another time.');
+      if (
+        isTimeSlotBooked(
+          startDate,
+          endDate,
+          selectedDate,
+          existingBookings,
+          event_type_slot_capacity(selectedType),
+          slot_occupancy_context_from_event_type(selectedType)
+        )
+      ) {
+        showFormError('This time slot has already been booked. Please refresh and select another time.');
         setLoading(false);
         return;
       }
@@ -741,11 +980,26 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
       if (phoneEnabled) {
         const normalized = normalizeInviteePhoneForStorage(phone);
         if (normalized.invalid) {
-          setError('Enter a valid phone number');
+          showFormError('Enter a valid phone number');
           setLoading(false);
           return;
         }
         inviteePhoneE164 = normalized.value;
+      }
+
+      const duplicateError = find_client_duplicate_invitee_error(existingBookings, {
+        start_at: startDate.toISOString(),
+        timezone: viewerTimezone,
+        event_type_id: selectedType.id,
+        invitee: {
+          invitee_email: emailEnabled ? email.trim() || null : null,
+          invitee_phone: inviteePhoneE164,
+        },
+      });
+      if (duplicateError) {
+        apply_booking_form_error(setError, setDuplicatePreviewPath, duplicateError);
+        setLoading(false);
+        return;
       }
 
       const inviteeName = nameEnabled
@@ -820,18 +1074,27 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
           customer_timezone: viewerTimezone,
           provider_timezone: providerTimezone,
           timezone: viewerTimezone,
+          book_series: bookSeries,
+          ...(!isRescheduleMode && activeVerificationToken
+            ? { verification_token: activeVerificationToken }
+            : {}),
         }),
       });
 
       const result = await res.json();
-      if (!res.ok) {
-        throw new Error(result.error || 'Failed to create booking');
-      }
+      throw_if_booking_api_error(res, result, 'Failed to create booking');
       if (result.preview_url) setPreviewUrl(result.preview_url);
       setConfirmed(true);
-      setStep(5);
+      go_to_step('success');
     } catch (err) {
-      setError((err as Error).message || 'An error occurred');
+      if (err instanceof BookingFormSubmitError) {
+        apply_booking_form_error(setError, setDuplicatePreviewPath, {
+          message: err.message,
+          duplicatePreviewPath: err.duplicatePreviewPath,
+        });
+      } else {
+        showFormError((err as Error).message || 'An error occurred');
+      }
     } finally {
       setLoading(false);
     }
@@ -885,6 +1148,10 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
             workspaceName={workspace.name}
             workspaceTagline={generalSettings?.tagline}
             workspaceLogoUrl={workspace.logo_url ?? null}
+            workspaceClinicImageUrl={generalSettings?.clinic_image_url ?? null}
+            workspaceHostProfileHighlights={workspaceHostProfileHighlights}
+            providerHostProfileHighlights={providerHostProfileHighlights}
+            workspaceAddress={workspaceAddress}
             workspacePrimaryColor={workspacePrimaryColor}
             workspaceAccentColor={workspaceAccentColor}
             loadingSettings={false}
@@ -894,7 +1161,8 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
             selectedType={selectedType}
             selectedDate={selectedDate}
             selectedTime={selectedTime}
-            step={step}
+            current_step_id={current_step_id}
+            step={visible_progress_step}
             name={name}
             email={email}
             phone={phone}
@@ -909,21 +1177,24 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
             meetingChoiceLabel={meetingChoiceLabel.trim() || undefined}
           />
           <div ref={stepTopRef} className="scroll-mt-4 p-4 sm:p-6 lg:p-8 xl:p-10 bg-white relative">
-            {!autoAdvanceResolving && (
+            {!current_step_resolving && (
               <ProgressIndicator
-                step={step}
+                step={visible_progress_step}
+                totalSteps={visible_progress_ids.length}
                 onStepClick={handle_step_click}
                 canClickStep={can_click_booking_step}
               />
             )}
             {error && (
-              <div className="mb-6 p-4 bg-red-50 border border-red-200 text-red-700 rounded-xl text-sm">
-                {error}
-              </div>
+              <InviteeDuplicateBookingAlert
+                message={error}
+                previewPath={duplicatePreviewPath}
+                className="mb-6"
+              />
             )}
             <div className="relative">
-              {autoAdvanceResolving && <StepFallback />}
-              {step === 1 && !autoAdvanceResolving && (
+              {current_step_resolving && <StepFallback />}
+              {is_step('department_provider') && !current_step_resolving && (
                 <Step1DepartmentProvider
                   departments={departments}
                   selectedDepartment={selectedDepartment}
@@ -946,27 +1217,29 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
                     setSelectedServiceIds([]);
                   }}
                   onSelectProvider={setSelectedProvider}
-                  onContinue={() => setStep(canSkipToStep3 ? 3 : 2)}
+                  onBack={
+                    isRescheduleMode || !previous_step_id
+                      ? undefined
+                      : go_to_previous_step
+                  }
+                  onContinue={go_to_next_step}
                 />
               )}
-              {step === 2 && !autoAdvanceResolving && (
+              {is_step('event_type') && !current_step_resolving && (
                 <Step2ServiceSelection
                   eventTypes={sortedEventTypes}
                   selectedType={selectedType}
                   loadingEventTypes={loadingEventTypes}
                   onSelectType={setSelectedType}
                   onBack={
-                    isRescheduleMode || departments.length === 0
+                    isRescheduleMode || !previous_step_id
                       ? undefined
-                      : () => {
-                          setDisableAutoAdvance(true);
-                          setStep(1);
-                        }
+                      : go_to_previous_step
                   }
-                  onContinue={() => setStep(3)}
+                  onContinue={go_to_next_step}
                 />
               )}
-              {step === 3 && (
+              {is_step('date_time') && (
                 <Suspense fallback={<StepFallback />}>
                   <Step3DateTime
                     selectedDate={selectedDate}
@@ -1005,22 +1278,26 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
                       })
                     }
                     onSetCurrentMonth={(d) => setCurrentMonth(new Date(d.getFullYear(), d.getMonth(), 1))}
-                    onBack={isRescheduleMode ? undefined : () => {
-                      setDisableAutoAdvance(true);
-                      setStep(departments.length === 0 ? 2 : 1);
+                    onBack={isRescheduleMode || !previous_step_id ? undefined : () => {
+                      go_to_previous_step();
                       setSelectedDate(null);
                       setSelectedTime('');
                     }}
-                    onContinue={isRescheduleMode ? handleRescheduleConfirm : () => setStep(4)}
+                    onContinue={isRescheduleMode ? handleRescheduleConfirm : go_to_next_step}
                     continueLabel={isRescheduleMode ? (loading ? 'Rescheduling...' : 'Confirm Reschedule') : undefined}
                     continueDisabled={isRescheduleMode ? loading : undefined}
                     onDaysChange={setDays}
                     previousStartAt={isRescheduleMode ? previousStartAt : undefined}
                     previousEndAt={isRescheduleMode ? previousEndAt : undefined}
+                    bookSeries={bookSeries}
+                    onBookSeriesChange={setBookSeries}
+                    showBookSeriesOption={showBookSeriesOption}
+                    maxWindowDays={event_type_max_window_days(selectedType)}
+                    allowAutoAdvance={!isRescheduleMode && !disableAutoAdvance}
                   />
                 </Suspense>
               )}
-              {step === 4 && (
+              {is_step('intake') && (
                 <Step4IntakeForm
                   intakeForm={intakeForm}
                   name={name}
@@ -1056,15 +1333,15 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
                   files={files}
                   onFilesChange={handleFilesChange}
                   fileError={fileError}
-                  onBack={() => setStep(3)}
-                  onConfirm={handleConfirm}
+                  onBack={go_to_previous_step}
+                  onConfirm={handleConfirmRequest}
                   hideIntakeCatalogServices={hideIntakeCatalogServices}
                   enabledMeetingOptionKeys={bookableMeetingOptionKeys}
                   selectedMeetingOption={selectedMeetingOption}
                   onMeetingOptionChange={setSelectedMeetingOption}
                 />
               )}
-              {step === 5 && (
+              {is_step('success') && (
                 <Step5Success
                   selectedType={selectedType}
                   selectedDate={selectedDate}
@@ -1085,6 +1362,21 @@ export default function EmbedBookingForm({ workspace, eventType, eventTypeSlug, 
           </div>
         )*/}
       </div>
+      {!isRescheduleMode && (
+        <EmbedBookingOtpModal
+          open={otpModalOpen}
+          workspaceId={workspace.id}
+          name={name.trim() || email.trim() || 'Guest'}
+          email={email.trim()}
+          phone={phone.trim()}
+          onClose={() => setOtpModalOpen(false)}
+          onVerified={(token) => {
+            setVerificationToken(token);
+            setOtpModalOpen(false);
+            void handleConfirm(token);
+          }}
+        />
+      )}
     </div>
   );
 }

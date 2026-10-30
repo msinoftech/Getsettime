@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import type { Workspace } from '@app/db';
 import type {
   AvailabilitySettings,
@@ -10,15 +10,31 @@ import type {
 } from '@/src/types/bookingForm';
 import type { IntakeFormSettings, meeting_options_settings } from '@/src/types/workspace';
 import { getAllowedServiceIds, isServicesEnabled } from '@/src/utils/intakeForm';
-import { CALENDAR_BUFFER_DAYS, CALENDAR_BUFFER_DAYS_BEFORE } from '@/src/constants/booking';
+import {
+  event_type_session_duration_minutes,
+  is_event_type_before_department,
+  parse_booking_step_order,
+  resolve_booking_data_fetch_range,
+} from '@/src/features/booking-flow';
 import { userActsAsServiceProviderFromMetadata } from '@/lib/service_provider_role';
 import {
   filterBookableDepartments,
   filterBookableEventTypes,
+  filterDepartmentsForEventType,
   filterEventTypesForServiceProvider,
+  filterProvidersForEventType,
   memberActsInDepartment,
 } from '@/src/utils/bookingFormUtils';
 import { resolveAvailabilityForServiceProvider } from '@/src/utils/availabilityResolution';
+import {
+  calendar_busy_without_booking_overlap,
+  flatten_embed_booking_row,
+} from '@/lib/booking_capacity';
+import { parse_event_type_recurrence } from '@/src/features/event-types/event_type_recurrence';
+import {
+  resolve_member_profile_highlights,
+  resolve_workspace_owner_profile_highlights,
+} from '@/src/utils/booking_host_profile';
 
 interface TeamMemberRow {
   id: string;
@@ -27,6 +43,8 @@ interface TeamMemberRow {
   education?: string | null;
   experience?: string | null;
   specialty?: string | null;
+  bio?: string | null;
+  avatar_url?: string | null;
   role?: string | null;
   additional_roles?: string[];
   departments?: number[];
@@ -44,6 +62,8 @@ interface UseEmbedBookingFormDataParams {
   selectedDepartment: Department | null;
   selectedProvider: ServiceProvider | null;
   selectedType: EventType | null;
+  /** Keeps the event-type list stable after the user picks a type (event-type-first flows). */
+  lockEventTypeCatalog?: boolean;
   days: Date[];
   intakeForm: IntakeFormSettings | undefined;
   onAvailabilityChange?: () => void;
@@ -56,6 +76,7 @@ export function useEmbedBookingFormData({
   selectedDepartment,
   selectedProvider,
   selectedType,
+  lockEventTypeCatalog = false,
   days,
   intakeForm,
   onAvailabilityChange,
@@ -70,8 +91,12 @@ export function useEmbedBookingFormData({
   }, [workspaceMembers, fixedServiceProviderId]);
 
   const departments = useMemo(
-    () => filterBookableDepartments(allDepartments, scopedMembers),
-    [allDepartments, scopedMembers]
+    () =>
+      filterDepartmentsForEventType(
+        filterBookableDepartments(allDepartments, scopedMembers),
+        selectedType
+      ),
+    [allDepartments, scopedMembers, selectedType]
   );
   const [workspaceOwnerUserId, setWorkspaceOwnerUserId] = useState<string | null>(null);
   const [eventTypes, setEventTypes] = useState<EventType[]>([]);
@@ -90,17 +115,19 @@ export function useEmbedBookingFormData({
   const [meetingOptionsSettings, setMeetingOptionsSettings] = useState<
     meeting_options_settings | undefined
   >(undefined);
+  const [bookingStepOrder, setBookingStepOrder] = useState<string[] | null>(null);
   const [generalSettings, setGeneralSettings] = useState<{
     primaryColor?: string;
     accentColor?: string;
     timezone?: string;
     tagline?: string;
+    clinic_image_url?: string | null;
   } | null>(null);
   const [workspaceOwnerAdminNotice, setWorkspaceOwnerAdminNotice] = useState<string | null>(null);
 
   const providersActingInDepartment = useMemo((): ServiceProvider[] => {
     if (!selectedDepartment) return [];
-    return scopedMembers
+    const acting = scopedMembers
       .filter(
         (m) =>
           !m.deactivated &&
@@ -118,27 +145,30 @@ export function useEmbedBookingFormData({
         education: m.education ?? null,
         experience: m.experience ?? null,
         specialty: m.specialty ?? null,
+        bio: m.bio ?? null,
+        avatar_url: m.avatar_url ?? null,
         departments: Array.isArray(m.departments) ? m.departments : [],
         is_workspace_owner: m.is_workspace_owner,
         additional_roles: m.additional_roles,
         role: m.role ?? null,
         admin_notice: m.admin_notice,
       }));
-  }, [selectedDepartment, scopedMembers]);
+    return filterProvidersForEventType(acting, selectedType);
+  }, [selectedDepartment, scopedMembers, selectedType]);
 
   const showProviderPicker = useMemo(() => {
     if (fixedServiceProviderId) return false;
-    return providersActingInDepartment.length > 0;
+    return providersActingInDepartment.length > 1;
   }, [fixedServiceProviderId, providersActingInDepartment]);
 
   const effectiveProviderId = useMemo(() => {
     if (fixedServiceProviderId) return fixedServiceProviderId;
     if (!selectedDepartment) return null;
-    if (!showProviderPicker) return workspaceOwnerUserId;
     if (selectedProvider?.id) return selectedProvider.id;
     if (providersActingInDepartment.length === 1) {
       return providersActingInDepartment[0].id;
     }
+    if (!showProviderPicker) return workspaceOwnerUserId;
     return null;
   }, [
     fixedServiceProviderId,
@@ -155,12 +185,41 @@ export function useEmbedBookingFormData({
     selectedDepartment !== null &&
     showProviderPicker;
 
+  const eventTypeBeforeDepartment = useMemo(() => {
+    if (!bookingStepOrder) return true;
+    const order = parse_booking_step_order(bookingStepOrder);
+    if (!order) return true;
+    return is_event_type_before_department(order);
+  }, [bookingStepOrder]);
+
   const bookableEventTypes = useMemo(() => {
-    if (needsExplicitProvider && !effectiveProviderId) return [];
-    return filterBookableEventTypes(
-      filterEventTypesForServiceProvider(eventTypes, effectiveProviderId)
+    if (
+      needsExplicitProvider &&
+      !effectiveProviderId &&
+      !lockEventTypeCatalog &&
+      !eventTypeBeforeDepartment
+    ) {
+      return [];
+    }
+    const provider_scope_id = lockEventTypeCatalog ? null : effectiveProviderId;
+    const filtered = filterBookableEventTypes(
+      filterEventTypesForServiceProvider(eventTypes, provider_scope_id)
     );
-  }, [eventTypes, effectiveProviderId, needsExplicitProvider]);
+    if (
+      selectedType &&
+      !filtered.some((et) => String(et.id) === String(selectedType.id))
+    ) {
+      return [selectedType, ...filtered];
+    }
+    return filtered;
+  }, [
+    eventTypes,
+    effectiveProviderId,
+    needsExplicitProvider,
+    lockEventTypeCatalog,
+    selectedType,
+    eventTypeBeforeDepartment,
+  ]);
 
   useEffect(() => {
     const fetchSettings = async () => {
@@ -184,10 +243,14 @@ export function useEmbedBookingFormData({
             };
             meeting_options?: meeting_options_settings;
           };
+          booking_step_order?: string[];
         } = await res.json();
         setSettingsIntakeForm(data.settings?.intake_form);
         setGeneralSettings(data.settings?.general || null);
         setMeetingOptionsSettings(data.settings?.meeting_options);
+        setBookingStepOrder(
+          Array.isArray(data.booking_step_order) ? data.booking_step_order : null
+        );
       } catch (e) {
         console.error('Error fetching embed settings:', e);
       }
@@ -212,9 +275,7 @@ export function useEmbedBookingFormData({
           fetch(
             `/api/embed/departments?workspace_id=${workspace.id}${providerQuery}`
           ),
-          fetch(
-            `/api/embed/team-members?workspace_id=${workspace.id}${providerQuery}`
-          ),
+          fetch(`/api/embed/team-members?workspace_id=${workspace.id}`),
         ]);
         if (depRes.ok) {
           const depData = await depRes.json();
@@ -253,12 +314,24 @@ export function useEmbedBookingFormData({
     }
   }, [selectedDepartment, onAvailabilityChange]);
 
+  const eventTypesCatalogLoadedRef = useRef(false);
+
   useEffect(() => {
+    eventTypesCatalogLoadedRef.current = false;
+  }, [workspace.slug, eventTypeSlug]);
+
+  useEffect(() => {
+    if (lockEventTypeCatalog && eventTypesCatalogLoadedRef.current) return;
+
+    let cancelled = false;
     const fetchEventTypes = async () => {
-      setLoadingEventTypes(true);
+      if (!cancelled) setLoadingEventTypes(true);
       try {
-        const params = new URLSearchParams({ workspace_slug: workspace.slug });
-        if (effectiveProviderId) {
+        const params = new URLSearchParams({
+          workspace_slug: workspace.slug,
+          workspace_id: String(workspace.id),
+        });
+        if (effectiveProviderId && !lockEventTypeCatalog) {
           params.set('service_provider_id', effectiveProviderId);
         }
         if (eventTypeSlug) {
@@ -267,16 +340,30 @@ export function useEmbedBookingFormData({
         const res = await fetch(`/api/embed/event-types?${params.toString()}`);
         if (res.ok) {
           const result = await res.json();
-          setEventTypes(result.data || []);
+          if (!cancelled) setEventTypes(result.data || []);
+        } else {
+          console.error('Error fetching embed event types:', res.status, await res.text());
         }
       } catch (e) {
         console.error('Error fetching embed event types:', e);
       } finally {
-        setLoadingEventTypes(false);
+        if (!cancelled) {
+          setLoadingEventTypes(false);
+          eventTypesCatalogLoadedRef.current = true;
+        }
       }
     };
-    fetchEventTypes();
-  }, [workspace.slug, effectiveProviderId, eventTypeSlug]);
+    void fetchEventTypes();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    workspace.slug,
+    workspace.id,
+    eventTypeSlug,
+    lockEventTypeCatalog,
+    lockEventTypeCatalog ? undefined : effectiveProviderId,
+  ]);
 
   useEffect(() => {
     if (!effectiveProviderId && needsExplicitProvider) {
@@ -342,12 +429,16 @@ export function useEmbedBookingFormData({
       setExistingBookings([]);
       return;
     }
-    const startDate = days[0] ?? new Date();
-    const endDate = days[days.length - 1] ?? new Date();
-    const rangeStart = new Date(startDate);
-    rangeStart.setDate(rangeStart.getDate() - CALENDAR_BUFFER_DAYS_BEFORE);
-    const rangeEnd = new Date(endDate);
-    rangeEnd.setDate(rangeEnd.getDate() + CALENDAR_BUFFER_DAYS);
+    const providerTimezone = generalSettings?.timezone?.trim() || 'UTC';
+    const duration = selectedType
+      ? event_type_session_duration_minutes(selectedType, selectedType.duration_minutes ?? 30)
+      : 30;
+    const { rangeStart, rangeEnd } = resolve_booking_data_fetch_range({
+      days,
+      event_type: selectedType,
+      provider_timezone: providerTimezone,
+      duration_minutes: duration,
+    });
     const fmt = (d: Date) =>
       `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
     const fetchBookings = async () => {
@@ -359,15 +450,54 @@ export function useEmbedBookingFormData({
         const res = await fetch(url);
         if (res.ok) {
           const result = await res.json();
-          const active = (result.data || []).filter(
-            (b: Booking & { service_provider_id?: string }) => {
-              if (b.status === 'cancelled' || b.status === 'emergency') return false;
-              if (effectiveProviderId && b.service_provider_id !== effectiveProviderId) return false;
+          const active = (result.data || [])
+            .filter((b: Booking & { service_provider_id?: string }) => {
+              if (
+                b.status === 'cancelled' ||
+                b.status === 'emergency' ||
+                b.status === 'deleted'
+              ) {
+                return false;
+              }
+              if (
+                effectiveProviderId &&
+                b.service_provider_id &&
+                b.service_provider_id !== effectiveProviderId
+              ) {
+                return false;
+              }
               return true;
-            }
+            })
+            .map((b: Record<string, unknown>) => {
+              const row = flatten_embed_booking_row(b);
+              const nested = b.event_types as Record<string, unknown> | null | undefined;
+              if (!row.recurrence_audience && nested?.recurrence) {
+                row.recurrence_audience = parse_event_type_recurrence(nested.recurrence).audience;
+              }
+              return {
+                ...row,
+                invitee_email:
+                  typeof b.invitee_email === 'string' ? b.invitee_email : null,
+                invitee_phone:
+                  typeof b.invitee_phone === 'string' ? b.invitee_phone : null,
+                contact_id:
+                  typeof b.contact_id === 'number' || typeof b.contact_id === 'string'
+                    ? b.contact_id
+                    : null,
+                public_code:
+                  typeof b.public_code === 'string' ? b.public_code : null,
+              } as Booking;
+            });
+          const deduped_calendar_busy = calendar_busy_without_booking_overlap(
+            active,
+            result.calendar_busy || []
           );
-          const calendarBusy = (result.calendar_busy || []).map(
-            (b: { start_at: string; end_at: string }) => ({ ...b, status: 'confirmed' as const })
+          const calendarBusy = deduped_calendar_busy.map(
+            (b: { start_at: string; end_at: string }) => ({
+              ...b,
+              status: 'confirmed' as const,
+              occupancy_source: 'calendar' as const,
+            })
           );
           setExistingBookings([...active, ...calendarBusy]);
         }
@@ -378,7 +508,15 @@ export function useEmbedBookingFormData({
       }
     };
     fetchBookings();
-  }, [selectedType, effectiveProviderId, days, departments.length, workspace.id, needsExplicitProvider]);
+  }, [
+    selectedType,
+    effectiveProviderId,
+    days,
+    departments.length,
+    workspace.id,
+    needsExplicitProvider,
+    generalSettings?.timezone,
+  ]);
 
   useEffect(() => {
     const hasReqs =
@@ -388,12 +526,16 @@ export function useEmbedBookingFormData({
       setDateExceptions([]);
       return;
     }
-    const startDate = days[0] ?? new Date();
-    const endDate = days[days.length - 1] ?? new Date();
-    const rangeStart = new Date(startDate);
-    rangeStart.setDate(rangeStart.getDate() - CALENDAR_BUFFER_DAYS_BEFORE);
-    const rangeEnd = new Date(endDate);
-    rangeEnd.setDate(rangeEnd.getDate() + CALENDAR_BUFFER_DAYS);
+    const providerTimezone = generalSettings?.timezone?.trim() || 'UTC';
+    const duration = selectedType
+      ? event_type_session_duration_minutes(selectedType, selectedType.duration_minutes ?? 30)
+      : 30;
+    const { rangeStart, rangeEnd } = resolve_booking_data_fetch_range({
+      days,
+      event_type: selectedType,
+      provider_timezone: providerTimezone,
+      duration_minutes: duration,
+    });
     const fmt = (d: Date) =>
       `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
@@ -426,6 +568,7 @@ export function useEmbedBookingFormData({
     departments.length,
     workspace.id,
     needsExplicitProvider,
+    generalSettings?.timezone,
   ]);
 
   const effectiveIntakeForm = settingsIntakeForm ?? intakeForm;
@@ -490,6 +633,18 @@ export function useEmbedBookingFormData({
     fetchScoped();
   }, [selectedDepartment, effectiveProviderId, workspace.id]);
 
+  const workspaceHostProfileHighlights = useMemo(
+    () => resolve_workspace_owner_profile_highlights(workspaceMembers, workspaceOwnerUserId),
+    [workspaceMembers, workspaceOwnerUserId]
+  );
+
+  const providerHostProfileHighlights = useMemo(() => {
+    const providerId = fixedServiceProviderId?.trim();
+    if (!providerId) return null;
+    if (providerId === workspaceOwnerUserId) return null;
+    return resolve_member_profile_highlights(workspaceMembers, providerId);
+  }, [workspaceMembers, fixedServiceProviderId, workspaceOwnerUserId]);
+
   return {
     departments,
     loadingDepartments,
@@ -514,5 +669,8 @@ export function useEmbedBookingFormData({
     generalSettings,
     workspaceOwnerAdminNotice: scopedAdminNotice,
     meetingOptions: meetingOptionsSettings,
+    bookingStepOrder,
+    workspaceHostProfileHighlights,
+    providerHostProfileHighlights,
   };
 }

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useLayoutEffect } from 'react';
+import React, { useLayoutEffect, useState } from 'react';
 import type { Department, EventType, Service, ServiceProvider } from '@/src/types/bookingForm';
 import type { IntakeFormSettings } from '@/src/types/workspace';
 import {
@@ -23,16 +23,241 @@ import {
   resolve_workspace_logo_src,
   workspace_logo_is_remote,
 } from '@/src/utils/workspace_logo';
+import type { booking_step_id } from '@/src/features/booking-flow';
 import {
   intakeCustomFieldHasDisplayValue,
   formatIntakeFieldValueForDisplay,
   displayLabelForIntakeField,
 } from '@/src/utils/intakeForm';
+import type { BookingHostProfileHighlights } from '@/src/utils/booking_host_profile';
+import type { WorkspacePublicAddress } from '@/src/utils/workspace_public_address';
+import { WorkspaceUserAvatar } from '@/src/components/User/WorkspaceUserAvatar';
+
+type ProfileDetailIconName = 'address' | 'qualifications' | 'experience' | 'specialty';
+
+type ProfileDetailRow = {
+  key: string;
+  label: string;
+  value: string;
+  icon: ProfileDetailIconName;
+};
+
+function workspace_address_value(address: WorkspacePublicAddress): string {
+  if (!address.line2) return address.line1;
+
+  const [lead] = address.line2
+    .split(' · ')
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const lead_is_street = Boolean(lead) && !/^\d/.test(lead);
+  if (lead_is_street && lead && !address.line1.toLowerCase().includes(lead.toLowerCase())) {
+    return `${lead}, ${address.line1}`;
+  }
+  return address.line1;
+}
+
+function profile_detail_rows(
+  highlights: BookingHostProfileHighlights | null,
+  address?: WorkspacePublicAddress | null
+): ProfileDetailRow[] {
+  const rows: ProfileDetailRow[] = [];
+  if (address?.line1) {
+    rows.push({
+      key: 'address',
+      label: 'Address',
+      value: workspace_address_value(address),
+      icon: 'address',
+    });
+  }
+  if (highlights?.education) {
+    rows.push({
+      key: 'qualifications',
+      label: 'Qualifications',
+      value: highlights.education,
+      icon: 'qualifications',
+    });
+  }
+  if (highlights?.experience) {
+    rows.push({
+      key: 'experience',
+      label: 'Experience',
+      value: highlights.experience,
+      icon: 'experience',
+    });
+  }
+  if (highlights?.specialty) {
+    rows.push({
+      key: 'specialty',
+      label: 'Specialty',
+      value: highlights.specialty,
+      icon: 'specialty',
+    });
+  }
+  return rows;
+}
+
+function ProfileDetailIcon({ name }: { name: ProfileDetailIconName }) {
+  if (name === 'address') {
+    return (
+      <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden>
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M12 21s7-6.2 7-11a7 7 0 10-14 0c0 4.8 7 11 7 11z" />
+        <circle cx="12" cy="10" r="2.25" strokeWidth={1.8} />
+      </svg>
+    );
+  }
+  if (name === 'qualifications') {
+    return (
+      <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden>
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M22 10L12 5 2 10l10 5 10-5z" />
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M6 12v5c0 1.4 2.7 3 6 3s6-1.6 6-3v-5" />
+      </svg>
+    );
+  }
+  if (name === 'experience') {
+    return (
+      <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden>
+        <circle cx="12" cy="12" r="8" strokeWidth={1.8} />
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M12 8v4l3 2" />
+      </svg>
+    );
+  }
+  return (
+    <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden>
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={1.8}
+        d="M12 3.5l2.05 4.16 4.59.67-3.32 3.24.78 4.57L12 14l-4.1 2.14.78-4.57L5.36 8.33l4.59-.67L12 3.5z"
+      />
+    </svg>
+  );
+}
+
+function ProfileDetailRows({ rows }: { rows: ProfileDetailRow[] }) {
+  return (
+    <>
+      {rows.map((row, index) => (
+        <div
+          key={row.key}
+          className={`flex items-center gap-3 px-4 py-3.5 ${index > 0 ? 'border-t border-slate-100' : ''}`}
+        >
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-indigo-50 text-indigo-500">
+            <ProfileDetailIcon name={row.icon} />
+          </div>
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-slate-800">{row.label}</p>
+            <p className="break-words text-sm leading-snug text-slate-500">{row.value}</p>
+          </div>
+        </div>
+      ))}
+    </>
+  );
+}
+
+function ProfileHighlightList({ rows }: { rows: ProfileDetailRow[] }) {
+  if (rows.length === 0) return null;
+  return (
+    <ul className="min-w-0 space-y-2 sm:max-w-[45%] sm:border-l sm:border-slate-200 sm:pl-4">
+      {rows.map((row) => (
+        <li key={row.key} className="flex min-w-0 items-start gap-2">
+          <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-indigo-50 text-indigo-500 [&_svg]:h-4 [&_svg]:w-4">
+            <ProfileDetailIcon name={row.icon} />
+          </span>
+          <div className="min-w-0">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">{row.label}</p>
+            <p className="break-words text-sm leading-snug text-gray-800">{row.value}</p>
+          </div>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function ProviderProfileSection({ profile }: { profile: BookingHostProfileHighlights | null }) {
+  if (!profile) return null;
+
+  const name = profile.name?.trim() || '';
+  const chips: { key: string; title: string; caption: string; icon: ProfileDetailIconName }[] = [];
+  if (profile.experience) {
+    chips.push({ key: 'experience', title: profile.experience, caption: 'Experience', icon: 'experience' });
+  }
+  if (profile.specialty) {
+    chips.push({ key: 'specialty', title: profile.specialty, caption: 'Specialty', icon: 'specialty' });
+  }
+
+  return (
+    <div className="mt-6 rounded-2xl border-2 border-indigo-200 bg-white p-4 shadow-sm ring-4 ring-indigo-50/60">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0 flex-1">
+          <p className="text-xs font-semibold uppercase tracking-wide text-indigo-600">Service provider</p>
+          <div className="mt-3 flex min-w-0 items-center gap-4">
+            <WorkspaceUserAvatar
+              name={name || undefined}
+              email={profile.email}
+              avatarUrl={profile.avatar_url}
+              size="xl"
+              className="border-4 border-white shadow-md"
+            />
+            <div className="min-w-0">
+              {name ? <div className="text-lg font-semibold capitalize text-gray-900">{name}</div> : null}
+              {profile.specialty ? (
+                <p className="text-sm font-semibold text-indigo-600">{profile.specialty}</p>
+              ) : null}
+              {profile.education ? (
+                <p className="mt-1.5 flex items-center gap-1.5 text-sm text-gray-600">
+                  <span className="shrink-0 text-gray-500 [&_svg]:h-4 [&_svg]:w-4">
+                    <ProfileDetailIcon name="qualifications" />
+                  </span>
+                  <span className="min-w-0 break-words">{profile.education}</span>
+                </p>
+              ) : null}
+            </div>
+          </div>
+        </div>
+        {chips.length > 0 ? (
+          <div className="flex w-full flex-col gap-2 sm:w-[42%] sm:shrink-0">
+            {chips.map((chip) => (
+              <div
+                key={chip.key}
+                className="flex min-w-0 items-center gap-2.5 rounded-xl border border-indigo-100 bg-indigo-50/70 px-3 py-2.5"
+              >
+                <span className="shrink-0 text-indigo-500">
+                  <ProfileDetailIcon name={chip.icon} />
+                </span>
+                <div className="min-w-0">
+                  <p className="break-words text-sm font-semibold leading-tight text-gray-900">{chip.title}</p>
+                  <p className="text-xs text-gray-500">{chip.caption}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </div>
+      {profile.bio ? (
+        <p className="mt-3 text-sm leading-relaxed text-gray-600 whitespace-pre-line line-clamp-4">{profile.bio}</p>
+      ) : null}
+    </div>
+  );
+}
+
+function ProfileDetailCard({ rows }: { rows: ProfileDetailRow[] }) {
+  if (rows.length === 0) return null;
+  return (
+    <div className="mt-4 w-full overflow-hidden rounded-2xl border border-slate-200/80 bg-white/90 shadow-sm">
+      <ProfileDetailRows rows={rows} />
+    </div>
+  );
+}
 
 interface BookingPreviewSidebarProps {
   workspaceName: string;
   workspaceTagline?: string | null;
   workspaceLogoUrl: string | null;
+  /** Optional clinic/facility photo for public booking header (falls back to logo) */
+  workspaceClinicImageUrl?: string | null;
+  workspaceHostProfileHighlights?: BookingHostProfileHighlights | null;
+  providerHostProfileHighlights?: BookingHostProfileHighlights | null;
+  workspaceAddress?: WorkspacePublicAddress | null;
   workspacePrimaryColor: string;
   workspaceAccentColor: string | null;
   loadingSettings: boolean;
@@ -60,12 +285,17 @@ interface BookingPreviewSidebarProps {
   customFieldValues?: Record<string, string>;
   /** Resolved meeting preference label (step 4 / 5) */
   meetingChoiceLabel?: string | null;
+  current_step_id?: booking_step_id;
 }
 
 export function BookingPreviewSidebar({
   workspaceName,
   workspaceTagline,
   workspaceLogoUrl,
+  workspaceClinicImageUrl,
+  workspaceHostProfileHighlights = null,
+  providerHostProfileHighlights = null,
+  workspaceAddress = null,
   workspacePrimaryColor,
   workspaceAccentColor,
   loadingSettings,
@@ -88,6 +318,7 @@ export function BookingPreviewSidebar({
   intakeForm,
   customFieldValues = {},
   meetingChoiceLabel,
+  current_step_id,
 }: BookingPreviewSidebarProps) {
   const departmentWithStep1Services = (deptName: string) => {
     if (!selectedStep1ServiceIds.length || !step1CatalogServices.length) return deptName;
@@ -102,10 +333,20 @@ export function BookingPreviewSidebar({
   const primary = workspacePrimaryColor || DEFAULT_PRIMARY_COLOR;
   const accent = workspaceAccentColor || workspacePrimaryColor || DEFAULT_ACCENT_COLOR;
   const resolvedLogoSrc = resolve_workspace_logo_src(workspaceLogoUrl);
-  const logoTreatAsRemote = workspace_logo_is_remote(resolvedLogoSrc);
+  const clinicImageSrc =
+    typeof workspaceClinicImageUrl === 'string' && workspaceClinicImageUrl.trim() !== ''
+      ? workspaceClinicImageUrl.trim()
+      : null;
+  const headerBrandSrc = clinicImageSrc ?? resolvedLogoSrc;
+  const headerBrandTreatAsRemote = workspace_logo_is_remote(headerBrandSrc);
   const displayTagline = workspaceTagline?.trim() || '';
+  const workspaceBio = workspaceHostProfileHighlights?.bio?.trim() || '';
+  const workspaceHighlightRows = profile_detail_rows(workspaceHostProfileHighlights);
+  const workspaceAddressRows = profile_detail_rows(null, workspaceAddress);
   const hasSelection = selectedDepartment || selectedProvider || selectedType;
-  const showIntakeInPreview = step === 4 || step === 5;
+  const showIntakeInPreview = current_step_id
+    ? current_step_id === 'intake' || current_step_id === 'success'
+    : step === 4 || step === 5;
   const customFieldRows =
     (intakeForm?.custom_fields ?? []).filter((field) =>
       intakeCustomFieldHasDisplayValue(customFieldValues[field.id])
@@ -113,6 +354,16 @@ export function BookingPreviewSidebar({
   const hasAdditionalInfo =
     showIntakeInPreview &&
     (customFieldRows.length > 0 || notes.trim().length > 0);
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [belowLg, setBelowLg] = useState(false);
+
+  useLayoutEffect(() => {
+    const media = window.matchMedia('(max-width: 1023px)');
+    const sync = () => setBelowLg(media.matches);
+    sync();
+    media.addEventListener('change', sync);
+    return () => media.removeEventListener('change', sync);
+  }, []);
 
   useLayoutEffect(() => {
     if (selectedDate) step3PerfSidebarDateRendered(selectedDate);
@@ -124,7 +375,7 @@ export function BookingPreviewSidebar({
 
   return (
     <div
-      className="w-full lg:sticky lg:top-0 lg:overflow-y-auto bg-gradient-to-br p-4 sm:p-6 lg:p-8 relative overflow-hidden"
+      className="w-full lg:sticky lg:top-0 lg:overflow-y-auto bg-gradient-to-br p-4 sm:p-6 relative overflow-hidden"
       style={{ background: `linear-gradient(135deg, ${primary}08 0%, ${accent}08 100%)` }}
     >
       <div className="absolute inset-0 opacity-5">
@@ -139,27 +390,61 @@ export function BookingPreviewSidebar({
 
       <div className="relative z-10">
         <div className="mb-4 sm:mb-4 lg:mb-6">
+        {workspaceLogoUrl ? (
           <div className="flex justify-end w-full mb-3 sm:mb-4 px-2 min-h-[1rem]">
-            {workspaceLogoUrl ? (
               <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">
                 Powered by GetSetTime
               </span>
-            ) : null}
           </div>
-          <div className="inline-flex items-center gap-2 mb-2 sm:mb-3">
+          ) : null}
+
+          <button
+            type="button"
+            className="inline-flex items-center gap-2 mb-2 sm:mb-3 border-0 bg-transparent p-0 text-left font-inherit text-inherit cursor-pointer lg:cursor-default"
+            aria-expanded={belowLg ? detailsOpen : true}
+            aria-controls="booking-live-preview-details"
+            onClick={() => {
+              if (!belowLg) return;
+              setDetailsOpen((open) => !open);
+            }}
+          >
             <div className="w-2 h-2 rounded-full animate-pulse bg-indigo-600" />
             <span className="text-xs font-semibold uppercase tracking-wider">Live Preview</span>
-          </div>
+            <svg
+              className={`h-3.5 w-3.5 text-gray-500 transition-transform lg:hidden ${detailsOpen ? 'rotate-180' : ''}`}
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+              aria-hidden
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+
           <div className="py-2 z-10 relative">
-            <div className="flex flex-wrap items-center gap-4">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-4">
               {!loadingSettings ? (
                 <img
-                  src={resolvedLogoSrc}
+                  src={headerBrandSrc}
                   alt={workspaceName}
-                  className={`w-12 h-12 rounded-xl ${logoTreatAsRemote ? 'object-contain bg-white/80 p-0.5' : 'object-contain'}`}
+                  className={`shrink-0 rounded-xl ${
+                    clinicImageSrc
+                      ? 'h-20 w-20 sm:h-24 sm:w-24 object-cover'
+                      : `h-12 w-12 ${
+                          headerBrandTreatAsRemote
+                            ? 'object-contain bg-white/80 p-0.5'
+                            : 'object-contain'
+                        }`
+                  }`}
                 />
               ) : (
-                <div className="w-12 h-12 rounded-xl bg-white/40 animate-pulse" aria-hidden />
+                <div
+                  className={`rounded-xl bg-white/40 animate-pulse ${
+                    clinicImageSrc ? 'h-20 w-20 sm:h-24 sm:w-24' : 'h-12 w-12'
+                  }`}
+                  aria-hidden
+                />
               )}
               <div className="min-w-0">
                 <div className="text-sm text-gray-600">Schedule with</div>
@@ -169,10 +454,25 @@ export function BookingPreviewSidebar({
                 ) : null}
               </div>
             </div>
+            <ProfileHighlightList rows={workspaceHighlightRows} />
+            </div>
+            {workspaceBio ? (
+              <div className="mt-4">
+                <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">About the clinic</p>
+                <p className="mt-1 text-sm leading-relaxed text-gray-600 whitespace-pre-line line-clamp-4">
+                  {workspaceBio}
+                </p>
+              </div>
+            ) : null}
+            <ProviderProfileSection profile={providerHostProfileHighlights} />
+            <ProfileDetailCard rows={workspaceAddressRows} />
           </div>
         </div>
 
-        <div className="bg-white/80 backdrop-blur-md rounded-xl sm:rounded-2xl p-4 sm:p-5 shadow-lg border border-white/50 hover:shadow-xl transition-all duration-300 group space-y-6">
+        <div
+          id="booking-live-preview-details"
+          className={`relative bg-white/80 backdrop-blur-md rounded-xl sm:rounded-2xl p-4 sm:p-5 shadow-lg border border-white/50 hover:shadow-xl transition-all duration-300 group space-y-6 ${hasSelection ? 'mt-3' : ''} ${detailsOpen ? '' : 'hidden lg:block'}`}
+        >
           {!hasSelection ? (
             <div className="relative">
               <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/50 to-transparent animate-shimmer" />
@@ -193,7 +493,7 @@ export function BookingPreviewSidebar({
               {selectedDepartment && !selectedProvider && (
                 <div className="details-box">
                   <div className="flex items-start gap-3 sm:gap-4">
-                    <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-xl bg-gradient-to-br from-indigo-500 to-indigo-600 flex items-center justify-center text-white flex-shrink-0 shadow-lg">
+                    <div className="w-12 h-12 xl:w-14 xl:h-14 rounded-xl bg-gradient-to-br from-indigo-500 to-indigo-600 flex items-center justify-center text-white flex-shrink-0 shadow-lg">
                       <svg className="w-6 h-6 sm:w-7 sm:h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
                       </svg>
@@ -211,7 +511,7 @@ export function BookingPreviewSidebar({
               {selectedDepartment && selectedProvider && (
                 <div className="details-box">
                   <div className="flex items-start gap-3 sm:gap-4">
-                    <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-xl bg-gradient-to-br from-indigo-500 to-indigo-600 flex items-center justify-center text-white flex-shrink-0 shadow-lg">
+                    <div className="w-12 h-12 xl:w-14 xl:h-14 rounded-xl bg-gradient-to-br from-indigo-500 to-indigo-600 flex items-center justify-center text-white flex-shrink-0 shadow-lg">
                       <svg className="w-6 h-6 sm:w-7 sm:h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
                       </svg>
@@ -394,6 +694,14 @@ export function BookingPreviewSidebar({
               )}
             </>
           )}
+          {hasSelection ? (
+            <span className="absolute -top-3 left-4 mt-0! inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-emerald-700 shadow-sm">
+              <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+              </svg>
+              Selected
+            </span>
+          ) : null}
         </div>
       </div>
     </div>

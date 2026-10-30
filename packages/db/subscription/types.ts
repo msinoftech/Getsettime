@@ -4,13 +4,19 @@ export type plan_content_context = 'upgrade_modal' | 'billing_page';
 
 export type plan_cta_variant = 'primary' | 'dark';
 
+export type booking_limit_period = 'monthly' | 'lifetime';
+
 export type plans = {
   id: number;
   name: string;
   slug: string;
   price: number;
-  /** -1 = unlimited monthly bookings */
+  /** -1 = unlimited bookings (respects booking_limit_period for display only) */
   booking_limit: number;
+  /** monthly = cap per UTC month; lifetime = total cap for workspace */
+  booking_limit_period: booking_limit_period;
+  /** -1 = unlimited claim-free signups (free plan landing cap) */
+  user_limit: number;
   workspace_limit: number;
   admin_limit: number;
   service_provider_limit: number;
@@ -64,6 +70,8 @@ export type plan_input = {
   slug: string;
   price: number;
   booking_limit: number;
+  booking_limit_period?: booking_limit_period;
+  user_limit?: number;
   workspace_limit?: number;
   admin_limit?: number;
   service_provider_limit?: number;
@@ -90,6 +98,7 @@ export type workspace_subscriptions = {
   stripe_subscription_id: string | null;
   trial_ends_at: string | null;
   cancelled_at: string | null;
+  limit_notification_sent_at?: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -114,14 +123,28 @@ export type workspace_plan_snapshot = {
 };
 
 export type workspace_usage = {
+  /** Bookings counted toward plan limit (monthly or lifetime per plan) */
+  bookings_used: number;
+  /** @deprecated Use bookings_used for plan limit display */
   bookings_this_month: number;
   booking_limit: number;
+  booking_limit_period: booking_limit_period;
   booking_percent_used: number;
   service_provider_count: number;
   service_provider_limit: number;
+  admin_count: number;
+  admin_limit: number;
   location_count: number;
   booking_warning_threshold: boolean;
   booking_limit_reached: boolean;
+};
+
+export type booking_limit_remaining = {
+  unlimited: boolean;
+  used: number;
+  limit: number;
+  remaining: number;
+  period: booking_limit_period;
 };
 
 export type PlanLimitErrorCode = 'PLAN_LIMIT' | 'FEATURE_GATED';

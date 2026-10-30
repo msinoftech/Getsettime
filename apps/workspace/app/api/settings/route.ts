@@ -232,7 +232,7 @@ export async function POST(req: NextRequest) {
         newSettings = { ...newSettings, meeting_options: sanitized };
       }
 
-      const blockedKeys = ['general', 'intake_form'] as const;
+      const blockedKeys = ['general', 'intake_form', 'booking_rules'] as const;
       for (const key of blockedKeys) {
         if (Object.prototype.hasOwnProperty.call(newSettings, key)) {
           delete (newSettings as Record<string, unknown>)[key];
@@ -330,6 +330,24 @@ export async function POST(req: NextRequest) {
           : undefined)
       ),
     };
+
+    const existingBookingRules =
+      typeof existingSettings.booking_rules === 'object' &&
+      existingSettings.booking_rules !== null
+        ? (existingSettings.booking_rules as Record<string, unknown>)
+        : null;
+    const incomingBookingRules =
+      typeof newSettings.booking_rules === 'object' &&
+      newSettings.booking_rules !== null
+        ? (newSettings.booking_rules as Record<string, unknown>)
+        : null;
+    if (existingBookingRules || incomingBookingRules) {
+      (mergedSettings as Record<string, unknown>).booking_rules = {
+        ...(existingBookingRules || {}),
+        ...(incomingBookingRules || {}),
+      };
+    }
+
     mergedSettings.intake_form = lockIntakeFormFields(
       existingSettings.intake_form,
       mergedSettings.intake_form

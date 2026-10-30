@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@source "../../../packages/ui/src";
 
 :root {
   --background: #ffffff;
@@ -32,6 +33,192 @@ body{
   animation: fade-slide-in 0.25s ease-out;
 }
 
+/* Toast notifications — enter/exit by viewport edge */
+@keyframes toast-in-top-right {
+  0% {
+    opacity: 0;
+    transform: translateX(calc(100% + 1rem)) translateY(-0.75rem) scale(0.94);
+  }
+  55% {
+    opacity: 1;
+    transform: translateX(-8px) translateY(2px) scale(1.02);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(0) translateY(0) scale(1);
+  }
+}
+
+@keyframes toast-out-top-right {
+  from {
+    opacity: 1;
+    transform: translateX(0) translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateX(calc(100% + 1rem)) translateY(-0.5rem) scale(0.94);
+  }
+}
+
+@keyframes toast-in-right {
+  0% {
+    opacity: 0;
+    transform: translateX(calc(100% + 0.75rem)) scale(0.96);
+  }
+  65% {
+    opacity: 1;
+    transform: translateX(-6px) scale(1.01);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+@keyframes toast-out-right {
+  from {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateX(calc(100% + 0.75rem)) scale(0.96);
+  }
+}
+
+@keyframes toast-in-left {
+  0% {
+    opacity: 0;
+    transform: translateX(calc(-100% - 0.75rem)) scale(0.96);
+  }
+  65% {
+    opacity: 1;
+    transform: translateX(6px) scale(1.01);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+@keyframes toast-out-left {
+  from {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateX(calc(-100% - 0.75rem)) scale(0.96);
+  }
+}
+
+@keyframes toast-in-down {
+  0% {
+    opacity: 0;
+    transform: translateY(calc(-100% - 0.75rem)) scale(0.96);
+  }
+  65% {
+    opacity: 1;
+    transform: translateY(6px) scale(1.01);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes toast-out-up {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(calc(-100% - 0.75rem)) scale(0.96);
+  }
+}
+
+@keyframes toast-in-up {
+  0% {
+    opacity: 0;
+    transform: translateY(calc(100% + 0.75rem)) scale(0.96);
+  }
+  65% {
+    opacity: 1;
+    transform: translateY(-6px) scale(1.01);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes toast-out-down {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(calc(100% + 0.75rem)) scale(0.96);
+  }
+}
+
+.toast-enter-top-right {
+  animation: toast-in-top-right 0.48s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.toast-exit-top-right {
+  animation: toast-out-top-right 0.3s cubic-bezier(0.4, 0, 1, 1) both;
+}
+
+.toast-enter-right {
+  animation: toast-in-right 0.42s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.toast-exit-right {
+  animation: toast-out-right 0.28s cubic-bezier(0.4, 0, 1, 1) both;
+}
+
+.toast-enter-left {
+  animation: toast-in-left 0.42s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.toast-exit-left {
+  animation: toast-out-left 0.28s cubic-bezier(0.4, 0, 1, 1) both;
+}
+
+.toast-enter-down {
+  animation: toast-in-down 0.42s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.toast-exit-up {
+  animation: toast-out-up 0.28s cubic-bezier(0.4, 0, 1, 1) both;
+}
+
+.toast-enter-up {
+  animation: toast-in-up 0.42s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.toast-exit-down {
+  animation: toast-out-down 0.28s cubic-bezier(0.4, 0, 1, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toast-enter-top-right,
+  .toast-enter-right,
+  .toast-enter-left,
+  .toast-enter-down,
+  .toast-enter-up,
+  .toast-exit-top-right,
+  .toast-exit-right,
+  .toast-exit-left,
+  .toast-exit-up,
+  .toast-exit-down {
+    animation: none;
+  }
+}
+
 /* Responsive table */
 @media screen and (max-width: 1300px) {
   table {
@@ -56,12 +243,14 @@ body{
   table tr {
     display: block;
     margin-bottom: 1em;
+    background-color: #f1f5f980;
+    border-radius: 12px;
+    overflow: hidden;
   }
 
   table td {
-    border-bottom: 1px solid #ddd;
     display: block; 
-    /* text-align: right; */
+    text-align: right;
   }
 
   table td::before {
@@ -163,11 +352,10 @@ body{
 }
 
 .booking-phone-input .booking-phone-input__country-btn {
-  height: 52px;
+  height: 48px;
   min-width: 4.25rem;
   border: 0 !important;
   border-right: 1px solid #e5e7eb !important;
-  border-radius: 0 !important;
   margin-right: 0 !important;
   background-color: #f9fafb !important;
   padding: 0 0.5rem;
@@ -179,14 +367,13 @@ body{
 
 .booking-phone-input .booking-phone-input__dial-code {
   flex: 0 0 auto;
-  height: 52px;
+  height: 48px;
   border: 0 !important;
   border-right: 1px solid #e5e7eb !important;
   margin-right: 0 !important;
   background-color: #f9fafb !important;
   padding: 0 0.625rem;
   color: #374151;
-  font-size: 1rem;
   font-weight: 500;
   user-select: none;
   cursor: default;
@@ -197,10 +384,9 @@ body{
   flex: 1 1 0%;
   min-width: 0;
   width: auto !important;
-  min-height: 52px;
+  min-height: 48px;
   height: auto !important;
   border: 0 !important;
-  border-radius: 0 !important;
   margin: 0 !important;
   background: transparent !important;
   padding: 1rem !important;
@@ -222,7 +408,6 @@ body{
 }
 
 .booking-phone-input .react-international-phone-country-selector-dropdown__list-item {
-  border-radius: 12px;
   padding: 10px 12px;
   font-size: 14px;
   transition: background 0.2s ease;
@@ -236,28 +421,17 @@ body{
 .settings-phone-input.booking-phone-input {
   max-width: 100%;
   min-width: 0;
-  border-radius: 1rem;
-  border: 1px solid #e2e8f0;
-  background-color: #f8fafc;
-  transition: border-color 0.2s ease, background-color 0.2s ease, box-shadow 0.2s ease;
-}
-
-.settings-phone-input.booking-phone-input:focus-within {
-  border-color: #818cf8;
-  background-color: #fff;
-  box-shadow: 0 0 0 4px rgb(99 102 241 / 0.1);
 }
 
 .settings-phone-input.booking-phone-input .booking-phone-input__country-btn,
 .settings-phone-input.booking-phone-input .booking-phone-input__dial-code {
-  height: 3.5rem;
   background-color: #f8fafc !important;
+  height: 48px !important;
 }
 
 .settings-phone-input.booking-phone-input .react-international-phone-input,
 .settings-phone-input.booking-phone-input .booking-phone-input__field {
-  min-height: 3.5rem;
   padding: 0 1rem !important;
-  font-size: 1rem !important;
-  font-weight: 500;
+  height: 48px !important;
+  font-size: .875rem !important;
 }

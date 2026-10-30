@@ -1,14 +1,13 @@
 "use client";
 
+import { getWorkspaceSession } from '@/src/lib/auth_session';
 import { useMemo, useState, useEffect, useRef, useCallback, type FormEvent } from "react";
 import {
   LuCalendarDays as CalendarDays,
-  LuPencil as Edit3,
   LuPlus as Plus,
   LuUsers as Users,
   LuX as X,
   LuSettings2 as Settings2,
-  LuCircleCheckBig as CheckCircle2,
   LuRotateCcw as RotateCcw,
   LuEyeOff as EyeOff,
   LuGlobe as Globe,
@@ -16,27 +15,36 @@ import {
 import { Pagination, usePagination } from "@app/ui";
 import { supabase } from "@/lib/supabaseClient";
 import { useAuth } from "@/src/providers/AuthProvider";
-import { AlertModal } from "@/src/components/ui/AlertModal";
+import { toast } from "@/src/components/ui/toast";
 import { ConfirmModal } from "@/src/components/ui/ConfirmModal";
 import { EventTypeSkeleton } from "@/src/components/ui/EventTypeSkeleton";
 import {
   EventTypeFormLayout,
   LocationTypesMultiSelect,
+  empty_form_recurrence,
   format_event_type_location_labels,
+  from_form_recurrence,
   parse_location_types_from_storage,
   serialize_location_types,
+  to_form_recurrence,
   total_duration_minutes,
   type event_type_form_state,
   type event_type_location_value,
   type event_type_service_provider_option,
 } from "@/src/features/event-types/EventTypeFormLayout";
+import { default_booking_options_form_fields } from "@/src/features/event-types/event_type_booking_options";
 import { EventTypeActionsMenu } from "@/src/features/event-types/EventTypeActionsMenu";
 import { EventTypeEditForm } from "@/src/features/event-types/EventTypeEditForm";
 import { EventTypeFilters } from "@/src/features/event-types/EventTypeFilters";
 import { EventTypeListMobileCards } from "@/src/features/event-types/EventTypeListMobileCards";
-import { EventTypeLocationCell } from "@/src/features/event-types/EventTypeLocationDisplay";
+import { EventTypeAssignedProviders } from "@/src/features/event-types/EventTypeAssignedProviders";
+import {
+  eventTypeAssignedProviderIds,
+  isProviderAssignedToEventType,
+} from "@/src/utils/bookingFormUtils";
 import {
   check_event_type_slug_available,
+  normalize_event_type_slug_input,
   parse_short_description_from_settings,
   slugify_event_type_title,
   validate_event_type_slug_input,
@@ -67,6 +75,7 @@ import {
 } from "@/lib/service_provider_role";
 import {
   copy_text_to_clipboard,
+  get_public_booking_origin,
   resolve_event_type_public_booking_url,
 } from "@/src/utils/public_booking_link";
 import { useServiceProviders } from "@/src/hooks/useBookingLookups";
@@ -76,6 +85,10 @@ import {
 } from "@/src/utils/booking";
 import { useWorkspaceSettings } from "@/src/hooks/useWorkspaceSettings";
 import { format_timezone_display_label } from "@/lib/date-timezone";
+import { parse_event_type_format } from "@/src/features/event-types/event_type_format";
+import type { event_type_format } from "@/src/types/event_types";
+import type { event_type_format_filter_value } from "@/src/features/event-types/EventTypeFilters";
+import ScreenGate from "@/src/components/ScreenGate";
 
 interface EventType {
   id: number;
@@ -88,17 +101,30 @@ interface EventType {
   location_value: any;
   is_public: boolean | null;
   status?: string | null;
+  internal_label?: string | null;
+  event_type_format?: string | null;
+  capacity_per_slot?: number | null;
+  availability_mode?: string | null;
+  recurrence?: unknown;
+  allow_waitlist?: boolean | null;
+  waitlist_capacity?: number | null;
+  show_seats_remaining?: boolean | null;
+  min_booking_notice_minutes?: number | null;
+  max_booking_window_days?: number | null;
+  allow_reschedule?: boolean | null;
+  allow_cancellation?: boolean | null;
   settings: any;
   created_at: string;
   bookings_count?: number | null;
   owner_id?: string | null;
+  service_provider_ids?: string[] | null;
 }
 
 const EVENT_TYPES_PAGE_SIZE = 10;
 
 const CARD_GRADIENTS = [
   "from-cyan-500 to-sky-600",
-  "from-violet-500 to-indigo-600",
+  "from-indigo-500 to-indigo-600",
   "from-emerald-500 to-teal-600",
   "from-amber-500 to-orange-600",
   "from-rose-500 to-pink-600",
@@ -184,6 +210,18 @@ function format_duration_short(totalMinutes: number | null): string {
   return `${h}h ${m}m`;
 }
 
+function event_type_format_list_label(format: event_type_format): string {
+  if (format === "group_class") return "Group";
+  if (format === "recurring") return "Recurring";
+  return "One-on-one";
+}
+
+function event_type_format_badge_class(format: event_type_format): string {
+  if (format === "group_class") return "bg-sky-50 text-sky-600 border border-sky-200";
+  if (format === "recurring") return "bg-emerald-50 text-emerald-600 border border-emerald-200";
+  return "bg-indigo-50 text-indigo-600 border border-indigo-200";
+}
+
 export default function EventTypes() {
   const { user } = useAuth();
   const {
@@ -214,19 +252,20 @@ export default function EventTypes() {
   const loadingSlug = workspaceSettingsLoading;
   const [copiedId, setCopiedId] = useState<number | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
-  const [alertMessage, setAlertMessage] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [search, setSearch] = useState("");
+  const [format_filter, set_format_filter] =
+    useState<event_type_format_filter_value>("all");
   const [visibility_filter, set_visibility_filter] = useState<
     "all" | "private" | "public"
   >("all");
   const [provider_filter, set_provider_filter] = useState("");
   const [status_filter, set_status_filter] = useState<"" | "active" | "draft">("");
+  const [selected_ids, set_selected_ids] = useState<Set<number>>(() => new Set());
   const { data: serviceProviders, loading: service_providers_loading } =
     useServiceProviders();
   const [settings_open, set_settings_open] = useState(false);
-  const [settings_saved_message, set_settings_saved_message] = useState("");
   const [event_settings, set_event_settings] = useState<event_settings_state>(
     DEFAULT_EVENT_SETTINGS
   );
@@ -271,8 +310,19 @@ export default function EventTypes() {
   const event_type_self_assign_option = useMemo(() => {
     if (logged_in_user_acts_as_service_provider) return null;
     if (!logged_in_user_display_name) return null;
-    return { label: logged_in_user_display_name };
-  }, [logged_in_user_acts_as_service_provider, logged_in_user_display_name]);
+    const meta = user?.user_metadata as Record<string, unknown> | undefined;
+    const avatar_url =
+      typeof meta?.avatar_url === "string" && meta.avatar_url.trim() !== ""
+        ? meta.avatar_url.trim()
+        : serviceProviders.find((provider) => provider.id === user?.id)?.avatar_url?.trim() ||
+          null;
+    return { label: logged_in_user_display_name, avatar_url };
+  }, [
+    logged_in_user_acts_as_service_provider,
+    logged_in_user_display_name,
+    serviceProviders,
+    user,
+  ]);
 
   const auto_select_self_as_service_provider =
     userIsWorkspaceAdminWithAdditionalServiceProviderFromSupabaseUser(user) ||
@@ -305,7 +355,13 @@ export default function EventTypes() {
     return {
       title: "",
       slug: "",
+      internal_label: "",
       short_description: "",
+      event_type_format: "one_on_one",
+      capacity_per_slot: "1",
+      availability_mode: "provider",
+      recurrence: empty_form_recurrence(),
+      ...default_booking_options_form_fields(),
       duration_hours: "",
       duration_minutes_part: "",
       buffer_before: "",
@@ -313,6 +369,9 @@ export default function EventTypes() {
       ...build_settings_derived_form_fields(),
       status: "active",
       service_provider_id: default_service_provider_id_for_new_form,
+      service_provider_ids: [],
+      department_id: "",
+      service_id: "",
     };
   }, [build_settings_derived_form_fields, default_service_provider_id_for_new_form]);
 
@@ -328,7 +387,13 @@ export default function EventTypes() {
   const [form, setForm] = useState<event_type_form_state>(() => ({
     title: "",
     slug: "",
+    internal_label: "",
     short_description: "",
+    event_type_format: "one_on_one",
+    capacity_per_slot: "1",
+    availability_mode: "provider",
+    recurrence: empty_form_recurrence(),
+    ...default_booking_options_form_fields(),
     duration_hours: "",
     duration_minutes_part: "",
     buffer_before: "",
@@ -337,6 +402,9 @@ export default function EventTypes() {
     is_public: true,
     status: "active",
     service_provider_id: "",
+    service_provider_ids: [],
+    department_id: "",
+    service_id: "",
   }));
 
   useEffect(() => {
@@ -439,7 +507,7 @@ export default function EventTypes() {
 
   const fetchEventTypes = async () => {
     try {
-      const { data: { session } } = await supabase.auth.getSession();
+      const { session } = await getWorkspaceSession();
       if (!session?.access_token) {
         setLoading(false);
         return;
@@ -499,9 +567,19 @@ export default function EventTypes() {
   };
 
   const handle_slug_blur = async () => {
-    const { data: { session } } = await supabase.auth.getSession();
+    const { session } = await getWorkspaceSession();
     if (!session?.access_token || !form.slug.trim()) return;
     await verify_slug(session.access_token, form.slug);
+  };
+
+  const handle_validate_slug = async (): Promise<boolean> => {
+    const { session } = await getWorkspaceSession();
+    if (!session?.access_token) {
+      set_slug_error("You are not signed in. Please refresh and try again.");
+      return false;
+    }
+    const normalized = await verify_slug(session.access_token, form.slug);
+    return normalized != null;
   };
 
   const handleSubmit = async (e: FormEvent) => {
@@ -521,36 +599,45 @@ export default function EventTypes() {
       return;
     }
 
-    const { data: { session: precheckSession } } = await supabase.auth.getSession();
-    if (!precheckSession?.access_token) {
-      setFormError("You are not signed in. Please refresh and try again.");
-      return;
-    }
-
-    const normalized_slug = await verify_slug(precheckSession.access_token, form.slug);
-    if (!normalized_slug) return;
-
     if (submitInFlightRef.current) return;
     submitInFlightRef.current = true;
     setSubmitting(true);
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
+      const { session } = await getWorkspaceSession();
       if (!session?.access_token) {
         setFormError("You are not signed in. Please refresh and try again.");
         return;
       }
 
+      const normalized_slug = await verify_slug(session.access_token, form.slug);
+      if (!normalized_slug) return;
+
       const payload = {
         title: form.title,
         slug: normalized_slug,
         short_description: form.short_description.trim() || null,
+        internal_label: form.internal_label.trim() || null,
+        event_type_format: form.event_type_format,
+        capacity_per_slot: form.capacity_per_slot,
+        availability_mode: form.availability_mode,
+        recurrence: from_form_recurrence(form.recurrence),
+        allow_waitlist: form.allow_waitlist,
+        waitlist_capacity: form.waitlist_capacity.trim() || null,
+        show_seats_remaining: form.show_seats_remaining,
+        min_booking_notice_minutes: form.min_booking_notice_minutes,
+        max_booking_window_days: form.max_booking_window_days,
+        allow_reschedule: form.allow_reschedule,
+        allow_cancellation: form.allow_cancellation,
         duration_minutes: durationMinutes,
         buffer_before: form.buffer_before || null,
         buffer_after: form.buffer_after || null,
         location_type: serialize_location_types(form.location_types),
         is_public: form.is_public,
         status: form.status,
+        department_id: form.department_id.trim() || null,
+        service_id: form.service_id.trim() || null,
+        service_provider_ids: form.service_provider_ids,
         ...(can_assign_event_type_owner && {
           owner_id: form.service_provider_id.trim() || null,
         }),
@@ -583,6 +670,7 @@ export default function EventTypes() {
       setItems((prev) => [result.data, ...prev]);
 
       setFormError(null);
+      toast.success("Event type created successfully.");
       closePanelAnimated();
       await fetchEventTypes();
     } catch (err) {
@@ -610,10 +698,10 @@ export default function EventTypes() {
   const handleDeleteConfirm = async () => {
     if (!deleteConfirmId) return;
     try {
-      const { data: { session } } = await supabase.auth.getSession();
+      const { session } = await getWorkspaceSession();
       if (!session?.access_token) {
         setDeleteConfirmId(null);
-        setAlertMessage("Not authenticated");
+        toast.error("Not authenticated");
         return;
       }
       const response = await fetch(
@@ -626,17 +714,18 @@ export default function EventTypes() {
       if (!response.ok) {
         const error = await response.json();
         setDeleteConfirmId(null);
-        setAlertMessage(error?.error || "Failed to delete event type");
+        toast.error(error?.error || "Failed to delete event type");
         return;
       }
       setItems((prev) =>
         prev.filter((item) => item.id !== deleteConfirmId)
       );
       setDeleteConfirmId(null);
+      toast.success("Event type deleted successfully.");
     } catch (err) {
       console.error("Error:", err);
       setDeleteConfirmId(null);
-      setAlertMessage("An error occurred while deleting the event type");
+      toast.error("An error occurred while deleting the event type");
     }
   };
 
@@ -680,9 +769,9 @@ export default function EventTypes() {
   const handleDuplicate = async (item: EventType) => {
     if (isStaffUser) return;
     try {
-      const { data: { session } } = await supabase.auth.getSession();
+      const { session } = await getWorkspaceSession();
       if (!session?.access_token) {
-        setAlertMessage("Not authenticated");
+        toast.error("Not authenticated");
         return;
       }
       const base_slug = slugify_event_type_title(`${item.title} Copy`);
@@ -699,6 +788,18 @@ export default function EventTypes() {
         title: `${item.title} Copy`,
         slug: candidate,
         short_description: parse_short_description_from_settings(item.settings) || null,
+        internal_label: item.internal_label ?? null,
+        event_type_format: item.event_type_format ?? "one_on_one",
+        capacity_per_slot: item.capacity_per_slot ?? 1,
+        availability_mode: item.availability_mode ?? "provider",
+        recurrence: from_form_recurrence(to_form_recurrence(item.recurrence)),
+        allow_waitlist: item.allow_waitlist ?? true,
+        waitlist_capacity: item.waitlist_capacity ?? null,
+        show_seats_remaining: item.show_seats_remaining ?? true,
+        min_booking_notice_minutes: item.min_booking_notice_minutes ?? 120,
+        max_booking_window_days: item.max_booking_window_days ?? 30,
+        allow_reschedule: item.allow_reschedule ?? true,
+        allow_cancellation: item.allow_cancellation ?? true,
         duration_minutes: item.duration_minutes,
         buffer_before: item.buffer_before,
         buffer_after: item.buffer_after,
@@ -716,20 +817,21 @@ export default function EventTypes() {
       });
       if (!response.ok) {
         const error = await response.json();
-        setAlertMessage(error?.error || "Failed to duplicate event type");
+        toast.error(error?.error || "Failed to duplicate event type");
         return;
       }
       const result = await response.json();
       setItems((prev) => [result.data, ...prev]);
+      toast.success("Event type duplicated successfully.");
     } catch (err) {
       console.error("Error duplicating:", err);
-      setAlertMessage("Failed to duplicate event type");
+      toast.error("Failed to duplicate event type");
     }
   };
 
   const handleCopyLink = async (item: EventType): Promise<boolean> => {
     if (!item.slug) {
-      setAlertMessage(
+      toast.error(
         `Unable to copy link. Event type "${item.title}" does not have a slug. Please edit and save the event type to generate a slug.`
       );
       return false;
@@ -758,14 +860,14 @@ export default function EventTypes() {
     );
 
     if (!resolved.ok) {
-      setAlertMessage(resolved.error);
+      toast.error(resolved.error);
       return false;
     }
 
     try {
       const copied = await copy_text_to_clipboard(resolved.url);
       if (!copied) {
-        setAlertMessage("Failed to copy link. Please try again.");
+        toast.error("Failed to copy link. Please try again.");
         return false;
       }
       setCopiedId(item.id);
@@ -773,7 +875,7 @@ export default function EventTypes() {
       return true;
     } catch (err) {
       console.error("Failed to copy link:", err);
-      setAlertMessage("Failed to copy link. Please try again.");
+      toast.error("Failed to copy link. Please try again.");
       return false;
     }
   };
@@ -806,39 +908,36 @@ export default function EventTypes() {
         },
       });
       if (error) {
-        set_settings_saved_message(
-          error.message || "Failed to save settings. Please try again."
-        );
+        toast.error(error.message || "Failed to save settings. Please try again.");
       } else {
-        set_settings_saved_message("View settings saved successfully.");
+        toast.success("View settings saved successfully.");
         if (showForm && editingId === null) {
           apply_settings_defaults_to_create_form();
         }
       }
     } catch (err) {
-      const message =
-        err instanceof Error ? err.message : "Failed to save settings.";
-      set_settings_saved_message(message);
+      toast.error(
+        err instanceof Error ? err.message : "Failed to save settings."
+      );
     } finally {
       set_settings_saving(false);
-      setTimeout(() => set_settings_saved_message(""), 2500);
     }
   };
 
   const handle_reset_settings = () => {
     set_event_settings(DEFAULT_EVENT_SETTINGS);
     set_default_location_types([DEFAULT_EVENT_SETTINGS.default_location]);
-    set_settings_saved_message("Settings reset to default values.");
-    setTimeout(() => set_settings_saved_message(""), 2500);
+    toast.success("Settings reset to default values.");
   };
 
   const show_owner_labels = useMemo(() => {
-    const owner_ids = new Set(
-      items
-        .map((item) => item.owner_id)
-        .filter((id): id is string => typeof id === "string" && id.length > 0)
-    );
-    return owner_ids.size > 1;
+    const assigned_ids = new Set<string>();
+    for (const item of items) {
+      for (const id of eventTypeAssignedProviderIds(item)) {
+        assigned_ids.add(id);
+      }
+    }
+    return assigned_ids.size > 1;
   }, [items]);
 
   useEffect(() => {
@@ -853,9 +952,7 @@ export default function EventTypes() {
 
     const load_team_members = async () => {
       try {
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
+        const { session } = await getWorkspaceSession();
         if (!session?.access_token || cancelled) return;
 
         const response = await fetch("/api/team-members", {
@@ -973,6 +1070,8 @@ export default function EventTypes() {
       label: capitalize_booking_display_label(
         getServiceProviderName(provider.id, serviceProviders)
       ),
+      avatar_url: provider.avatar_url?.trim() || null,
+      role_label: "Service provider",
     }));
 
     const selected_id = form.service_provider_id.trim();
@@ -995,6 +1094,7 @@ export default function EventTypes() {
         label: `${capitalize_booking_display_label(
           getServiceProviderName(selected_provider.id, serviceProviders)
         )} (Inactive)`,
+        avatar_url: selected_provider.avatar_url?.trim() || null,
       },
     ];
   }, [active_service_providers, form.service_provider_id, serviceProviders]);
@@ -1010,23 +1110,44 @@ export default function EventTypes() {
   const filtered_items = useMemo(() => {
     const q = search.trim().toLowerCase();
     return items.filter((item) => {
+      const description = parse_short_description_from_settings(item.settings)
+        .trim()
+        .toLowerCase();
       const matches_search =
         q === "" ||
         item.title.toLowerCase().includes(q) ||
-        (item.slug ?? "").toLowerCase().includes(q);
+        (item.slug ?? "").toLowerCase().includes(q) ||
+        description.includes(q);
       const is_public = !!item.is_public;
       const matches_visibility =
         visibility_filter === "all" ||
         (visibility_filter === "public" && is_public) ||
         (visibility_filter === "private" && !is_public);
       const matches_provider =
-        provider_filter === "" || item.owner_id === provider_filter;
+        provider_filter === "" ||
+        isProviderAssignedToEventType(provider_filter, item);
       const item_status = parse_event_type_status(item.status);
       const matches_status =
         status_filter === "" || item_status === status_filter;
-      return matches_search && matches_visibility && matches_provider && matches_status;
+      const item_format = parse_event_type_format(item.event_type_format);
+      const matches_format =
+        format_filter === "all" || item_format === format_filter;
+      return (
+        matches_search &&
+        matches_visibility &&
+        matches_provider &&
+        matches_status &&
+        matches_format
+      );
     });
-  }, [items, search, visibility_filter, provider_filter, status_filter]);
+  }, [
+    items,
+    search,
+    visibility_filter,
+    provider_filter,
+    status_filter,
+    format_filter,
+  ]);
 
   const {
     paginatedItems: paginated_items,
@@ -1041,11 +1162,50 @@ export default function EventTypes() {
     set_event_types_page(1);
   }, [
     search,
+    format_filter,
     visibility_filter,
     provider_filter,
     status_filter,
     set_event_types_page,
   ]);
+
+  useEffect(() => {
+    set_selected_ids((prev) => {
+      const visible = new Set(paginated_items.map((item) => item.id));
+      const next = new Set<number>();
+      for (const id of prev) {
+        if (visible.has(id)) next.add(id);
+      }
+      return next;
+    });
+  }, [paginated_items]);
+
+  const page_ids = paginated_items.map((item) => item.id);
+  const all_page_selected =
+    page_ids.length > 0 && page_ids.every((id) => selected_ids.has(id));
+  const some_page_selected =
+    page_ids.some((id) => selected_ids.has(id)) && !all_page_selected;
+
+  const toggle_select_all_page = () => {
+    set_selected_ids((prev) => {
+      const next = new Set(prev);
+      if (all_page_selected) {
+        for (const id of page_ids) next.delete(id);
+      } else {
+        for (const id of page_ids) next.add(id);
+      }
+      return next;
+    });
+  };
+
+  const toggle_select_row = (id: number) => {
+    set_selected_ids((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
 
   const panel_open = showForm || editingId !== null;
   const panel_visible = panel_open || panel_animated_open;
@@ -1068,24 +1228,52 @@ export default function EventTypes() {
       item.owner_id && serviceProviderOwnerIds.has(item.owner_id)
   ).length;
   const default_timezone_label = format_timezone_display_label(general?.timezone);
+  const review_timezone_label = useMemo(() => {
+    if (default_timezone_label === "Not set") return default_timezone_label;
+    return default_timezone_label.replace(/^[^/]+\//, "").replace(/_/g, " ");
+  }, [default_timezone_label]);
 
-  const get_provider_label = (ownerId: string | null | undefined) => {
-    if (!ownerId) return "—";
-    if (show_owner_labels && owner_names_by_id[ownerId]) {
-      return owner_names_by_id[ownerId];
-    }
-    const name = capitalize_booking_display_label(
-      getServiceProviderName(ownerId, serviceProviders)
+  const review_booking_url = useMemo(() => {
+    const event_slug = normalize_event_type_slug_input(form.slug);
+    if (!workspaceSlug || !event_slug) return null;
+
+    const owner_id = form.service_provider_id.trim() || null;
+    const owner_is_service_provider = Boolean(
+      owner_id &&
+        (serviceProviderOwnerIds.has(owner_id) ||
+          (owner_id === user?.id &&
+            user?.user_metadata?.role === ROLE_SERVICE_PROVIDER))
     );
-    return name === "N/A" ? "—" : name;
-  };
+    const use_workspace_link_for_own =
+      userIsWorkspaceAdminWithAdditionalServiceProviderFromSupabaseUser(user) &&
+      Boolean(owner_id && owner_id === user?.id);
+    const owner_acts_as_service_provider =
+      owner_is_service_provider && !use_workspace_link_for_own;
+
+    const resolved = resolve_event_type_public_booking_url(
+      workspaceSlug,
+      event_slug,
+      owner_id,
+      providerLinks,
+      owner_acts_as_service_provider
+    );
+    if (resolved.ok) return resolved.url;
+    return `${get_public_booking_origin()}/${workspaceSlug}/${event_slug}`;
+  }, [
+    form.service_provider_id,
+    form.slug,
+    providerLinks,
+    serviceProviderOwnerIds,
+    user,
+    workspaceSlug,
+  ]);
 
   return (
     <>
       <section
         className={cn(
-          "space-y-6 transition-[margin] duration-300 ease-in-out",
-          panel_animated_open && "hidden lg:block lg:mr-[28rem]"
+          "space-y-6",
+          panel_animated_open && "hidden md:block"
         )}
       >
           <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
@@ -1102,8 +1290,9 @@ export default function EventTypes() {
               <button
                 type="button"
                 onClick={() => set_settings_open(true)}
-                className="inline-flex cursor-pointer items-center justify-center rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
+                className="inline-flex cursor-pointer items-center justify-center rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
               >
+                
                 <Settings2 className="mr-2 h-4 w-4" />
                 View Settings
               </button>
@@ -1111,7 +1300,7 @@ export default function EventTypes() {
                 <button
                   type="button"
                   onClick={handleNewEvent}
-                  className="inline-flex cursor-pointer items-center justify-center rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-violet-700"
+                  className="inline-flex cursor-pointer items-center justify-center rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700"
                 >
                   <Plus className="mr-2 h-4 w-4" />
                   Add Event Type
@@ -1120,89 +1309,105 @@ export default function EventTypes() {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-4">
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-              <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-violet-50 text-violet-600">
-                  <CalendarDays className="h-5 w-5" />
+          <ScreenGate minWidth={768}>
+            <div className="grid grid-cols-3 gap-3 md:grid-cols-4 md:gap-4 xl:grid-cols-4">
+              <div className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm md:p-4">
+                <div className="md:flex md:items-center md:gap-3">
+                  <div className="flex items-center gap-2 md:contents">
+                    <div className="flex h-10 w-10 xl:h-14 xl:w-14 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600">
+                      <CalendarDays className="h-4 w-4 md:h-5 md:w-5" />
+                    </div>
+                    <p className="text-xl font-bold text-slate-900 md:hidden">{total_event_types}</p>
+                  </div>
+                  <div className="mt-1 min-w-0 md:mt-0">
+                    <p className="text-sm font-medium leading-snug text-slate-500">
+                      Active event types
+                    </p>
+                    <p className="text-2xl font-bold text-slate-900">{total_event_types}</p>
+                  </div>
                 </div>
-                <div>
-                  <p className="text-2xl font-bold text-slate-900">{total_event_types}</p>
-                  <p className="text-xs font-medium text-slate-500">Active event types</p>
+              </div>
+
+              {/* <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-sky-50 text-sky-600">
+                    <Users className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <p className="text-2xl font-bold text-slate-900">{team_based_event_types}</p>
+                    <p className="text-xs font-medium text-slate-500">Team-based</p>
+                  </div>
+                </div>
+              </div> */}
+
+              <div className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm md:p-4">
+                <div className="md:flex md:items-center md:gap-3">
+                  <div className="flex items-center gap-2 md:contents">
+                    <div className="flex h-10 w-10 xl:h-14 xl:w-14 shrink-0 items-center justify-center rounded-xl bg-sky-50 text-sky-600">
+                      <EyeOff className="h-4 w-4 md:h-5 md:w-5" />
+                    </div>
+                    <p className="text-xl font-bold text-slate-900 md:hidden">{draft_event_types}</p>
+                  </div>
+                  <div className="mt-1 min-w-0 md:mt-0">
+                    <p className="text-sm font-medium leading-snug text-slate-500">
+                      Draft
+                    </p>
+                    <p className="text-2xl font-bold text-slate-900">{draft_event_types}</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm md:p-4">
+                <div className="md:flex md:items-center md:gap-3">
+                  <div className="flex items-center gap-2 md:contents">
+                    <div className="flex h-10 w-10 xl:h-14 xl:w-14 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600">
+                      <EyeOff className="h-4 w-4 md:h-5 md:w-5" />
+                    </div>
+                    <p className="text-xl font-bold text-slate-900 md:hidden">{private_event_types}</p>
+                  </div>
+                  <div className="mt-1 min-w-0 md:mt-0">
+                    <p className="text-sm font-medium leading-snug text-slate-500">
+                      Private
+                    </p>
+                    <p className="text-2xl font-bold text-slate-900">{private_event_types}</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="col-span-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm md:col-span-1 xl:col-span-1">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-10 w-10 xl:h-14 xl:w-14 shrink-0 items-center justify-center rounded-xl bg-red-50 text-red-600">
+                    <Globe className="h-5 w-5" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="break-words text-sm font-bold text-slate-900">{default_timezone_label}</p>
+                    <p className="text-sm font-medium text-slate-500">Default timezone</p>
+                  </div>
                 </div>
               </div>
             </div>
+          </ScreenGate>
 
-            {/* <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-              <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-sky-50 text-sky-600">
-                  <Users className="h-5 w-5" />
-                </div>
-                <div>
-                  <p className="text-2xl font-bold text-slate-900">{team_based_event_types}</p>
-                  <p className="text-xs font-medium text-slate-500">Team-based</p>
-                </div>
-              </div>
-            </div> */}
-
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-              <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-50 text-amber-600">
-                  <EyeOff className="h-5 w-5" />
-                </div>
-                <div>
-                  <p className="text-2xl font-bold text-slate-900">{draft_event_types}</p>
-                  <p className="text-xs font-medium text-slate-500">Draft</p>
-                </div>
-              </div>
-            </div>
-
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-              <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-orange-50 text-orange-600">
-                  <EyeOff className="h-5 w-5" />
-                </div>
-                <div>
-                  <p className="text-2xl font-bold text-slate-900">{private_event_types}</p>
-                  <p className="text-xs font-medium text-slate-500">Private</p>
-                </div>
-              </div>
-            </div>
-
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-              <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600">
-                  <Globe className="h-5 w-5" />
-                </div>
-                <div className="min-w-0">
-                  <p className="break-words text-sm font-bold text-slate-900">{default_timezone_label}</p>
-                  <p className="text-xs font-medium text-slate-500">Default timezone</p>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-visible">
-            <div className="border-b border-slate-200 p-4 sm:px-5">
+          <div className="overflow-hidden rounded-2xl border border-slate-200/70 bg-white/90 shadow-xl p-4">
+            <div className="pb-4">
               <EventTypeFilters
-                leading={
-                  <h2 className="text-base font-semibold text-slate-900">All Event Types</h2>
-                }
                 search={search}
-                    visibility_filter={visibility_filter}
-                    status_filter={status_filter}
-                    provider_filter={provider_filter}
-                    show_service_provider_filter={show_service_provider_filter}
-                    service_provider_options={sorted_service_providers.map((sp) => ({
-                      id: sp.id,
-                      label: service_provider_filter_label(sp.id),
-                    }))}
-                    service_provider_filter_label={service_provider_filter_label}
-                    result_count={filtered_items.length}
-                    on_search_change={setSearch}
-                    on_visibility_filter_change={set_visibility_filter}
-                    on_status_filter_change={set_status_filter}
-                    on_provider_filter_change={set_provider_filter}
+                format_filter={format_filter}
+                visibility_filter={visibility_filter}
+                status_filter={status_filter}
+                provider_filter={provider_filter}
+                show_service_provider_filter={show_service_provider_filter}
+                service_provider_options={sorted_service_providers.map((sp) => ({
+                  id: sp.id,
+                  label: service_provider_filter_label(sp.id),
+                }))}
+                service_provider_filter_label={service_provider_filter_label}
+                result_count={filtered_items.length}
+                on_search_change={setSearch}
+                on_format_filter_change={set_format_filter}
+                on_visibility_filter_change={set_visibility_filter}
+                on_status_filter_change={set_status_filter}
+                on_provider_filter_change={set_provider_filter}
               />
             </div>
 
@@ -1226,149 +1431,156 @@ export default function EventTypes() {
               </div>
             ) : (
               <>
-                <EventTypeListMobileCards
-                  items={paginated_items}
-                  open_menu_id={open_menu_id}
-                  copied_id={copiedId}
-                  loading_slug={loadingSlug}
-                  get_card_gradient={get_card_gradient}
-                  format_duration_label={format_duration_short}
-                  get_provider_label={get_provider_label}
-                  get_short_description={parse_short_description_from_settings}
-                  get_status={parse_event_type_status}
-                  get_status_label={event_type_status_label}
-                  on_edit={(item) => {
-                    if (isStaffUser) return;
-                    handleEdit(item as EventType);
-                  }}
-                  on_toggle_menu={(id) =>
-                    set_open_menu_id((prev) => (prev === id ? null : id))
-                  }
-                  on_copy_link={(item) => {
-                    void handle_copy_link_from_menu(item as EventType);
-                  }}
-                  on_duplicate={(item) => {
-                    if (isStaffUser) return;
-                    void handleDuplicate(item as EventType);
-                    set_open_menu_id(null);
-                  }}
-                  on_delete={(id) => {
-                    if (isStaffUser) return;
-                    handleDeleteClick(id);
-                    set_open_menu_id(null);
-                  }}
-                />
-
-                <div className="hidden min-[1211px]:block overflow-x-auto overflow-y-visible">
-                  <table className="w-full min-w-[900px] border-collapse">
-                    <thead className="bg-slate-50">
-                      <tr>
-                        <th className="border-b border-slate-200 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
-                          Event Type
-                        </th>
-                        <th className="border-b border-slate-200 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
-                          Duration
-                        </th>
-                        <th className="border-b border-slate-200 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
-                          Location
-                        </th>
-                        <th className="border-b border-slate-200 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
-                          Team / Provider
-                        </th>
-                        <th className="border-b border-slate-200 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
-                          Booking Page
-                        </th>
-                        <th className="border-b border-slate-200 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
-                          Status
-                        </th>
-                        {!isStaffUser ? (
-                        <>
-                        <th className="border-b border-slate-200 px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">
-                          Action
-                        </th>
-                        </>
-                        ) : null}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {paginated_items.map((item) => {
-                        const is_public = !!item.is_public;
-                        const status = parse_event_type_status(item.status);
-                        const status_label = event_type_status_label(status);
-                        return (
-                          <tr
-                            key={item.id}
-                            className="border-b border-slate-100 transition hover:bg-slate-50/80"
-                          >
-                            <td className="px-4 py-4">
-                              <div className="flex items-start gap-3">
-                                <div
+                <ScreenGate maxWidth={1023}>
+                  <EventTypeListMobileCards
+                    items={paginated_items}
+                    format_duration_label={format_duration_short}
+                    get_status={parse_event_type_status}
+                    get_status_label={event_type_status_label}
+                    owner_names_by_id={owner_names_by_id}
+                    show_owner_labels={show_owner_labels}
+                    on_row_click={(item) => {
+                      if (isStaffUser) return;
+                      handleEdit(item as EventType);
+                    }}
+                  />
+                </ScreenGate>
+                
+                <ScreenGate minWidth={1024}>
+                  <div className="overflow-x-auto max-[1301px]:p-3">
+                    <table className="w-full border-collapse">
+                      <thead className="bg-slate-100">
+                        <tr className="text-left text-sm text-slate-900">
+                          <th className="px-6 py-4 font-semibold">
+                            <input
+                              type="checkbox"
+                              checked={all_page_selected}
+                              ref={(el) => {
+                                if (el) el.indeterminate = some_page_selected;
+                              }}
+                              onChange={toggle_select_all_page}
+                              className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                              aria-label="Select all event types on this page"
+                            />
+                          </th>
+                          <th className="px-6 py-4 font-semibold">
+                            Event Type
+                          </th>
+                          <th className="px-6 py-4 font-semibold">
+                            Format
+                          </th>
+                          <th className="px-6 py-4 font-semibold">
+                            Duration
+                          </th>
+                          <th className="px-6 py-4 font-semibold">
+                            Capacity
+                          </th>
+                          <th className="px-6 py-4 font-semibold">
+                            Team / Provider
+                          </th>
+                          <th className="px-6 py-4 font-semibold">
+                            Status
+                          </th>
+                          {!isStaffUser ? (
+                            <th className="px-6 py-4 text-right font-semibold">
+                              Action
+                            </th>
+                          ) : null}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {paginated_items.map((item) => {
+                          const status = parse_event_type_status(item.status);
+                          const status_label = event_type_status_label(status);
+                          const format = parse_event_type_format(item.event_type_format);
+                          const short_description =
+                            parse_short_description_from_settings(item.settings);
+                          const capacity =
+                            typeof item.capacity_per_slot === "number" &&
+                            Number.isFinite(item.capacity_per_slot)
+                              ? item.capacity_per_slot
+                              : format === "group_class"
+                                ? 10
+                                : 1;
+                          const selected = selected_ids.has(item.id);
+                          return (
+                            <tr
+                              key={item.id}
+                              className="cursor-pointer transition hover:bg-slate-50 border border-slate-100 last:border-b-0  border-b border-slate-100"
+                            >
+                              <td className="text-sm px-6 py-5 align-middle border-b border-slate-100" data-label="Select">
+                                <input
+                                  type="checkbox"
+                                  checked={selected}
+                                  onChange={() => toggle_select_row(item.id)}
+                                  className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                                  aria-label={`Select ${item.title}`}
+                                />
+                              </td>
+                              <td className="text-sm px-6 py-5 align-middle border-b border-slate-100" data-label="Event Type">
+                                <div className="flex items-center max-[1301px]:justify-end gap-3">
+                                  <div
+                                    className={cn(
+                                      "mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br text-white",
+                                      get_card_gradient(item.id)
+                                    )}
+                                  >
+                                    <CalendarDays className="h-4 w-4" />
+                                  </div>
+                                  <div className="min-w-0">
+                                    <p className="truncate font-semibold text-slate-900">
+                                      {item.title}
+                                    </p>
+                                    {short_description ? (
+                                      <p className="mt-0.5 line-clamp-1 text-xs text-slate-500">
+                                        {short_description}
+                                      </p>
+                                    ) : null}
+                                  </div>
+                                </div>
+                              </td>
+                              <td className="text-sm px-6 py-5 align-middle border-b border-slate-100" data-label="Format">
+                                <span
                                   className={cn(
-                                    "mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br text-white",
-                                    get_card_gradient(item.id)
+                                    "inline-flex rounded-full px-2.5 py-1 text-xs font-semibold",
+                                    event_type_format_badge_class(format)
                                   )}
                                 >
-                                  <CalendarDays className="h-4 w-4" />
-                                </div>
-                                <div className="min-w-0">
-                                  <p className="truncate font-semibold text-slate-900">
-                                    {item.title}
-                                  </p>
-                                  {item.slug && (
-                                    <p className="mt-0.5 truncate text-xs text-slate-500">
-                                      {item.slug}
-                                    </p>
+                                  {event_type_format_list_label(format)}
+                                </span>
+                              </td>
+                              <td className="text-sm px-6 py-5 align-middle border-b border-slate-100" data-label="Duration">
+                                {format_duration_short(item.duration_minutes)}
+                              </td>
+                              <td className="text-sm px-6 py-5 align-middle border-b border-slate-100" data-label="Capacity">
+                                {capacity}
+                              </td>
+                              <td className="text-sm px-6 py-5 align-middle border-b border-slate-100" data-label="Team / Provider">
+                                <EventTypeAssignedProviders
+                                  eventType={item}
+                                  serviceProviders={serviceProviders}
+                                  owner_names_by_id={owner_names_by_id}
+                                  show_owner_labels={show_owner_labels}
+                                  size="sm"
+                                  compact
+                                  className="max-[1301px]:justify-end"
+                                />
+                              </td>
+                              <td className="text-sm px-6 py-5 align-middle border-b border-slate-100" data-label="Status">
+                                <span
+                                  className={cn(
+                                    "inline-flex rounded-full px-2.5 py-1 text-xs font-semibold border",
+                                    status === "active"
+                                      ? "bg-emerald-50 text-emerald-600 border-emerald-200"
+                                      : "bg-amber-50 text-amber-600 border-amber-200"
                                   )}
-                                </div>
-                              </div>
-                            </td>
-                            <td className="px-4 py-4 text-sm text-slate-700">
-                              {format_duration_short(item.duration_minutes)}
-                            </td>
-                            <td className="px-4 py-4">
-                              <EventTypeLocationCell location_type={item.location_type} />
-                            </td>
-                            <td className="px-4 py-4">
-                              <div className="flex items-center gap-2 text-sm text-slate-700">
-                                <Users className="h-4 w-4 shrink-0 text-slate-400" />
-                                <span className="truncate">
-                                  {get_provider_label(item.owner_id)}
+                                >
+                                  {status_label}
                                 </span>
-                              </div>
-                            </td>
-                            <td className="px-4 py-4">
-                              {item.slug ? (
-                                <span className="text-sm font-medium text-violet-600">
-                                  /{item.slug}
-                                </span>
-                              ) : (
-                                <span className="text-sm text-slate-400">—</span>
-                              )}
-                            </td>
-                            <td className="px-4 py-4">
-                              <span
-                                className={cn(
-                                  "inline-flex rounded-full px-2.5 py-1 text-xs font-semibold",
-                                  status === "active"
-                                    ? "bg-emerald-50 text-emerald-700"
-                                    : "bg-amber-50 text-amber-700"
-                                )}
-                              >
-                                {status_label}
-                              </span>
-                            </td>
-                            <td className="px-4 py-4">
-                              <div className="flex items-center justify-end gap-2">
-                                {!isStaffUser ? (
-                                  <>
-                                    <button
-                                      type="button"
-                                      onClick={() => handleEdit(item)}
-                                      className="inline-flex cursor-pointer items-center rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
-                                    >
-                                      <Edit3 className="mr-1.5 h-3.5 w-3.5" />
-                                      Edit
-                                    </button>
+                              </td>
+                              {!isStaffUser ? (
+                                <td className="px-6 py-5 whitespace-nowrap text-right text-sm font-medium align-middle border-b border-slate-100" data-label="Action">
+                                  <div className="flex items-center justify-end">
                                     <EventTypeActionsMenu
                                       open={open_menu_id === item.id}
                                       copy_disabled={loadingSlug || !item.slug}
@@ -1389,19 +1601,23 @@ export default function EventTypes() {
                                         handleDeleteClick(item.id);
                                         set_open_menu_id(null);
                                       }}
+                                      on_edit={() => {
+                                        handleEdit(item);
+                                        set_open_menu_id(null);
+                                      }}
                                     />
-                                  </>
-                                ) : null}
-                              </div>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
+                                  </div>
+                                </td>
+                              ) : null}
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </ScreenGate>
 
-                <div className="border-t border-slate-200 px-4 py-3">
+                <div className="py-3">
                   <Pagination
                     currentPage={event_types_page}
                     totalPages={event_types_total_pages}
@@ -1417,33 +1633,54 @@ export default function EventTypes() {
           </div>
         </section>
 
+      {/* <button
+        type="button"
+        aria-label="Close panel"
+        onClick={handlePanelClose}
+        className={cn(
+          "fixed top-16 left-0 bottom-0 z-50 hidden w-[50vw] bg-black/50 transition-opacity duration-300 ease-in-out md:block",
+          panel_animated_open
+            ? "opacity-100"
+            : "pointer-events-none opacity-0"
+        )}
+        tabIndex={panel_animated_open ? 0 : -1}
+        aria-hidden={!panel_animated_open}
+      /> */}
+
       <aside
         className={cn(
-          "fixed top-16 right-0 bottom-0 z-30 flex w-full flex-col overflow-hidden border-l border-slate-200 bg-white shadow-2xl lg:w-[28rem]",
-          "transform transition-transform duration-300 ease-in-out will-change-transform",
+          "fixed inset-0 z-100001 h-full flex",
+          "transform transition-transform duration-300 ease-in-out will-change-transform mb-0",
           panel_animated_open
             ? "translate-x-0"
             : "pointer-events-none translate-x-full"
         )}
         aria-hidden={!panel_visible}
       >
+        <button
+            type="button"
+            aria-label="Close event type panel"
+            onClick={handlePanelClose}
+            className="absolute inset-0 cursor-default bg-slate-900/40 backdrop-blur-[2px]"
+          />
         {panel_visible && (
           <>
-            <div className="flex shrink-0 items-center justify-between border-b border-slate-200 px-5 py-4">
-                <h2 className="text-lg font-bold text-slate-900">
-                  {editingId ? "Edit Event Type" : "Add Event Type"}
-                </h2>
-                <button
-                  type="button"
-                  onClick={handlePanelClose}
-                  className="cursor-pointer rounded-lg border border-slate-200 p-2 text-slate-500 transition hover:bg-slate-50 hover:text-slate-700"
-                  aria-label="Close panel"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              </div>
+              <div className="relative ml-auto flex w-full max-w-5xl flex-col border-l border-slate-200 bg-white shadow-2xl pb-[60px] lg:pb-0">
+                <div className="flex shrink-0 items-center justify-between border-b border-slate-200 px-5 py-4">
+                  <h2 className="text-lg font-bold text-slate-900">
+                    {editingId ? "Edit Event Type" : "Add Event Type"}
+                  </h2>
+                  <button
+                    type="button"
+                    onClick={handlePanelClose}
+                    className="cursor-pointer rounded-lg border border-slate-200 p-2 text-slate-500 transition hover:bg-slate-50 hover:text-slate-700"
+                    aria-label="Close panel"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
 
-              <div className="flex min-h-0 flex-1 flex-col overflow-hidden overscroll-contain">
+              <div className="flex min-h-0 h-full flex-1 flex-col pb-[60px] lg:pb-0">
                 {editingId !== null ? (
                   <EventTypeEditForm
                     key={editingId}
@@ -1451,6 +1688,12 @@ export default function EventTypes() {
                     embedded
                     variant="panel"
                     onClose={handleEditPanelClose}
+                    onSaved={(message) => {
+                      toast.success(message);
+                      closePanelAnimated(() => {
+                        void fetchEventTypes();
+                      });
+                    }}
                   />
                 ) : (
                   <EventTypeFormLayout
@@ -1471,9 +1714,13 @@ export default function EventTypes() {
                     on_slug_edited={() => {
                       slug_touched_ref.current = true;
                     }}
+                    on_validate_slug={handle_validate_slug}
+                    timezone_label={review_timezone_label}
+                    booking_url={review_booking_url}
                   />
                 )}
               </div>
+            </div>
             </>
           )}
       </aside>
@@ -1489,25 +1736,18 @@ export default function EventTypes() {
         />
       )}
 
-      {alertMessage && (
-        <AlertModal
-          message={alertMessage}
-          onClose={() => setAlertMessage(null)}
-        />
-      )}
-
       {settings_open && (
-        <div className="fixed inset-0 z-50 flex">
+        <div className="fixed inset-0 z-999 flex">
           <button
             type="button"
             aria-label="Close settings"
             onClick={() => set_settings_open(false)}
             className="absolute inset-0 cursor-default bg-slate-900/40 backdrop-blur-[2px]"
           />
-          <div className="relative ml-auto flex h-full w-full max-w-xl flex-col border-l border-slate-200 bg-white shadow-2xl">
+          <div className="relative ml-auto flex w-full max-w-xl flex-col border-l border-slate-200 bg-white shadow-2xl pb-[60px] lg:pb-0">
             <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4 sm:px-6">
-              <div className="flex items-center gap-3">
-                <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-sky-100 text-sky-700">
+              <div className="flex gap-3">
+                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-indigo-100 text-indigo-600">
                   <Settings2 className="h-5 w-5" />
                 </div>
                 <div>
@@ -1530,13 +1770,6 @@ export default function EventTypes() {
             </div>
 
             <div className="flex-1 space-y-6 overflow-y-auto px-5 py-5 sm:px-6">
-              {settings_saved_message && (
-                <div className="flex items-start gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
-                  <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
-                  <span>{settings_saved_message}</span>
-                </div>
-              )}
-
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                 <h3 className="text-sm font-bold text-slate-900">
                   Default Setup
@@ -1560,7 +1793,7 @@ export default function EventTypes() {
                             | "public",
                         }))
                       }
-                      className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-sky-400"
+                      className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-indigo-400"
                     >
                       <option value="private">Private</option>
                       <option value="public">Public</option>
@@ -1593,7 +1826,7 @@ export default function EventTypes() {
                     }))
                   }
                   placeholder="Add an internal note for workspace admins..."
-                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 outline-none transition placeholder:text-slate-400 focus:border-sky-400 focus:bg-white"
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 outline-none transition placeholder:text-slate-400 focus:border-indigo-400 focus:bg-white"
                 />
               </div>
 
@@ -1620,8 +1853,8 @@ export default function EventTypes() {
               </div>
             </div>
 
-            <div className="border-t border-slate-200 bg-white px-5 py-4 sm:px-6">
-              <div className="flex flex-col gap-3 sm:flex-row sm:justify-between">
+            <div className="border-t border-slate-200 bg-white px-3 py-4 sm:px-6">
+              <div className="flex gap-3 flex-row justify-between">
                 {!isStaffUser ? (
                   <button
                     type="button"
@@ -1633,7 +1866,7 @@ export default function EventTypes() {
                   </button>
                 ) : null}
 
-                <div className="flex flex-col gap-3 sm:flex-row">
+                <div className="flex gap-3 flex-row">
                   <button
                     type="button"
                     onClick={() => set_settings_open(false)}
@@ -1646,7 +1879,7 @@ export default function EventTypes() {
                       type="button"
                       onClick={handle_save_settings}
                       disabled={settings_saving}
-                      className="inline-flex cursor-pointer items-center justify-center rounded-xl bg-gradient-to-r from-sky-600 to-cyan-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-cyan-100 transition hover:scale-[1.01] disabled:cursor-not-allowed disabled:opacity-60"
+                      className="inline-flex cursor-pointer items-center justify-center rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-lg disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       {settings_saving ? "Saving…" : "Save Settings"}
                     </button>

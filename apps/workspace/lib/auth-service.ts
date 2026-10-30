@@ -74,7 +74,9 @@ export async function createUserSession(
     }
 
     const accessToken = otpData.session.access_token;
-    await revokeOtherSessions({ accessToken, supabaseAdmin });
+    void revokeOtherSessions({ accessToken, supabaseAdmin }).catch((err) =>
+      console.warn('revokeOtherSessions (non-blocking):', err)
+    );
 
     return {
       data: {

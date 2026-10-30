@@ -1,5 +1,6 @@
 "use client";
-
+import { getWorkspaceSession } from '@/src/lib/auth_session';
+import ScreenGate from "@/src/components/ScreenGate";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   LuCalendarDays as CalendarDays,
@@ -11,6 +12,7 @@ import {
 import type { Booking } from "@/src/types/booking";
 import { useCreateBookingModal } from "@/src/providers/CreateBookingModalProvider";
 import { useWorkspaceSettings } from "@/src/hooks/useWorkspaceSettings";
+import { useWorkspaceUsers } from "@/src/providers/WorkspaceUsersProvider";
 import { CUSTOMER_TIMEZONE_OPTIONS } from "@/src/constants/timezone";
 import {
   formatTimezoneSelectLabel,
@@ -25,7 +27,11 @@ import {
 import { CalendarDayGrid } from "@/src/components/Calendar/CalendarDayGrid";
 import { CalendarMonthGrid } from "@/src/components/Calendar/CalendarMonthGrid";
 import { CalendarWeekGrid } from "@/src/components/Calendar/CalendarWeekGrid";
+import { CalendarMobileWeekStrip } from "@/src/components/Calendar/CalendarMobileWeekStrip";
+import { CalendarMobileWeekBookings } from "@/src/components/Calendar/CalendarMobileWeekBookings";
+import { CalendarMobileDayBookings } from "@/src/components/Calendar/CalendarMobileDayBookings";
 import { CalendarSidebar } from "@/src/components/Calendar/CalendarSidebar";
+import { BookingPreviewPanel } from "@/src/components/Booking/BookingPreviewPanel";
 import {
   buildCalendarCells,
   CALENDAR_STATUS_LEGEND,
@@ -43,17 +49,6 @@ type DepartmentsApiResponse = {
   departments?: Array<{
     id: number | string;
     name: string;
-  }>;
-};
-
-type TeamMembersApiResponse = {
-  teamMembers?: Array<{
-    id: string;
-    name?: string;
-    avatar_url?: string | null;
-    departments?: number[];
-    role?: string | null;
-    deactivated?: boolean;
   }>;
 };
 
@@ -219,15 +214,22 @@ export default function BookingCalendar() {
   const [departmentNameById, setDepartmentNameById] = useState<
     Record<string, string>
   >({});
-  const [providerMetaById, setProviderMetaById] = useState<
-    Record<
+  const { members: workspaceMembers } = useWorkspaceUsers();
+  const providerMetaById = useMemo(() => {
+    const nextProviderMeta: Record<
       string,
-      {
-        avatarUrl: string | null;
-        departmentIds: number[];
-      }
-    >
-  >({});
+      { avatarUrl: string | null; departmentIds: number[] }
+    > = {};
+    for (const member of workspaceMembers) {
+      const id = String(member.id ?? "").trim();
+      if (!id || member.deactivated) continue;
+      nextProviderMeta[id] = {
+        avatarUrl: member.avatar_url?.trim() || null,
+        departmentIds: Array.isArray(member.departments) ? member.departments : [],
+      };
+    }
+    return nextProviderMeta;
+  }, [workspaceMembers]);
   const [refreshKey, setRefreshKey] = useState(0);
 
   const monthLabel = useMemo(
@@ -597,6 +599,7 @@ export default function BookingCalendar() {
     return [...providerSet.entries()].map(([key, label]) => ({ key, label }));
   }, [currentWeekBookings, providerFilter, providerOptions]);
   const [selectedBookingId, setSelectedBookingId] = useState<string | null>(null);
+  const [preview_booking, set_preview_booking] = useState<Booking | null>(null);
   const selectedBooking = useMemo(() => {
     if (!selectedBookingId) return null;
     return (
@@ -607,6 +610,11 @@ export default function BookingCalendar() {
     );
   }, [selectedBookingId, currentDayBookings, currentWeekBookings, currentMonthBookings]);
 
+  const handle_select_booking = useCallback((booking: Booking) => {
+    setSelectedBookingId(booking.id);
+    set_preview_booking(booking);
+  }, []);
+
   useEffect(() => {
     let active = true;
 
@@ -614,10 +622,7 @@ export default function BookingCalendar() {
       setLoading(true);
       setRawBookings([]);
       try {
-        const { supabase } = await import("@/lib/supabaseClient");
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
+        const { session } = await getWorkspaceSession();
 
         if (!session?.access_token || !active) {
           if (active) setRawBookings([]);
@@ -671,9 +676,6 @@ export default function BookingCalendar() {
         const departmentsRes = await fetch("/api/departments", {
           headers: { Authorization: `Bearer ${session.access_token}` },
         });
-        const teamMembersRes = await fetch("/api/team-members", {
-          headers: { Authorization: `Bearer ${session.access_token}` },
-        });
 
         if (!active) return;
 
@@ -703,25 +705,6 @@ export default function BookingCalendar() {
             nextDepartmentNames[id] = name;
           }
           setDepartmentNameById(nextDepartmentNames);
-        }
-        if (teamMembersRes.ok) {
-          const teamJson = (await teamMembersRes.json()) as TeamMembersApiResponse;
-          const nextProviderMeta: Record<
-            string,
-            { avatarUrl: string | null; departmentIds: number[] }
-          > = {};
-          for (const member of teamJson.teamMembers ?? []) {
-            const id = String(member.id ?? "").trim();
-            if (!id) continue;
-            if (member.deactivated) continue;
-            nextProviderMeta[id] = {
-              avatarUrl: member.avatar_url?.trim() || null,
-              departmentIds: Array.isArray(member.departments)
-                ? member.departments
-                : [],
-            };
-          }
-          setProviderMetaById(nextProviderMeta);
         }
       } catch {
         if (active) setRawBookings([]);
@@ -796,11 +779,31 @@ export default function BookingCalendar() {
     });
   }, [viewMode]);
 
+  const shiftSelectedWeek = useCallback((direction: -1 | 1) => {
+    setViewDate((prev) => {
+      const next = new Date(prev);
+      next.setDate(prev.getDate() + direction * 7);
+      return start_of_day(next);
+    });
+  }, []);
+
+  const weekDaysWithBookings = useMemo(() => {
+    const weekStart = start_of_week(viewDate);
+    const keys = new Set<string>();
+    for (let i = 0; i < 7; i += 1) {
+      const day = new Date(weekStart);
+      day.setDate(weekStart.getDate() + i);
+      const key = toDateKey(day);
+      if ((bookingsByDay[key]?.length ?? 0) > 0) keys.add(key);
+    }
+    return keys;
+  }, [bookingsByDay, viewDate]);
+
   const switchViewMode = useCallback((mode: CalendarViewMode) => {
     if (mode === "day" || mode === "provider") {
       setViewDate(start_of_day(new Date()));
     } else if (mode === "week") {
-      setViewDate(start_of_week(new Date()));
+      setViewDate(start_of_day(new Date()));
     } else if (mode === "month") {
       setViewDate((prev) => start_of_month(prev));
     }
@@ -839,39 +842,68 @@ export default function BookingCalendar() {
     return () => window.removeEventListener("mousedown", onPointerDown);
   }, [showDayPicker]);
 
+  const filterButtons = (
+    <>
+      <button
+        type="button"
+        onClick={goToToday}
+        className="h-9 rounded-md border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+      >
+        Today
+      </button>
+  
+      <button
+        type="button"
+        onClick={previousPeriod}
+        className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-700 transition hover:bg-slate-50"
+        aria-label={
+          viewMode === "month"
+            ? "Previous month"
+            : viewMode === "day" || viewMode === "provider"
+              ? "Previous day"
+              : "Previous week"
+        }
+      >
+        <ChevronLeft className="h-3.5 w-3.5" aria-hidden />
+      </button>
+  
+      <button
+        type="button"
+        onClick={nextPeriod}
+        className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-700 transition hover:bg-slate-50"
+        aria-label={
+          viewMode === "month"
+            ? "Next month"
+            : viewMode === "day" || viewMode === "provider"
+              ? "Next day"
+              : "Next week"
+        }
+      >
+        <ChevronRight className="h-3.5 w-3.5" aria-hidden />
+      </button>
+    </>
+  );
+
   return (
     <div className="min-h-screen bg-slate-50/40">
       <div className="mx-auto space-y-4">
-        <header className="flex flex-col gap-4 border-b border-slate-200 pb-4 md:flex-row md:items-center md:justify-between">
+        <header className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
-            <h1 className="text-2xl font-semibold text-slate-900">
-              Booking Calendar
-            </h1>
-            <p className="text-sm text-slate-500">
-              View and manage all appointments
-            </p>
+            <h1 className="text-2xl font-bold tracking-tight text-slate-900 md:text-3xl">Booking Calendar</h1>
+            <p className="text-sm text-slate-500">View and manage all appointments</p>
           </div>
-
-          <button
-            type="button"
-            onClick={open_create_booking}
-            className="inline-flex items-center gap-2 self-start rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-indigo-700 md:self-auto"
-          >
-            <Plus className="h-4 w-4" aria-hidden />
-            New Booking
-          </button>
         </header>
 
         <section className="space-y-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm md:p-5">
           <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-            <div className="inline-flex w-fit items-center rounded-lg border border-slate-200 bg-slate-50 p-0.5">
+            <div className="inline-flex w-fit items-center gap-2">
               <button
                 type="button"
                 onClick={() => switchViewMode("day")}
-                className={`rounded-md px-5 py-2 text-xs font-semibold transition ${
+                className={`rounded-md px-4 py-2 text-sm font-semibold transition border cursor-pointer ${
                   viewMode === "day"
-                    ? "bg-indigo-50 text-indigo-700"
-                    : "text-slate-500 hover:text-slate-700"
+                    ? "bg-indigo-600 border-indigo-700 text-white"
+                    : "text-slate-500 border-slate-200 hover:text-indigo-600 hover:bg-indigo-50 hover:border-indigo-200"
                 }`}
               >
                 Day
@@ -879,10 +911,10 @@ export default function BookingCalendar() {
               <button
                 type="button"
                 onClick={() => switchViewMode("week")}
-                className={`rounded-md px-5 py-2 text-xs font-semibold transition ${
+                className={`rounded-md px-4 py-2 text-sm font-semibold transition border cursor-pointer ${
                   viewMode === "week"
-                    ? "bg-indigo-50 text-indigo-700"
-                    : "text-slate-500 hover:text-slate-700"
+                    ? "bg-indigo-600 border-indigo-700 text-white"
+                    : "text-slate-500 border-slate-200 hover:text-indigo-700 hover:bg-indigo-50 hover:border-indigo-200"
                 }`}
               >
                 Week
@@ -890,10 +922,10 @@ export default function BookingCalendar() {
               <button
                 type="button"
                 onClick={() => switchViewMode("month")}
-                className={`rounded-md px-5 py-2 text-xs font-semibold transition ${
+                className={`rounded-md px-4 py-2 text-sm font-semibold transition border cursor-pointer ${
                   viewMode === "month"
-                    ? "bg-indigo-50 text-indigo-700"
-                    : "text-slate-500 hover:text-slate-700"
+                    ? "bg-indigo-600 border-indigo-700 text-white"
+                    : "text-slate-500 border-slate-200 hover:text-indigo-700 hover:bg-indigo-50 hover:border-indigo-200"
                 }`}
               >
                 Month
@@ -901,58 +933,32 @@ export default function BookingCalendar() {
               <button
                 type="button"
                 onClick={() => switchViewMode("provider")}
-                className={`rounded-md px-5 py-2 text-xs font-semibold transition ${
+                className={`rounded-md px-4 py-2 text-sm font-semibold transition border cursor-pointer ${
                   viewMode === "provider"
-                    ? "bg-indigo-50 text-indigo-700"
-                    : "text-slate-500 hover:text-slate-700"
+                    ? "bg-indigo-600 border-indigo-700 text-white"
+                    : "text-slate-500 border-slate-200 hover:text-indigo-700 hover:bg-indigo-50 hover:border-indigo-200"
                 }`}
               >
                 Provider
               </button>
             </div>
-
+            
             <div className="flex flex-wrap items-center gap-1.5">
-              <button
-                type="button"
-                onClick={goToToday}
-                className="h-9 rounded-md border border-slate-200 bg-white px-4 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-              >
-                Today
-              </button>
-              <button
-                type="button"
-                onClick={previousPeriod}
-                className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-700 transition hover:bg-slate-50"
-                aria-label={
-                  viewMode === "month"
-                    ? "Previous month"
-                    : viewMode === "day" || viewMode === "provider"
-                      ? "Previous day"
-                      : "Previous week"
-                }
-              >
-                <ChevronLeft className="h-3.5 w-3.5" aria-hidden />
-              </button>
-              <button
-                type="button"
-                onClick={nextPeriod}
-                className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-700 transition hover:bg-slate-50"
-                aria-label={
-                  viewMode === "month"
-                    ? "Next month"
-                    : viewMode === "day" || viewMode === "provider"
-                      ? "Next day"
-                      : "Next week"
-                }
-              >
-                <ChevronRight className="h-3.5 w-3.5" aria-hidden />
-              </button>
+            {viewMode === "week" ? (
+              <ScreenGate minWidth={1024}>
+                {filterButtons}
+              </ScreenGate>
+            ) : (
+              filterButtons
+            )}
+
+
               {viewMode === "month" ? (
-                <div className="relative" ref={monthDropdownRef}>
+                <div className="relative flex gap-1" ref={monthDropdownRef}>
                   <button
                     type="button"
                     onClick={() => setShowMonthOptions((prev) => !prev)}
-                    className="inline-flex h-9 items-center gap-2 rounded-md border border-slate-200 bg-white px-3.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                    className="inline-flex h-9 items-center gap-2 rounded-md border border-slate-200 bg-white px-3.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
                     aria-label={`Current month ${monthLabel}`}
                     aria-expanded={showMonthOptions}
                     aria-haspopup="listbox"
@@ -983,7 +989,7 @@ export default function BookingCalendar() {
                                 setViewDate(start_of_month(option.date));
                                 setShowMonthOptions(false);
                               }}
-                              className={`flex w-full items-center px-3 py-2 text-left text-xs ${
+                              className={`flex w-full items-center px-3 py-2 text-left text-sm ${
                                 isSelected
                                   ? "bg-indigo-50 font-semibold text-indigo-700"
                                   : "text-slate-700 hover:bg-slate-50"
@@ -1007,7 +1013,7 @@ export default function BookingCalendar() {
                       setDayPickerMonth(start_of_month(viewDate));
                       setShowDayPicker((prev) => !prev);
                     }}
-                    className="inline-flex h-9 items-center gap-2 rounded-md border border-slate-200 bg-white px-3.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                    className="inline-flex h-9 items-center gap-2 rounded-md border border-slate-200 bg-white px-3.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
                     aria-label={`Select date ${dayLabel}`}
                     aria-expanded={showDayPicker}
                     aria-haspopup="dialog"
@@ -1039,7 +1045,7 @@ export default function BookingCalendar() {
                         >
                           <ChevronLeft className="h-3.5 w-3.5" aria-hidden />
                         </button>
-                        <p className="text-xs font-semibold text-slate-800">
+                        <p className="text-sm font-semibold text-slate-800">
                           {dayPickerMonthLabel}
                         </p>
                         <button
@@ -1089,11 +1095,11 @@ export default function BookingCalendar() {
                                     setViewDate(start_of_day(cell.date));
                                     setShowDayPicker(false);
                                   }}
-                                  className={`h-8 rounded-md text-xs font-medium transition ${
+                                  className={`h-8 rounded-md text-sm font-medium transition ${
                                     isSelected
                                       ? "bg-indigo-600 text-white"
                                       : isToday
-                                        ? "bg-blue-50 font-semibold text-blue-700 hover:bg-blue-100"
+                                        ? "bg-indigo-50 font-semibold text-indigo-700 hover:bg-indigo-100"
                                         : cell.isCurrentMonth
                                           ? "text-slate-700 hover:bg-slate-100"
                                           : "text-slate-300 hover:bg-slate-50"
@@ -1110,11 +1116,27 @@ export default function BookingCalendar() {
                   )}
                 </div>
               ) : (
-                <div className="inline-flex h-9 items-center rounded-md border border-slate-200 bg-white px-3.5 text-xs font-semibold text-slate-700">
-                  {weekLabel}
-                </div>
+                <>
+                  <ScreenGate maxWidth={1023}>
+                    <div className="w-full basis-full">
+                      <CalendarMobileWeekStrip
+                        selectedDate={viewDate}
+                        daysWithBookings={weekDaysWithBookings}
+                        onSelectDate={(date) => setViewDate(start_of_day(date))}
+                        onPreviousWeek={() => shiftSelectedWeek(-1)}
+                        onNextWeek={() => shiftSelectedWeek(1)}
+                      />
+                    </div>
+                  </ScreenGate>
+                  <ScreenGate minWidth={1024}>
+                    <div className="inline-flex h-9 items-center rounded-md border border-slate-200 bg-white px-3.5 text-sm font-semibold text-slate-700">
+                      {weekLabel}
+                    </div>
+                  </ScreenGate>
+                </>
               )}
             </div>
+
           </div>
 
           <CalendarFiltersBar
@@ -1140,7 +1162,7 @@ export default function BookingCalendar() {
             className={
               viewMode === "provider"
                 ? "grid gap-5"
-                : "grid gap-5 xl:grid-cols-[minmax(0,1fr)_340px]"
+                : "grid gap-5 grid-cols-1 xl:grid-cols-[minmax(0,1fr)_340px]"
             }
           >
             <div className="space-y-4">
@@ -1153,27 +1175,65 @@ export default function BookingCalendar() {
                   monthLabel={monthLabel}
                   todayCellRef={todayCellRef}
                 />
-              ) : viewMode === "day" || viewMode === "provider" ? (
+              ) : viewMode === "day" ? (
+                <>
+                  <ScreenGate maxWidth={1023}>
+                    <CalendarMobileDayBookings
+                      selectedDate={viewDate}
+                      bookings={currentDayBookings}
+                      loading={loading}
+                      onSelectBooking={handle_select_booking}
+                      selectedBookingId={selectedBookingId ?? undefined}
+                      onGoToToday={() => setViewDate(start_of_day(new Date()))}
+                    />
+                  </ScreenGate>
+                  <ScreenGate minWidth={1024}>
+                    <CalendarDayGrid
+                      viewDate={viewDate}
+                      bookings={currentDayBookings}
+                      providerColumns={dayProviderColumns}
+                      loading={loading}
+                      timezoneLabel={timezoneLabel}
+                      onSelectBooking={handle_select_booking}
+                      selectedBookingId={selectedBookingId ?? undefined}
+                    />
+                  </ScreenGate>
+                </>
+              ) : viewMode === "provider" ? (
                 <CalendarDayGrid
                   viewDate={viewDate}
                   bookings={currentDayBookings}
                   providerColumns={dayProviderColumns}
                   loading={loading}
                   timezoneLabel={timezoneLabel}
-                  onSelectBooking={(booking) => setSelectedBookingId(booking.id)}
+                  onSelectBooking={handle_select_booking}
                   selectedBookingId={selectedBookingId ?? undefined}
                 />
               ) : (
-                <CalendarWeekGrid
-                  viewMode="week"
-                  weekStart={viewDate}
-                  bookings={currentWeekBookings}
-                  providerColumns={providerColumns}
-                  loading={loading}
-                  timezoneLabel={timezoneLabel}
-                  onSelectBooking={(booking) => setSelectedBookingId(booking.id)}
-                  selectedBookingId={selectedBookingId ?? undefined}
-                />
+                <>
+                  <ScreenGate maxWidth={1023}>
+                    <CalendarMobileWeekBookings
+                      selectedDate={viewDate}
+                      bookings={currentDayBookings}
+                      loading={loading}
+                      onSelectBooking={handle_select_booking}
+                      selectedBookingId={selectedBookingId ?? undefined}
+                      onGoToToday={() => setViewDate(start_of_day(new Date()))}
+                    />
+                  </ScreenGate>
+                  <ScreenGate minWidth={1024}>
+                    <CalendarWeekGrid
+                      viewMode="week"
+                      weekStart={viewDate}
+                      bookings={currentWeekBookings}
+                      providerColumns={providerColumns}
+                      loading={loading}
+                      timezoneLabel={timezoneLabel}
+                      onSelectBooking={handle_select_booking}
+                      selectedBookingId={selectedBookingId ?? undefined}
+                    />
+                  </ScreenGate>
+                </>
               )}
 
               <div className="flex flex-wrap items-center justify-between gap-x-5 gap-y-2 border-t border-slate-200 pt-3">
@@ -1181,10 +1241,10 @@ export default function BookingCalendar() {
                   {CALENDAR_STATUS_LEGEND.map((item) => (
                     <div
                       key={item.key}
-                      className="inline-flex items-center gap-2 text-xs font-medium text-slate-600"
+                      className="inline-flex items-center gap-2 text-sm font-medium text-slate-600"
                     >
                       <span
-                        className={`h-2.5 w-2.5 rounded-full ${getStatusDotClass(item.key)}`}
+                        className={`h-2 w-2 rounded-full ${getStatusDotClass(item.key)}`}
                         aria-hidden
                       />
                       {item.label}
@@ -1192,7 +1252,7 @@ export default function BookingCalendar() {
                   ))}
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <TimezoneSelector
                     timezone={selectedTimezone}
                     options={timezone_options}
@@ -1205,7 +1265,7 @@ export default function BookingCalendar() {
                     className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-50 hover:text-slate-700"
                     aria-label="Refresh calendar"
                   >
-                    {/* <RefreshCw className="h-3.5 w-3.5" aria-hidden /> */}
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-refresh-cw"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>
                   </button>
                 </div>
               </div>
@@ -1226,13 +1286,18 @@ export default function BookingCalendar() {
                 loadingUpcoming={loading}
                 onCreateBooking={open_create_booking}
                 selectedBooking={selectedBooking}
-                onSelectBooking={(booking) => setSelectedBookingId(booking.id)}
+                onSelectBooking={handle_select_booking}
                 appointmentDetailsRef={appointmentDetailsRef}
               />
             )}
           </div>
         </section>
       </div>
+      <BookingPreviewPanel
+        open={preview_booking != null}
+        onClose={() => set_preview_booking(null)}
+        booking={preview_booking}
+      />
     </div>
   );
 }

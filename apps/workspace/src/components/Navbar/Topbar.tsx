@@ -1,5 +1,6 @@
 "use client";
 
+import { authFetch } from '@/src/lib/auth_session';
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -8,8 +9,13 @@ import { signOutWithAuthLog } from "@/src/lib/auth_activity_log_client";
 import { useAuth } from "../../providers/AuthProvider";
 import { useWorkspaceSettings } from "../../hooks/useWorkspaceSettings";
 import { useSubscription } from "@/src/hooks/useSubscription";
+import { useCreateBookingModal } from "@/src/providers/CreateBookingModalProvider";
+import DashboardIcon from "@/src/components/Dashboard/DashboardIcon";
 import { WorkspaceBrandLogo } from "../molecules/WorkspaceBrandLogo";
 import GlobalSearch from "./GlobalSearch";
+import ScreenGate from "../ScreenGate";
+import { UserAvatar } from "@app/ui";
+import { useCurrentUserAvatar } from "@/src/hooks/useCurrentUserAvatar";
 interface TopbarProps {
   toggleSidebar: () => void;
   isSidebarOpen: boolean;
@@ -34,28 +40,26 @@ function getRelativeTime(dateIso: string) {
 }
 
 export default function Topbar({ toggleSidebar, isSidebarOpen }: TopbarProps) {
-  const PROFILE_IMAGE_STORAGE_KEY = "workspace_profile_image";
-  const PROFILE_IMAGE_EVENT = "workspace-profile-image-updated";
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
   const [isNotificationOpen, setIsNotificationOpen] = useState(false);
-  const [profileImage, setProfileImage] = useState<string | null>(null);
+  const { avatarUrl, displayName, email } = useCurrentUserAvatar();
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [notificationsLoading, setNotificationsLoading] = useState(false);
   const [notificationsError, setNotificationsError] = useState<string | null>(null);
   const router = useRouter();
-  const { user } = useAuth();
+  const { user, accessToken } = useAuth();
   const {
     general,
     loading: loadingSettings,
     workspaceLogoResolved,
     workspaceName,
-    workspaceProfessionLabel,
   } = useWorkspaceSettings();
   const { data: subscriptionData } = useSubscription();
+  const { open: open_create_booking } = useCreateBookingModal();
 
   const accountName =
     workspaceName?.trim() || general.accountName || "GetSetTime";
-  const currentBillingPlan = subscriptionData?.plan?.name?.trim() || "Billing";
+  const currentBillingPlan = subscriptionData?.plan?.name?.trim() || "...";
   
   const handleSignOut = async () => {
     await signOutWithAuthLog("manual");
@@ -95,53 +99,14 @@ export default function Topbar({ toggleSidebar, isSidebarOpen }: TopbarProps) {
   }, []);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
-
-    const metadata = (user?.user_metadata ?? {}) as Record<string, unknown>;
-    const metadataAvatar =
-      (metadata.avatar_url as string) ||
-      (metadata.picture as string) ||
-      null;
-
-    const updateAvatar = () => {
-      const savedAvatar = window.localStorage.getItem(PROFILE_IMAGE_STORAGE_KEY);
-      const normalizedSavedAvatar =
-        savedAvatar && !savedAvatar.startsWith("data:") ? savedAvatar : null;
-      setProfileImage(normalizedSavedAvatar || metadataAvatar);
-    };
-
-    updateAvatar();
-    window.addEventListener(PROFILE_IMAGE_EVENT, updateAvatar);
-    window.addEventListener("storage", updateAvatar);
-
-    return () => {
-      window.removeEventListener(PROFILE_IMAGE_EVENT, updateAvatar);
-      window.removeEventListener("storage", updateAvatar);
-    };
-  }, [user]);
-
-  useEffect(() => {
-    if (!isNotificationOpen) return;
+    if (!isNotificationOpen || !accessToken) return;
     let alive = true;
 
     const loadNotifications = async () => {
       setNotificationsLoading(true);
       setNotificationsError(null);
       try {
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
-
-        if (!session?.access_token) {
-          if (alive) setNotifications([]);
-          return;
-        }
-
-        const response = await fetch("/api/activity", {
-          headers: {
-            Authorization: `Bearer ${session.access_token}`,
-          },
-        });
+        const response = await authFetch("/api/activity");
 
         if (!response.ok) {
           const body = await response.json().catch(() => ({}));
@@ -168,7 +133,7 @@ export default function Topbar({ toggleSidebar, isSidebarOpen }: TopbarProps) {
       alive = false;
       window.clearInterval(interval);
     };
-  }, [isNotificationOpen]);
+  }, [isNotificationOpen, accessToken]);
 
   // Prevent clicks inside the dropdown from closing it
   const handleDropdownClick = (e: React.MouseEvent) => {
@@ -176,21 +141,11 @@ export default function Topbar({ toggleSidebar, isSidebarOpen }: TopbarProps) {
   };
 
   return (
-    <header className="sticky top-0 z-40 shrink-0 bg-white border-b border-gray-200 h-16 flex items-center px-4">
+    <header className="sticky top-0 z-999 shrink-0 bg-white border-b border-gray-200 h-16 flex items-center px-4">
       <div className="flex items-center justify-between w-full">
         <div className="flex items-center">
-          <button onClick={toggleSidebar} className="p-2 rounded-md text-gray-500 hover:bg-gray-100 lg:hidden" aria-label={isSidebarOpen ? "Close sidebar" : "Open sidebar"}>
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              {isSidebarOpen ? (
-                <path strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12"/>
-              ) : (
-                <path strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16"/>
-              )}
-            </svg>
-          </button>
-          
           <div className="lg:hidden">
-            <div className="h-16 px-3 flex items-center justify-start border-b border-gray-200">
+            <div className="h-16 flex items-center justify-start border-b border-gray-200">
               <Link href="/" className="logo flex flex-col items-start gap-0.5">
                 {!loadingSettings && (
                   <>
@@ -199,13 +154,15 @@ export default function Topbar({ toggleSidebar, isSidebarOpen }: TopbarProps) {
                       alt={`${accountName} Logo`}
                       width={150}
                       height={40}
-                      className="h-8 w-auto object-contain"
+                      className="h-10 sm:h-12 lg:h-8 w-auto object-contain"
                     />
+                    <ScreenGate minWidth={1024}>
                     {accountName && accountName !== "GetSetTime" && (
                       <span className="text-xs sm:text-sm font-semibold text-gray-700 truncate max-w-[180px]">
                         {accountName}
                       </span>
                     )}
+                    </ScreenGate>
                   </>
                 )}
               </Link>
@@ -221,21 +178,17 @@ export default function Topbar({ toggleSidebar, isSidebarOpen }: TopbarProps) {
         
 
         <div className="flex items-center space-x-2">
-          <Link href="/billings" className="hidden sm:flex text-sm text-gray-500 hover:text-gray-700 px-2.5 py-1 rounded-full text-xs font-medium border bg-emerald-50 text-emerald-700 border-emerald-200">
-            <span className="text-sm font-medium">Current Plan: {currentBillingPlan}</span>
+          <button
+            type="button"
+            onClick={open_create_booking}
+            className="hidden lg:inline-flex items-center gap-1 w-fit rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700 cursor-pointer"
+          >
+            <DashboardIcon name="plus" size={17} className="text-white" />
+            Create Booking
+          </button>
+          <Link href="/billings" className="hidden sm:flex text-emerald-600 px-4 py-2 rounded-lg text-sm border bg-emerald-50 hover:bg-emerald-600 hover:text-white border-emerald-200">
+            Current Plan: <span className="font-medium"> {currentBillingPlan}</span>
           </Link>
-          {!loadingSettings && workspaceProfessionLabel ? (
-            <div className="hidden sm:flex items-center max-w-[11rem] md:max-w-[16rem] shrink-0 px-2">
-              <div
-                className="text-sm truncate rounded-lg border-2 border-indigo-700/80 px-3 py-1.5 shadow-sm"
-                style={{ backgroundColor: "var(--color-indigo-600)" }}
-                title={workspaceProfessionLabel}
-              >
-                <span className="text-white/90 font-normal mr-1.5">Profession</span>
-                <span className="font-bold text-white">{workspaceProfessionLabel}</span>
-              </div>
-            </div>
-          ) : null}
           <div className="relative">
             <button id="notification-button" onClick={(e) => { e.stopPropagation(); setIsNotificationOpen(!isNotificationOpen); setIsProfileMenuOpen(false);}} className="p-2 bg-gray-100 rounded-full text-gray-500 cursor-pointer hover:bg-gray-100 relative" aria-label="Notifications" aria-expanded={isNotificationOpen} aria-haspopup="true">
               <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -272,7 +225,7 @@ export default function Topbar({ toggleSidebar, isSidebarOpen }: TopbarProps) {
                   )}
                 </div>
                 <div className="px-4 py-2 border-t border-gray-100 text-center">
-                  <Link href="/notifications/all" className="text-xs text-blue-600 hover:text-blue-800" onClick={() => setIsNotificationOpen(false)}>View all notifications</Link>
+                  <Link href="/notifications/all" className="text-xs text-indigo-600 hover:text-indigo-800" onClick={() => setIsNotificationOpen(false)}>View all notifications</Link>
                 </div>
               </div>
             )}
@@ -280,13 +233,13 @@ export default function Topbar({ toggleSidebar, isSidebarOpen }: TopbarProps) {
 
           <div className="relative">
             <button id="profile-button" onClick={(e) => { e.stopPropagation(); setIsProfileMenuOpen(!isProfileMenuOpen); setIsNotificationOpen(false);}} className="flex items-center space-x-2 cursor-pointer focus:outline-none" aria-expanded={isProfileMenuOpen} aria-haspopup="true">
-              <div className="h-8 w-8 rounded-full bg-blue-500 flex items-center justify-center text-white overflow-hidden">
-                {profileImage ? (
-                  <img src={profileImage} alt="Profile" className="h-full w-full object-cover" />
-                ) : (
-                  <span className="text-sm font-medium">{user?.email ? user.email.charAt(0).toUpperCase() : "U"}</span>
-                )}
-              </div>
+              <UserAvatar
+                avatarUrl={avatarUrl}
+                name={displayName}
+                email={email ?? undefined}
+                size="md"
+                className="h-8 w-8 bg-indigo-500 text-white"
+              />
             </button>
 
             {isProfileMenuOpen && (

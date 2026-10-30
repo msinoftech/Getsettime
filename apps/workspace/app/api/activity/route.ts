@@ -91,7 +91,7 @@ export async function GET(req: NextRequest) {
         .select("id,entity_type,entity_id,action,title,description,before_data,after_data,changed_fields,target_path,created_at")
         .eq("workspace_id", workspaceId)
         .order("created_at", { ascending: false })
-        .limit(120),
+        .limit(10),
       supabase
         .from("configurations")
         .select("id,settings,created_at,updated_at")

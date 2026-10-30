@@ -1,5 +1,16 @@
 "use client";
-import { useState, useEffect, useRef, useCallback, type ComponentType } from "react";
+import {
+  getWorkspaceSession,
+  validateWorkspaceUser,
+} from '@/src/lib/auth_session';
+import {
+  useState,
+  useEffect,
+  useRef,
+  useCallback,
+  type ComponentType,
+  type ReactNode,
+} from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
@@ -30,8 +41,47 @@ import {
   ROLE_CUSTOMER,
 } from "@/src/constants/roles";
 import { build_service_provider_public_booking_url } from "@/src/utils/public_booking_link";
+import {
+  CLAIM_FREE_EXIT_COPY,
+  useClaimFreeRegister,
+} from "@/src/hooks/useClaimFreeRegister";
 
 type OnboardingRole = "workspace_admin" | "service_provider";
+
+function RegisterAuthShell({
+  title,
+  subtitle,
+  children,
+}: {
+  title: string;
+  subtitle?: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="min-h-screen bg-neutral-50 relative flex items-center justify-center">
+      <div className="absolute inset-0">
+        <div className="absolute bottom-0 right-0 w-100 h-100 bg-emerald-300/20 rounded-full blur-3xl animate-pulse [animation-delay:2s]" />
+        <div className="absolute top-0 left-0 w-100 h-100 bg-indigo-400/30 rounded-full blur-3xl animate-pulse [animation-delay:4s]" />
+      </div>
+      <div className="w-full max-w-md px-6 relative z-10">
+        <div className="text-center mb-8">
+          <Link href="/" className="inline-block">
+            <Image
+              src="/getsettime-logo.svg"
+              alt="GetSetTime Logo"
+              width={200}
+              height={50}
+              className="mx-auto mb-4"
+            />
+          </Link>
+          <h1 className="text-3xl font-bold text-gray-800 mb-2">{title}</h1>
+          {subtitle ? <p className="text-gray-600">{subtitle}</p> : null}
+        </div>
+        <div className="bg-white rounded-2xl shadow-xl p-8 border border-gray-100">{children}</div>
+      </div>
+    </div>
+  );
+}
 
 /** Row from professions_list (onboarding catalog), not workspace professions.id */
 type Profession = {
@@ -101,10 +151,10 @@ async function enqueueAuthRefresh(): Promise<void> {
  * right after OAuth, extra refreshes can fail or rotate tokens in a way that clears the session.
  */
 async function ensureSupabaseSessionOrThrow(): Promise<void> {
-  let { data: { session } } = await supabase.auth.getSession();
+  let { session } = await getWorkspaceSession({ bypassCache: true });
   if (session?.user) return;
   await enqueueAuthRefresh();
-  ({ data: { session } } = await supabase.auth.getSession());
+  ({ session } = await getWorkspaceSession({ bypassCache: true }));
   if (!session?.user) {
     throw new Error("Not signed in or session expired. Please sign in again.");
   }
@@ -112,11 +162,11 @@ async function ensureSupabaseSessionOrThrow(): Promise<void> {
 
 /** Bearer + JSON headers for workspace API routes; refresh only if access_token is missing. */
 async function headers_for_workspace_api(): Promise<Record<string, string>> {
-  let { data: { session } } = await supabase.auth.getSession();
+  let { session } = await getWorkspaceSession({ bypassCache: true });
   let token = session?.access_token;
   if (!token) {
     await enqueueAuthRefresh();
-    ({ data: { session } } = await supabase.auth.getSession());
+    ({ session } = await getWorkspaceSession({ bypassCache: true }));
     token = session?.access_token;
   }
   if (!token) {
@@ -191,12 +241,25 @@ export default function RegisterForm() {
   }, []);
   const [timesheetSaveFeedback, setTimesheetSaveFeedback] =
     useState<availability_timesheet_save_feedback>(null);
-  const [onboardingUser, setOnboardingUser] = useState<{ email?: string; google_calendar_sync?: boolean } | null>(null);
+  const [onboardingUser, setOnboardingUser] = useState<{
+    email?: string;
+    google_calendar_sync?: boolean;
+    onboarding_completed?: boolean;
+  } | null>(null);
+
+  const claimFree = useClaimFreeRegister({
+    exitGuardEnabled: onboardingUser?.onboarding_completed !== true,
+    email,
+    getAccessToken: async () => {
+      const { session } = await getWorkspaceSession({ bypassCache: true });
+      return session?.access_token ?? null;
+    },
+  });
 
   useEffect(() => {
     if (onboardingMode !== true || onboardingRole !== "service_provider") return;
-    void supabase.auth.getUser().then(({ data }) => {
-      const id = data.user?.id;
+    void getWorkspaceSession().then(({ session }) => {
+      const id = session?.user?.id;
       if (id) setOnboardingProviderUserId(id);
     });
   }, [onboardingMode, onboardingRole, onboardingStep]);
@@ -442,9 +505,9 @@ export default function RegisterForm() {
 
     const isOnboardingFlow = searchParams.get("onboarding") === "1";
 
-    const { data: userResultEarly, error: getUserEarlyErr } = await supabase.auth.getUser();
-    if (!getUserEarlyErr && userResultEarly.user?.user_metadata) {
-      meta = userResultEarly.user.user_metadata as Record<string, unknown>;
+    const { user: userResultEarly, error: getUserEarlyErr } = await validateWorkspaceUser();
+    if (!getUserEarlyErr && userResultEarly?.user_metadata) {
+      meta = userResultEarly.user_metadata as Record<string, unknown>;
       if (onboardingKindRef.current !== "invite") {
         wid = parseWorkspaceIdFromMeta(meta) ?? wid;
       }
@@ -522,7 +585,14 @@ export default function RegisterForm() {
         timeoutMessage
       );
       if (!res.ok) return null;
-      const body = (await res.json()) as { workspace_id?: number };
+      const body = (await res.json()) as {
+        workspace_id?: number;
+        skip_onboarding?: boolean;
+      };
+      if (body.skip_onboarding) {
+        router.replace("/");
+        return null;
+      }
       const id = body.workspace_id;
       return id != null && Number.isFinite(id) ? id : null;
     };
@@ -563,9 +633,9 @@ export default function RegisterForm() {
             25_000,
             "Session refresh timed out. Please refresh the page or sign in again."
           );
-          const { data: userAfterSync } = await supabase.auth.getUser();
-          if (userAfterSync.user?.user_metadata) {
-            meta = userAfterSync.user.user_metadata as Record<string, unknown>;
+          const { user: userAfterSync } = await validateWorkspaceUser();
+          if (userAfterSync?.user_metadata) {
+            meta = userAfterSync.user_metadata as Record<string, unknown>;
           }
         } catch {
           setOnboardingMode(false);
@@ -624,13 +694,13 @@ export default function RegisterForm() {
     }
 
     // Fresh metadata before wizard check (JWT can lag behind auth.users after updateUser).
-    const { data: userResult, error: getUserErr } = await supabase.auth.getUser();
-    if (!getUserErr && userResult.user?.user_metadata) {
-      meta = userResult.user.user_metadata as Record<string, unknown>;
+    const { user: userResult, error: getUserErr } = await validateWorkspaceUser();
+    if (!getUserErr && userResult?.user_metadata) {
+      meta = userResult.user_metadata as Record<string, unknown>;
     }
 
     const userIdForResume =
-      userResult.user?.id ?? session.user.id;
+      userResult?.id ?? session.user.id;
 
     if (isServiceProvider) {
       setOnboardingProviderUserId(userIdForResume);
@@ -653,18 +723,19 @@ export default function RegisterForm() {
     // after saveStep1, onAuthStateChange runs resolveMode while useSearchParams() still has the old ?step=,
     // which would reset the UI to step 1 and make Next appear broken. Step comes from goToOnboardingStep / full hydration.
     if (resumeStepHydratedUserIdRef.current === userIdForResume) {
-      const { data: { session: latestSession } } = await supabase.auth.getSession();
+      const { session: latestSession } = await getWorkspaceSession({ bypassCache: true });
       const tokenAfterRefreshFast =
         latestSession?.access_token ?? session.access_token;
       const authHeadersFast: Record<string, string> = {
         Authorization: `Bearer ${tokenAfterRefreshFast}`,
         "Content-Type": "application/json",
       };
-      const emailUser = userResult.user ?? latestSession?.user ?? session.user;
+      const emailUser = userResult ?? latestSession?.user ?? session.user;
       setWorkspaceType(ws?.type ?? null);
       setOnboardingUser({
         email: emailUser.email ?? undefined,
         google_calendar_sync: read_google_calendar_sync(meta),
+        onboarding_completed: meta.onboarding_completed === true,
       });
       if (isServiceProvider && userIdForResume) {
         await ensureServiceProviderBookingLink(authHeadersFast, userIdForResume);
@@ -674,7 +745,7 @@ export default function RegisterForm() {
       return;
     }
 
-    const { data: { session: latestSession } } = await supabase.auth.getSession();
+    const { session: latestSession } = await getWorkspaceSession({ bypassCache: true });
     const tokenAfterRefresh = latestSession?.access_token ?? session.access_token;
     const authHeadersFresh: Record<string, string> = {
       Authorization: `Bearer ${tokenAfterRefresh}`,
@@ -830,7 +901,7 @@ export default function RegisterForm() {
 
     setOnboardingMode(true);
     const userIdForResumeFull =
-      userResult.user?.id ?? latestSession?.user?.id ?? session.user.id;
+      userResult?.id ?? latestSession?.user?.id ?? session.user.id;
     // Initial login / first load: resume from metadata; optional ?step= is capped so users cannot skip ahead.
     // Later resolveMode runs (auth events, searchParams) must not override Back/Next.
     if (resumeStepHydratedUserIdRef.current !== userIdForResumeFull) {
@@ -854,10 +925,11 @@ export default function RegisterForm() {
       setOnboardingStep(initialStep);
       resumeStepHydratedUserIdRef.current = userIdForResumeFull;
     }
-    const emailUser = userResult.user ?? latestSession?.user ?? session.user;
+    const emailUser = userResult ?? latestSession?.user ?? session.user;
     setOnboardingUser({
       email: emailUser.email ?? undefined,
       google_calendar_sync: read_google_calendar_sync(meta),
+      onboarding_completed: meta.onboarding_completed === true,
     });
     setCalendarConnecting(false);
   };
@@ -886,7 +958,7 @@ export default function RegisterForm() {
         .catch(() => undefined)
         .then(async () => {
           try {
-            const { data: { session } } = await supabase.auth.getSession();
+            const { session } = await getWorkspaceSession();
             await resolveMode(session);
           } catch (e: unknown) {
             console.error("register onboarding resolve", e);
@@ -1070,12 +1142,12 @@ export default function RegisterForm() {
       }
 
       await enqueueAuthRefresh();
-      const { data: userResult, error: userErr } = await supabase.auth.getUser();
-      if (userErr || !userResult.user) {
+      const { user: userResult, error: userErr } = await validateWorkspaceUser();
+      if (userErr || !userResult) {
         throw new Error(userErr?.message ?? "Failed to refresh session");
       }
 
-      const completed = userResult.user.user_metadata?.onboarding_completed === true;
+      const completed = userResult.user_metadata?.onboarding_completed === true;
       if (!completed) {
         throw new Error("Setup did not complete. Please try again.");
       }
@@ -1123,6 +1195,9 @@ export default function RegisterForm() {
         body: JSON.stringify({
           enableCalendarSync: true,
           isSignup: true,
+          ...(claimFree.isClaimSignup && claimFree.claimCode
+            ? { claim_code: claimFree.claimCode }
+            : {}),
         }),
       });
 
@@ -1168,7 +1243,14 @@ export default function RegisterForm() {
       const res = await fetch("/api/auth/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password, name: fullName }),
+        body: JSON.stringify({
+          email,
+          password,
+          name: fullName,
+          ...(claimFree.isClaimSignup && claimFree.claimCode
+            ? { claim_code: claimFree.claimCode }
+            : {}),
+        }),
       });
       const json = await res.json().catch(() => ({}));
 
@@ -1219,11 +1301,10 @@ export default function RegisterForm() {
 
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-white to-purple-50 py-8">
-        <div className="absolute top-0 left-0 w-full h-full bg-grid-pattern opacity-5" />
-        <div className="w-full max-w-6xl px-6 relative z-10">
+        <div className="w-full max-w-7xl p-4 lg:px-6 relative z-10">
           <div className="text-center mb-6">
             <Link href="/" className="inline-block">
-              <Image src="/getsettime-logo.svg" alt="GetSetTime Logo" width={200} height={50} className="mx-auto mb-4" />
+              <Image src="/getsettime-logo.svg" alt="GetSetTime Logo" width={200} height={50} className="mx-auto" />
             </Link>
             <h1 className="text-2xl font-bold text-gray-800">
               {isSpOnboardingUi ? "Set up your profile" : "Set up your workspace"}
@@ -1233,7 +1314,7 @@ export default function RegisterForm() {
               {[1, 2, 3, 4].map((s) => (
                 <div
                   key={s}
-                  className={`h-1.5 flex-1 max-w-[60px] rounded-full ${s <= onboardingStep ? "bg-blue-600" : "bg-gray-200"}`}
+                  className={`h-1.5 flex-1 max-w-[60px] rounded-full ${s <= onboardingStep ? "bg-indigo-600" : "bg-gray-200"}`}
                 />
               ))}
             </div>
@@ -1278,7 +1359,7 @@ export default function RegisterForm() {
                 type="button"
                 onClick={() => handleOnboardingNext()}
                 disabled={onboardingNextDisabled}
-                className="px-6 py-3 rounded-lg bg-blue-600 text-white font-medium hover:bg-blue-700 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {finishProgressOpen ? "Setting up…" : "Next"}
               </button>
@@ -1286,12 +1367,12 @@ export default function RegisterForm() {
           )}
 
           {onboardingStep === 1 && (
-            <div className="bg-white rounded-2xl shadow-xl p-8 border border-gray-100 space-y-8">
+            <div className="bg-white rounded-2xl shadow-xl p-4 lg:p-6 border border-gray-100 space-y-4">
               {onboardingRole !== "service_provider" && (
               <div>
                 <h2 className="text-lg font-semibold text-gray-800 mb-1">What is your profession?</h2>
                 <p className="text-sm text-gray-500 mb-4">Select the option that best describes your work.</p>
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                <div className="grid max-[425px]:grid-cols-2 grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-4 gap-2">
                   {professions.map((p) => (
                     <button
                       key={p.id}
@@ -1304,20 +1385,20 @@ export default function RegisterForm() {
                         setCustomDepartmentMode(false);
                         scrollToDepartmentSection();
                       }}
-                      className={`flex items-center gap-3 px-4 py-4 rounded-2xl border text-left transition ${
+                      className={`flex flex-col min-[425px]:flex-row items-start min-[425px]:items-center gap-3 px-3 py-2 rounded-2xl border text-left transition ${
                         selectedProfessionId === String(p.id)
-                          ? "border-violet-300 bg-violet-50 text-slate-900 shadow-sm"
+                          ? "border-indigo-300 bg-indigo-50 text-slate-900 shadow-sm"
                           : "border-gray-200 bg-white text-slate-900 hover:border-gray-300 hover:bg-gray-50"
                       }`}
                     >
-                      <span className="flex h-12 w-12 items-center justify-center rounded-xl bg-slate-100 text-xl text-slate-700">
+                      <span className="flex h-8 w-8 sm:h-12 sm:w-12 shrink-0 items-center justify-center rounded-md sm:rounded-xl bg-slate-100 text-xl text-slate-700">
                         {isCustomProfessionIcon(p.icon) ? (
                           <Image
                             src={p.icon}
                             alt={`${p.name} icon`}
                             width={24}
                             height={24}
-                            className="h-6 w-6 object-contain"
+                            className="h-4 w-4 sm:h-6 sm:w-6 object-contain"
                             unoptimized
                           />
                         ) : (() => {
@@ -1334,7 +1415,7 @@ export default function RegisterForm() {
                           })()}
                       </span>
                       <span className="min-w-0">
-                        <span className="block text-lg font-semibold leading-tight text-slate-900">{p.name}</span>
+                        <span className="block text-sm min-[425px]:text-base font-semibold leading-tight text-slate-900">{p.name}</span>
                         <span className="block text-sm text-slate-500">
                           {p.departments_count} department{p.departments_count === 1 ? "" : "s"}
                         </span>
@@ -1350,17 +1431,17 @@ export default function RegisterForm() {
                       setCustomDepartmentMode(true);
                       scrollToDepartmentSection();
                     }}
-                    className={`flex items-center gap-3 px-4 py-4 rounded-2xl border text-left transition ${
+                    className={`flex flex-col min-[425px]:flex-row items-start min-[425px]:items-center gap-3 px-3 py-2 rounded-2xl border text-left transition ${
                       selectedProfessionId === OTHER_VALUE
-                        ? "border-violet-300 bg-violet-50 text-slate-900 shadow-sm"
+                        ? "border-indigo-300 bg-indigo-50 text-slate-900 shadow-sm"
                         : "border-gray-200 bg-white text-slate-900 hover:border-gray-300 hover:bg-gray-50"
                     }`}
                   >
-                    <span className="flex h-12 w-12 items-center justify-center rounded-xl bg-slate-100 text-xl">
+                    <span className="flex h-8 w-8 sm:h-12 sm:w-12 shrink-0 items-center justify-center rounded-md sm:rounded-xl bg-slate-100 text-xl">
                       ✨
                     </span>
                     <span>
-                      <span className="block text-lg font-semibold leading-tight text-slate-900">Other</span>
+                      <span className="block text-sm min-[425px]:text-base font-semibold leading-tight text-slate-900">Other</span>
                       <span className="block text-sm text-slate-500">0 departments</span>
                     </span>
                   </button>
@@ -1369,7 +1450,7 @@ export default function RegisterForm() {
                   <input
                     type="text"
                     placeholder="Enter your profession"
-                    className="mt-3 w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    className="mt-3 w-full px-4 py-3 border border-gray-300 rounded-lg focus:border-transparent"
                     value={customProfession}
                     onChange={(e) => setCustomProfession(e.target.value)}
                     autoFocus
@@ -1379,45 +1460,54 @@ export default function RegisterForm() {
               )}
 
               {/* Department */}
-              <div ref={departmentSectionRef} className="scroll-mt-6">
-                <h2 className="text-lg font-semibold text-gray-800 mb-3">
-                  {isSpOnboardingUi && spDepartmentsLockedFromInvite
-                    ? "Your assigned departments"
-                    : isSpOnboardingUi
-                      ? "Add your department"
-                      : "Department Suggestions"}
-                </h2>
-                {isSpOnboardingUi && spDepartmentsLockedFromInvite && (
-                  <p className="mb-3 text-sm text-slate-600">
-                    These departments were chosen by your workspace admin. Review and click Next to
-                    continue setup.
-                  </p>
-                )}
-                {isSpOnboardingUi && workspaceProfessionLabel && (
-                  <div className="mb-4 flex justify-end">
-                    <span className="inline-flex items-center rounded-full bg-violet-100 px-3 py-1 text-sm font-medium text-violet-700">
-                      Profession: {workspaceProfessionLabel}
-                    </span>
+              <div ref={departmentSectionRef} className="scroll-mt-6 space-y-4">
+                
+                <div className="flex flex-wrap justify-between items-center">
+                  <div className="flex flex-col gap-1">
+                    <h2 className="text-md font-semibold text-gray-800">
+                      {isSpOnboardingUi && spDepartmentsLockedFromInvite
+                        ? "Your assigned departments"
+                        : isSpOnboardingUi
+                          ? "Add your department"
+                          : "Department Suggestions"}
+                    </h2>
+                    {isSpOnboardingUi && spDepartmentsLockedFromInvite && (
+                      <p className="text-sm text-slate-600">
+                        These departments were chosen by your workspace admin. Review and click Next to
+                        continue setup.
+                      </p>
+                    )}
                   </div>
-                )}
-                {!isSpOnboardingUi && !!selectedProfessionName && selectedProfessionId !== OTHER_VALUE && (
-                  <div className="mb-4 flex justify-end">
-                    <span className="inline-flex items-center rounded-full bg-violet-100 px-3 py-1 text-sm font-medium text-violet-700">
-                      {selectedProfessionName}
-                    </span>
+
+                  <div>
+                    {isSpOnboardingUi && workspaceProfessionLabel && (
+                      <div className="flex justify-end">
+                        <span className="inline-flex items-center rounded-full bg-violet-100 px-3 py-1 text-sm font-medium text-violet-700">
+                          Profession: {workspaceProfessionLabel}
+                        </span>
+                      </div>
+                    )}
+                    {!isSpOnboardingUi && !!selectedProfessionName && selectedProfessionId !== OTHER_VALUE && (
+                      <div className="flex justify-end">
+                        <span className="inline-flex items-center rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-sm font-medium text-indigo-600">
+                          {selectedProfessionName}
+                        </span>
+                      </div>
+                    )}
                   </div>
-                )}
-                <div className="rounded-3xl border border-violet-200 bg-white p-5">
-                  <div className="mb-4 flex items-center justify-between">
-                    <h3 className="text-sm font-semibold tracking-[0.2em] text-violet-700 uppercase">Selected Departments</h3>
-                    <span className="inline-flex items-center rounded-full bg-violet-100 px-3 py-1 text-sm font-medium text-violet-700">
+                </div>
+
+                <div className="rounded-2xl border border-indigo-200 bg-white p-4 lg:p-6 space-y-4">
+                  <div className="flex flex-wrap items-center justify-between">
+                    <h3 className="text-sm font-semibold tracking-wider text-indigo-600 uppercase">Selected Departments</h3>
+                    <span className="inline-flex items-center rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-sm font-medium text-indigo-600">
                       {selectedDepartments.length} selected
                     </span>
                   </div>
-                  <div className="mb-6 flex flex-wrap gap-2">
+                  <div className="flex flex-wrap gap-2">
                     {selectedDepartments.length > 0 ? (
                       selectedDepartments.map((name) => (
-                        <span key={name} className="inline-flex items-center gap-2 rounded-full bg-violet-600 px-4 py-2 text-sm font-medium text-white">
+                        <span key={name} className="inline-flex items-center gap-2 rounded-full bg-indigo-600 px-3 py-2 text-xs min-[425px]:text-sm font-medium text-white">
                           {name}
                           {!spDepartmentsLockedFromInvite && (
                             <button
@@ -1425,9 +1515,10 @@ export default function RegisterForm() {
                               onClick={() =>
                                 setSelectedDepartments((prev) => prev.filter((dept) => dept !== name))
                               }
-                              className="rounded-full bg-violet-500 px-2 py-0.5 text-xs font-semibold hover:bg-violet-400"
+                              className="rounded-full"
                             >
-                              Remove
+                              {/* Remove */}
+                              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-red-600 w-4 h-4 cursor-pointer"><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg>
                             </button>
                           )}
                         </span>
@@ -1441,7 +1532,7 @@ export default function RegisterForm() {
                     selectedProfessionId &&
                     selectedProfessionId !== OTHER_VALUE &&
                     departmentSuggestions.length > 0 && (
-                    <div className="mb-6 flex flex-wrap gap-3">
+                    <div className="flex flex-wrap gap-2">
                       {departmentSuggestions.map((name) => {
                         const isSelected = selectedDepartments.includes(name);
                         return (
@@ -1456,10 +1547,10 @@ export default function RegisterForm() {
                               );
                               if (!isSelected) scrollToNextButton();
                             }}
-                            className={`inline-flex items-center gap-2 rounded-full border px-5 py-2 text-base font-medium transition ${
+                            className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs min-[425px]:text-sm font-medium transition ${
                               isSelected
-                                ? "border-violet-500 bg-violet-50 text-violet-700"
-                                : "border-slate-300 bg-white text-slate-700 hover:border-violet-300"
+                                ? "border-indigo-500 bg-indigo-50 text-indigo-700"
+                                : "border-slate-300 bg-white text-slate-700 hover:border-indigo-300"
                             }`}
                           >
                             {name}
@@ -1470,10 +1561,10 @@ export default function RegisterForm() {
                       <button
                         type="button"
                         onClick={() => setCustomDepartmentMode((prev) => !prev)}
-                        className={`inline-flex items-center gap-2 rounded-full border px-5 py-2 text-base font-medium transition ${
+                        className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs min-[425px]:text-sm font-medium transition ${
                           customDepartmentMode
-                            ? "border-violet-500 bg-violet-50 text-violet-700"
-                            : "border-slate-300 bg-white text-slate-700 hover:border-violet-300"
+                            ? "border-indigo-500 bg-indigo-50 text-indigo-700"
+                            : "border-slate-300 bg-white text-slate-700 hover:border-indigo-300"
                         }`}
                       >
                         Other
@@ -1484,13 +1575,13 @@ export default function RegisterForm() {
 
                   {!(isSpOnboardingUi && spDepartmentsLockedFromInvite) &&
                     (selectedProfessionId === OTHER_VALUE || customDepartmentMode) && (
-                    <div className="rounded-2xl border border-dashed border-violet-200 p-4">
-                      <p className="mb-3 text-lg text-slate-700">Add custom department</p>
+                    <div className="rounded-2xl border border-dashed border-indigo-200 p-4">
+                      <p className="mb-3 text-sm text-slate-700">Add custom department</p>
                       <div className="flex flex-col gap-3 sm:flex-row">
                         <input
                           type="text"
                           placeholder="e.g. Support, Accounts"
-                          className="flex-1 rounded-2xl border border-slate-300 px-4 py-3 text-base focus:ring-2 focus:ring-violet-400 focus:border-transparent"
+                          className="flex-1 rounded-2xl border border-slate-300 px-3 py-2 text-xs min-[425px]:text-sm focus:ring-2 focus:ring-indigo-400 focus:border-transparent"
                           value={customDepartment}
                           onChange={(e) => setCustomDepartment(e.target.value)}
                         />
@@ -1506,7 +1597,7 @@ export default function RegisterForm() {
                             setCustomDepartment("");
                             scrollToNextButton();
                           }}
-                          className="rounded-2xl bg-violet-600 px-6 py-3 text-white font-semibold hover:bg-violet-700 transition"
+                          className="rounded-xl bg-indigo-600 px-4 py-2 text-sm text-white font-semibold hover:bg-indigo-700 transition"
                         >
                           Add
                         </button>
@@ -1549,7 +1640,7 @@ export default function RegisterForm() {
           )}
 
           {onboardingStep === 2 && (
-            <div className="bg-white rounded-2xl shadow-xl p-8 border border-gray-100 space-y-4">
+            <div className="bg-white rounded-2xl shadow-xl p-4 lg:p-6 border border-gray-100 space-y-4">
               <h2 className="text-lg font-semibold text-gray-800">Google Calendar Sync</h2>
               <p className="text-sm text-gray-600">Connect your Google Calendar to avoid double bookings and keep availability in sync.</p>
               {googleSync ? (
@@ -1571,7 +1662,7 @@ export default function RegisterForm() {
                       setError("");
                       try {
                         const returnTo = "/register?onboarding=1&step=2";
-                        const { data: { session } } = await supabase.auth.getSession();
+                        const { session } = await getWorkspaceSession();
                         const token = session?.access_token;
                         const connectUrl = `/api/integrations/google/connect?returnTo=${encodeURIComponent(returnTo)}`;
                         const res = await fetch(connectUrl, {
@@ -1614,7 +1705,7 @@ export default function RegisterForm() {
                       }
                     }}
                     disabled={calendarConnecting}
-                    className="w-full flex items-center justify-center gap-3 py-3 px-4 rounded-lg border border-gray-300 bg-white text-gray-700 font-medium hover:bg-gray-50 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition"
+                    className="w-full flex items-center justify-center gap-3 py-2 px-4 text-sm rounded-lg border border-gray-300 bg-white text-gray-700 font-medium hover:bg-gray-50 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition"
                   >
                     {calendarConnecting ? (
                       <>
@@ -1643,7 +1734,7 @@ export default function RegisterForm() {
           )}
 
           {onboardingStep === 3 && (
-            <div className="bg-white rounded-2xl shadow-xl p-8 border border-gray-100">
+            <div className="bg-white rounded-2xl shadow-xl p-4 lg:p-6 border border-gray-100">
               <h2 className="text-lg font-semibold text-gray-800 mb-4">Working Hours</h2>
               <p className="text-sm text-gray-600 mb-4">Configure your availability and break times, then click Save Timesheet before continuing.</p>
               <AvailabilityTimesheet
@@ -1660,7 +1751,7 @@ export default function RegisterForm() {
           )}
 
           {onboardingStep === 4 && (
-            <div className="bg-white rounded-2xl shadow-xl p-8 border border-gray-100 space-y-6">
+            <div className="bg-white rounded-2xl shadow-xl p-4 lg:p-6 border border-gray-100 space-y-3">
               <h2 className="text-lg font-semibold text-gray-800">Meeting Options</h2>
               <p className="text-sm text-gray-600">Choose how clients can meet with you.</p>
               <div className="space-y-3">
@@ -1675,7 +1766,7 @@ export default function RegisterForm() {
                       type="checkbox"
                       checked={meetingOptions[key]}
                       onChange={(e) => setMeetingOptions((prev) => ({ ...prev, [key]: e.target.checked }))}
-                      className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                      className="w-4 h-4 text-indigo-600 border-gray-300 rounded focus:ring-blue-500"
                     />
                     <span className="text-gray-700">{label}</span>
                   </label>
@@ -1694,7 +1785,7 @@ export default function RegisterForm() {
                     goToOnboardingStep(onboardingStep - 1);
                   }}
                   disabled={finishProgressOpen}
-                  className="px-6 py-3 rounded-lg border border-gray-300 text-gray-700 font-medium hover:bg-gray-50 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="px-4 py-2 rounded-lg border border-gray-300 text-sm text-gray-700 font-medium hover:bg-gray-50 focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Back
                 </button>
@@ -1704,7 +1795,7 @@ export default function RegisterForm() {
                 type="button"
                 onClick={() => handleOnboardingNext()}
                 disabled={onboardingNextDisabled}
-                className="px-6 py-3 rounded-lg bg-blue-600 text-white font-medium hover:bg-blue-700 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {finishProgressOpen
                   ? "Setting up…"
@@ -1745,6 +1836,79 @@ export default function RegisterForm() {
               onCancel={() => setStep3SaveChoiceOpen(false)}
             />
           )}
+
+          {claimFree.exitConfirmOpen && (
+            <ConfirmModal
+              {...CLAIM_FREE_EXIT_COPY}
+              variant="primary"
+              onConfirm={() => void claimFree.confirmExit()}
+              onCancel={() => claimFree.cancelClaimExit()}
+            />
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  if (claimFree.claimCode && claimFree.gate === "loading") {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-white to-purple-50">
+        <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600" />
+      </div>
+    );
+  }
+
+  if (claimFree.gate === "invalid") {
+    return (
+      <RegisterAuthShell
+        title="Claim not valid"
+        subtitle="This free workspace offer link cannot be used."
+      >
+        <AlertMessage
+          type="error"
+          message={claimFree.gateMessage || "Your claim is not valid."}
+        />
+        <button
+          type="button"
+          onClick={() => claimFree.abandonClaimOffer()}
+          className="mt-6 block w-full text-center bg-indigo-600 text-white py-3 rounded-lg font-medium hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition"
+        >
+          Register without offer
+        </button>
+      </RegisterAuthShell>
+    );
+  }
+
+  if (claimFree.gate === "waitlist") {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-white to-purple-50 px-6">
+        <div className="max-w-md w-full rounded-2xl bg-white p-8 shadow-xl border border-gray-100">
+          <h1 className="text-xl font-semibold text-gray-900">Free workspace offer is full</h1>
+          <p className="mt-2 text-gray-600">Join the waitlist and we will notify you when a spot opens.</p>
+          {claimFree.waitlistDone ? (
+            <p className="mt-4 text-green-700 font-medium">You are on the waitlist. Thank you!</p>
+          ) : (
+            <div className="mt-4 space-y-3">
+              <input
+                type="email"
+                value={claimFree.waitlistEmail}
+                onChange={(e) => claimFree.setWaitlistEmail(e.target.value)}
+                placeholder="you@example.com"
+                className="w-full rounded-lg border border-gray-300 px-3 py-2"
+              />
+              {claimFree.gateMessage && (
+                <p className="text-sm text-red-600">{claimFree.gateMessage}</p>
+              )}
+              <button
+                type="button"
+                disabled={claimFree.waitlistSubmitting}
+                onClick={() => void claimFree.submitWaitlist()}
+                className="w-full rounded-lg bg-indigo-600 py-2 text-white font-medium hover:bg-indigo-700 disabled:opacity-50"
+              >
+                {claimFree.waitlistSubmitting ? "Submitting…" : "Join waitlist"}
+              </button>
+            </div>
+          )}
         </div>
       </div>
     );
@@ -1777,7 +1941,11 @@ export default function RegisterForm() {
             />
           </Link>
           <h1 className="text-3xl font-bold text-gray-800 mb-2">Create Account</h1>
-          <p className="text-gray-600">Join GetSetTime to manage your bookings</p>
+          <p className="text-gray-600">
+            {claimFree.isClaimSignup
+              ? "Claim your free workspace — 250 bookings per month"
+              : "Join GetSetTime to manage your bookings"}
+          </p>
         </div>
 
         <form onSubmit={handleRegister} className="bg-white rounded-2xl shadow-xl p-8 space-y-5 border border-gray-100">
@@ -1945,12 +2113,30 @@ export default function RegisterForm() {
           <div className="text-center pt-4 border-t border-gray-200">
             <p className="text-sm text-gray-600">
               Already have an account?{" "}
-              <Link href="/login" className="text-blue-600 hover:text-blue-800 font-medium">
+              <Link
+                href="/login"
+                className="text-indigo-600 hover:text-indigo-800 font-medium"
+                onClick={(e) => {
+                  if (claimFree.isClaimSignup) {
+                    e.preventDefault();
+                    claimFree.requestClaimExit("/login");
+                  }
+                }}
+              >
                 Sign in
               </Link>
             </p>
           </div>
         </form>
+
+        {claimFree.exitConfirmOpen && (
+          <ConfirmModal
+            {...CLAIM_FREE_EXIT_COPY}
+            variant="primary"
+            onConfirm={() => void claimFree.confirmExit()}
+            onCancel={() => claimFree.cancelClaimExit()}
+          />
+        )}
       </div>
     </div>
   );

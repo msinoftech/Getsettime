@@ -1,4 +1,4 @@
-import type { plan_content_input, plan_input } from '@app/db/subscription';
+import type { booking_limit_period, plan_content_input, plan_input } from '@app/db/subscription';
 import { UNLIMITED_BOOKING_LIMIT } from '@app/db/subscription';
 
 const SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -24,6 +24,11 @@ function parseBookingLimit(value: unknown): number | null {
   if (value === UNLIMITED_BOOKING_LIMIT) return value;
   if (value < 0) return null;
   return value;
+}
+
+function parseBookingLimitPeriod(value: unknown): booking_limit_period | null {
+  if (value === 'monthly' || value === 'lifetime') return value;
+  return null;
 }
 
 function parsePrice(value: unknown): number | null {
@@ -104,6 +109,14 @@ export function parsePlanInput(body: Record<string, unknown>): plan_input {
     errors.push('booking_limit must be -1 (unlimited) or a non-negative integer');
   }
 
+  const bookingLimitPeriod =
+    body.booking_limit_period !== undefined
+      ? parseBookingLimitPeriod(body.booking_limit_period)
+      : 'monthly';
+  if (body.booking_limit_period !== undefined && bookingLimitPeriod === null) {
+    errors.push('booking_limit_period must be monthly or lifetime');
+  }
+
   if (errors.length) {
     throw new Error(errors.join('; '));
   }
@@ -116,6 +129,9 @@ export function parsePlanInput(body: Record<string, unknown>): plan_input {
     slug: slug as string,
     price: price as number,
     booking_limit: bookingLimit as number,
+    booking_limit_period: bookingLimitPeriod ?? 'monthly',
+    user_limit:
+      body.user_limit !== undefined ? parseBookingLimit(body.user_limit) ?? undefined : undefined,
     workspace_limit:
       body.workspace_limit !== undefined ? parseNonNegativeInt(body.workspace_limit) ?? undefined : undefined,
     admin_limit:
@@ -177,6 +193,22 @@ export function parsePartialPlanInput(body: Record<string, unknown>): Partial<pl
       throw new Error('booking_limit must be -1 (unlimited) or a non-negative integer');
     }
     patch.booking_limit = limit;
+  }
+
+  if (body.booking_limit_period !== undefined) {
+    const period = parseBookingLimitPeriod(body.booking_limit_period);
+    if (!period) {
+      throw new Error('booking_limit_period must be monthly or lifetime');
+    }
+    patch.booking_limit_period = period;
+  }
+
+  if (body.user_limit !== undefined) {
+    const userLimit = parseBookingLimit(body.user_limit);
+    if (userLimit === null) {
+      throw new Error('user_limit must be -1 (unlimited) or a non-negative integer');
+    }
+    patch.user_limit = userLimit;
   }
 
   const intFields = ['workspace_limit', 'admin_limit', 'service_provider_limit'] as const;

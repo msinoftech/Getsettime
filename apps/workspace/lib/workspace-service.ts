@@ -1,6 +1,14 @@
 import { SupabaseClient } from '@supabase/supabase-js';
-import { assignFreePlanToWorkspace } from '@app/db/subscription';
+import {
+  assignInitialPlanToWorkspace,
+  attachClaimCodeToWorkspace,
+  getClaimedCodeByCode,
+  isFreeClaimSignupMetadata,
+  parseClaimCodeFromMetadata,
+  type workspace_signup_type,
+} from '@app/db/subscription';
 import { getTimezoneForCountry } from '@app/location';
+import { sendNewWorkspaceSuperadminEmail } from '@/lib/send-new-workspace-superadmin-email';
 import { ROLE_SERVICE_PROVIDER } from '@/src/constants/roles';
 import { resolveMeetingOptionsForServiceProvider } from '@/src/utils/providerSettingsResolution';
 import { workspace_meeting_options_to_location_types } from '@/src/utils/meeting_options';
@@ -101,6 +109,8 @@ export interface CreateWorkspaceParams {
   userEmail: string;
   supabaseAdmin: SupabaseClient;
   registrationGeo?: RegistrationGeoInput;
+  /** When set, skips an auth.admin.getUserById round trip. */
+  userMetadata?: Record<string, unknown>;
 }
 
 export interface WorkspaceResult {
@@ -253,11 +263,14 @@ function parseMetadataWorkspaceId(raw: unknown): number {
 export async function getOrCreateWorkspace(
   params: CreateWorkspaceParams
 ): Promise<{ data: WorkspaceResult | null; error: string | null }> {
-  const { userId, userName, userEmail, supabaseAdmin, registrationGeo } = params;
+  const { userId, userName, userEmail, supabaseAdmin, registrationGeo, userMetadata } = params;
 
   try {
-    const { data: userData } = await supabaseAdmin.auth.admin.getUserById(userId);
-    const meta = (userData?.user?.user_metadata ?? {}) as Record<string, unknown>;
+    let meta = userMetadata;
+    if (!meta) {
+      const { data: userData } = await supabaseAdmin.auth.admin.getUserById(userId);
+      meta = (userData?.user?.user_metadata ?? {}) as Record<string, unknown>;
+    }
 
     const acceptedInvite = userEmail
       ? await resolveAcceptedInviteForEmail(supabaseAdmin, userEmail)
@@ -322,12 +335,34 @@ export async function getOrCreateWorkspace(
       .toLowerCase()
       .replace(/[^a-z0-9-]/g, '');
 
+    let signupType: workspace_signup_type = 'normal';
+    let claimedCodeId: string | null = null;
+    const claimCode = parseClaimCodeFromMetadata(meta);
+
+    if (isFreeClaimSignupMetadata(meta) && claimCode) {
+      const claimRow = await getClaimedCodeByCode(supabaseAdmin, claimCode);
+      if (
+        !claimRow ||
+        claimRow.status !== 'consumed' ||
+        claimRow.user_id !== userId
+      ) {
+        return {
+          data: null,
+          error: 'Your claim is not valid.',
+        };
+      }
+      signupType = 'free_claimed';
+      claimedCodeId = claimRow.id;
+    }
+
     const { data: workspace, error: workspaceError } = await supabaseAdmin
       .from('workspaces')
       .insert({
         name: workspaceName,
         slug: workspaceSlug,
         user_id: userId,
+        signup_type: signupType,
+        claimed_code_id: claimedCodeId,
       })
       .select('id')
       .single();
@@ -353,7 +388,15 @@ export async function getOrCreateWorkspace(
     }
 
     try {
-      await assignFreePlanToWorkspace(supabaseAdmin, workspace.id);
+      if (signupType === 'free_claimed' && claimCode) {
+        await attachClaimCodeToWorkspace(
+          supabaseAdmin,
+          claimCode,
+          userId,
+          workspace.id
+        );
+      }
+      await assignInitialPlanToWorkspace(supabaseAdmin, workspace.id, signupType);
     } catch (subErr) {
       console.error('Subscription assignment error:', subErr);
       await supabaseAdmin.from('configurations').delete().eq('workspace_id', workspace.id);
@@ -380,6 +423,17 @@ export async function getOrCreateWorkspace(
     if (eventTypeError) {
       console.warn('Default event type creation (non-critical):', eventTypeError);
     }
+
+    void sendNewWorkspaceSuperadminEmail({
+      workspaceId: workspace.id,
+      workspaceName,
+      workspaceSlug,
+      ownerName: userName,
+      ownerEmail: userEmail,
+      source: 'self-serve',
+    }).catch((err) =>
+      console.error('Superadmin new-workspace email failed (non-critical):', err)
+    );
 
     return {
       data: { workspaceId: workspace.id, isNewWorkspace: true },
@@ -620,11 +674,13 @@ export async function updateUserWorkspaceMetadata(
   workspaceId: number,
   additionalMetadata: Record<string, any>,
   supabaseAdmin: SupabaseClient,
-  isNewWorkspace = false
-): Promise<{ error: string | null }> {
+  isNewWorkspace = false,
+  existingMetadata?: Record<string, unknown>
+): Promise<{ error: string | null; metadata?: Record<string, unknown> }> {
   try {
-    const { data: userData } = await supabaseAdmin.auth.admin.getUserById(userId);
-    const existingMeta = userData?.user?.user_metadata ?? {};
+    const existingMeta =
+      existingMetadata ??
+      ((await supabaseAdmin.auth.admin.getUserById(userId)).data?.user?.user_metadata ?? {});
 
     const existingRole =
       typeof existingMeta.role === 'string' && existingMeta.role.trim() !== ''
@@ -638,16 +694,18 @@ export async function updateUserWorkspaceMetadata(
       ? 'workspace_admin'
       : (existingRole ?? additionalRole ?? 'workspace_admin');
 
+    const mergedMetadata: Record<string, unknown> = {
+      ...existingMeta,
+      ...additionalMetadata,
+      workspace_id: workspaceId,
+      role,
+      ...(isNewWorkspace
+        ? { is_workspace_owner: true, additional_roles: [ROLE_SERVICE_PROVIDER] }
+        : {}),
+    };
+
     const { error: updateError } = await supabaseAdmin.auth.admin.updateUserById(userId, {
-      user_metadata: {
-        ...existingMeta,
-        ...additionalMetadata,
-        workspace_id: workspaceId,
-        role,
-        ...(isNewWorkspace
-          ? { is_workspace_owner: true, additional_roles: [ROLE_SERVICE_PROVIDER] }
-          : {}),
-      },
+      user_metadata: mergedMetadata,
     });
 
     if (updateError) {
@@ -655,7 +713,7 @@ export async function updateUserWorkspaceMetadata(
       return { error: 'Failed to update user metadata' };
     }
 
-    return { error: null };
+    return { error: null, metadata: mergedMetadata };
   } catch (err) {
     console.error('updateUserWorkspaceMetadata error:', err);
     return {

@@ -1,5 +1,6 @@
 "use client";
 
+import { getWorkspaceSession } from '@/src/lib/auth_session';
 import React, { useMemo, useRef, useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -30,6 +31,8 @@ import {
   sync_workspace_response,
 } from "@/src/lib/workspace_shell_sync";
 import type { WorkspaceSettings } from "@/src/types/workspace";
+import ScreenGate from "@/src/components/ScreenGate";
+import { toast } from "@/src/components/ui/toast";
 
 type settings_icon_name =
   | "palette"
@@ -134,6 +137,7 @@ type snapshot = {
   timezone: string;
   logoFileName: string;
   logoUrl: string | null;
+  clinicImageUrl: string | null;
   tagline: string;
   businessEmail: string;
   businessPhone: string;
@@ -190,14 +194,12 @@ export default function SettingsPage() {
   const [logoFileName, setLogoFileName] = useState("No file selected");
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
   const [logoPath, setLogoPath] = useState<string | null>(null);
+  const [clinicImageUrl, setClinicImageUrl] = useState<string | null>(null);
   const [tagline, setTagline] = useState("");
   const [isUploadingLogo, setIsUploadingLogo] = useState(false);
+  const [isUploadingClinicImage, setIsUploadingClinicImage] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
-  const [saveMessage, setSaveMessage] = useState<{
-    type: "success" | "error";
-    text: string;
-  } | null>(null);
   const [linkError, setLinkError] = useState<string | null>(null);
   const [linkCopied, setLinkCopied] = useState(false);
   const [shareNotice, setShareNotice] = useState<string | null>(null);
@@ -260,6 +262,7 @@ export default function SettingsPage() {
     setTimezone(s.timezone);
     setLogoFileName(s.logoFileName);
     setLogoUrl(s.logoUrl);
+    setClinicImageUrl(s.clinicImageUrl);
     setTagline(s.tagline);
     setBusinessEmail(s.businessEmail);
     setBusinessPhone(s.businessPhone);
@@ -302,6 +305,7 @@ export default function SettingsPage() {
       timezone: "",
       logoFileName: "No file selected",
       logoUrl: shellWorkspaceLogo || null,
+      clinicImageUrl: null,
       tagline: "",
       businessEmail: "",
       businessPhone: "",
@@ -342,6 +346,9 @@ export default function SettingsPage() {
 
     if (typeof general.tagline === "string") {
       snap.tagline = general.tagline;
+    }
+    if (typeof general.clinic_image_url === "string" && general.clinic_image_url.trim()) {
+      snap.clinicImageUrl = general.clinic_image_url.trim();
     }
     if (typeof general.business_email === "string") {
       snap.businessEmail = general.business_email;
@@ -435,13 +442,8 @@ export default function SettingsPage() {
     if (!file) return;
 
     setIsUploadingLogo(true);
-    setSaveMessage(null);
-
     try {
-      const { supabase } = await import("@/lib/supabaseClient");
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
+      const { session } = await getWorkspaceSession();
       const token = session?.access_token;
 
       const formData = new FormData();
@@ -469,23 +471,113 @@ export default function SettingsPage() {
           logoUrl: result.url as string,
         };
       }
-      setSaveMessage({ type: "success", text: "Logo uploaded successfully." });
-      setTimeout(() => setSaveMessage(null), 2500);
+      toast.success("Logo uploaded successfully.");
       if (user?.id && typeof result.url === "string") {
         applyPatch({ workspace: { logo_url: result.url } });
       }
     } catch (error) {
       console.error("Error uploading logo:", error);
-      setSaveMessage({
-        type: "error",
-        text:
-          error instanceof Error
-            ? error.message
-            : "Failed to upload logo. Please try again.",
-      });
-      setTimeout(() => setSaveMessage(null), 4000);
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Failed to upload logo. Please try again."
+      );
     } finally {
       setIsUploadingLogo(false);
+    }
+  };
+
+  const handleClinicImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!canEditAllSettings) return;
+
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsUploadingClinicImage(true);
+    try {
+      const { session } = await getWorkspaceSession();
+      const token = session?.access_token;
+
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const response = await fetch("/api/settings/clinic-image", {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const result = await response.json().catch(() => ({}));
+        throw new Error(result.error || "Failed to upload clinic image");
+      }
+
+      const result = await response.json();
+      setClinicImageUrl(result.url);
+      if (snapshotRef.current) {
+        snapshotRef.current = {
+          ...snapshotRef.current,
+          clinicImageUrl: result.url as string,
+        };
+      }
+      toast.success("Clinic image uploaded successfully.");
+      if (user?.id && typeof result.url === "string") {
+        applyPatch({
+          settings: { general: { clinic_image_url: result.url } },
+        });
+      }
+    } catch (error) {
+      console.error("Error uploading clinic image:", error);
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Failed to upload clinic image. Please try again."
+      );
+    } finally {
+      setIsUploadingClinicImage(false);
+    }
+  };
+
+  const handleClinicImageRemove = async () => {
+    if (!canEditAllSettings || !clinicImageUrl) return;
+
+    setIsUploadingClinicImage(true);
+    try {
+      const { session } = await getWorkspaceSession();
+      const token = session?.access_token;
+
+      const response = await fetch("/api/settings/clinic-image", {
+        method: "DELETE",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+
+      if (!response.ok) {
+        const result = await response.json().catch(() => ({}));
+        throw new Error(result.error || "Failed to remove clinic image");
+      }
+
+      setClinicImageUrl(null);
+      if (snapshotRef.current) {
+        snapshotRef.current = {
+          ...snapshotRef.current,
+          clinicImageUrl: null,
+        };
+      }
+      toast.success("Clinic image removed successfully.");
+      if (user?.id) {
+        applyPatch({
+          settings: { general: { clinic_image_url: null } },
+        });
+      }
+    } catch (error) {
+      console.error("Error removing clinic image:", error);
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Failed to remove clinic image. Please try again."
+      );
+    } finally {
+      setIsUploadingClinicImage(false);
     }
   };
 
@@ -493,13 +585,8 @@ export default function SettingsPage() {
     if (!canEditAllSettings || !logoUrl) return;
 
     setIsUploadingLogo(true);
-    setSaveMessage(null);
-
     try {
-      const { supabase } = await import("@/lib/supabaseClient");
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
+      const { session } = await getWorkspaceSession();
       const token = session?.access_token;
 
       const response = await fetch("/api/settings/logo", {
@@ -522,21 +609,17 @@ export default function SettingsPage() {
           logoUrl: null,
         };
       }
-      setSaveMessage({ type: "success", text: "Logo removed successfully." });
-      setTimeout(() => setSaveMessage(null), 2500);
+      toast.success("Logo removed successfully.");
       if (user?.id) {
         applyPatch({ workspace: { logo_url: null } });
       }
     } catch (error) {
       console.error("Error removing logo:", error);
-      setSaveMessage({
-        type: "error",
-        text:
-          error instanceof Error
-            ? error.message
-            : "Failed to remove logo. Please try again.",
-      });
-      setTimeout(() => setSaveMessage(null), 4000);
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Failed to remove logo. Please try again."
+      );
     } finally {
       setIsUploadingLogo(false);
     }
@@ -547,7 +630,6 @@ export default function SettingsPage() {
     if (!canSave) return;
 
     setLinkError(null);
-    setSaveMessage(null);
 
     const trimmedSlug = workspaceSlug.trim();
     const trimmedProviderSlug = serviceProviderSlug.trim();
@@ -555,30 +637,24 @@ export default function SettingsPage() {
     if (isServiceProvider) {
       if (!trimmedProviderSlug) {
         setLinkError("Provider link is required");
-        setSaveMessage({ type: "error", text: "Provider link is required." });
+        toast.error("Provider link is required.");
         return;
       }
       if (!trimmedSlug) {
         setLinkError("Workspace link is not configured");
-        setSaveMessage({
-          type: "error",
-          text: "Workspace booking link is not configured yet.",
-        });
+        toast.error("Workspace booking link is not configured yet.");
         return;
       }
     } else if (!trimmedSlug) {
       setLinkError("Link is required");
-      setSaveMessage({ type: "error", text: "Link is required." });
+      toast.error("Link is required.");
       return;
     }
 
     setIsSaving(true);
 
     try {
-      const { supabase } = await import("@/lib/supabaseClient");
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
+      const { session } = await getWorkspaceSession();
       const token = session?.access_token;
 
       if (isServiceProvider && loggedInUserId) {
@@ -612,8 +688,7 @@ export default function SettingsPage() {
           sync_settings_response(user.id, providerSettingsResult);
         }
 
-        setSaveMessage({ type: "success", text: "Provider link saved successfully!" });
-        setTimeout(() => setSaveMessage(null), 3000);
+        toast.success("Provider link saved successfully!");
         snapshotRef.current = {
           ...(snapshotRef.current ?? {
             accountName: "",
@@ -624,6 +699,7 @@ export default function SettingsPage() {
             timezone,
             logoFileName,
             logoUrl,
+            clinicImageUrl,
             tagline,
             businessEmail,
             businessPhone,
@@ -682,6 +758,7 @@ export default function SettingsPage() {
           accentColor,
           timezone: timezone.trim() || undefined,
           tagline: tagline.trim().slice(0, TAGLINE_MAX_LENGTH) || undefined,
+          clinic_image_url: clinicImageUrl?.trim() || undefined,
           business_email: businessEmail.trim() || undefined,
           // Send empty string (not undefined) so clearing the field overwrites the
           // stored value — JSON.stringify drops `undefined`, leaving the old value in DB.
@@ -734,8 +811,7 @@ export default function SettingsPage() {
         sync_settings_response(user.id, settingsResult);
       }
 
-      setSaveMessage({ type: "success", text: "Settings saved successfully!" });
-      setTimeout(() => setSaveMessage(null), 3000);
+      toast.success("Settings saved successfully!");
       snapshotRef.current = {
         accountName,
         workspaceSlug,
@@ -745,6 +821,7 @@ export default function SettingsPage() {
         timezone,
         logoFileName,
         logoUrl,
+        clinicImageUrl,
         tagline,
         businessEmail,
         businessPhone,
@@ -768,14 +845,11 @@ export default function SettingsPage() {
       };
     } catch (error) {
       console.error("Error saving settings:", error);
-      setSaveMessage({
-        type: "error",
-        text:
-          error instanceof Error
-            ? error.message
-            : "Failed to save settings. Please try again.",
-      });
-      setTimeout(() => setSaveMessage(null), 5000);
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Failed to save settings. Please try again."
+      );
     } finally {
       setIsSaving(false);
     }
@@ -788,7 +862,6 @@ export default function SettingsPage() {
     } else {
       router.back();
     }
-    setSaveMessage(null);
   };
 
   useEffect(() => {
@@ -885,25 +958,25 @@ export default function SettingsPage() {
   };
 
   const link_field_class = (hasError: boolean) =>
-    `relative flex min-w-0 flex-col overflow-hidden rounded-2xl border bg-slate-50 transition focus-within:bg-white focus-within:ring-4 focus-within:ring-indigo-100 sm:flex-row ${
+    `relative flex min-w-0 overflow-hidden rounded-xl border bg-slate-50 transition focus-within:bg-white focus-within:ring-4 focus-within:ring-indigo-100 flex-row ${
       hasError
         ? "border-red-400 focus-within:border-red-500"
         : "border-slate-200 focus-within:border-indigo-400"
     }`;
 
   const link_prefix_class =
-    "flex max-w-full shrink-0 items-center gap-2 truncate border-b border-slate-200 bg-white px-3 py-2.5 text-xs font-semibold text-slate-500 sm:border-b-0 sm:border-r sm:px-4 sm:py-0 sm:text-sm";
+    "flex max-w-full shrink-0 items-center gap-2 truncate border-b border-slate-200 bg-white px-3 py-2.5 font-semibold text-slate-500 sm:border-b-0 sm:border-r sm:px-4 sm:py-0 text-sm";
 
   const link_slug_input_class =
-    "h-14 min-w-0 w-full bg-transparent px-4 pr-20 text-base font-medium outline-none disabled:cursor-not-allowed disabled:opacity-60";
+    "h-12 min-w-0 w-full bg-transparent px-4 pr-16 text-sm font-medium outline-none disabled:cursor-not-allowed disabled:opacity-60";
 
   const link_action_buttons = (
-    <div className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-1">
+    <div className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center">
       <a
         href={publicBookingUrl ?? undefined}
         target="_blank"
         rel="noopener noreferrer"
-        className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-blue-600 transition hover:bg-blue-50"
+        className="inline-flex h-6 w-6 items-center justify-center rounded-lg text-indigo-600 transition hover:bg-indigo-50"
         aria-label="Open booking page"
       >
         <SettingsIcon name="externalLink" className="h-4 w-4" />
@@ -911,7 +984,7 @@ export default function SettingsPage() {
       <button
         type="button"
         onClick={() => void copyWorkspaceLink()}
-        className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-blue-600 transition hover:bg-blue-50"
+        className="inline-flex h-6 w-6 items-center justify-center rounded-lg text-indigo-600 transition hover:bg-indigo-50"
         aria-label="Copy booking link"
       >
         <SettingsIcon name={linkCopied ? "check" : "copy"} className="h-4 w-4" />
@@ -920,7 +993,7 @@ export default function SettingsPage() {
   );
 
   const settings_input_class =
-    "h-14 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-base font-medium outline-none transition focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:opacity-60";
+    "h-12 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 text-sm font-medium outline-none transition focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:opacity-60";
 
   const settings_select_class = settings_input_class;
 
@@ -939,17 +1012,19 @@ export default function SettingsPage() {
   };
 
   return (
-    <main className="min-h-screen min-w-0 max-w-full text-slate-900">
-      <div className="mx-auto min-w-0 max-w-full space-y-6">
+    <div className="max-w-full text-slate-900">
+      <div className="mx-auto max-w-full space-y-6">
         <form onSubmit={handleSubmit} className="min-w-0 max-w-full">
           <section className="min-w-0 max-w-full rounded-[2rem]">
-            <div className="bg-blue-600 px-6 py-6 text-white md:px-8">
+            <div className="bg-indigo-600 px-6 py-6 text-white md:px-8 rounded-2xl">
               <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex items-start gap-3">
-                  <SettingsIcon name="building" className="mt-0.5 h-5 w-5 shrink-0" />
+                  <span className="flex items-center justify-center w-18 h-18 shrink-0 rounded-2xl bg-indigo-700">
+                    <SettingsIcon name="building" className="h-10 w-10 shrink-0" />
+                  </span>
                   <div>
                     <h1 className="text-xl font-bold md:text-2xl">Workspace Settings</h1>
-                    <p className="mt-1 max-w-2xl text-sm text-blue-100 md:text-base">
+                    <p className="mt-1 max-w-2xl text-sm text-indigo-100 md:text-base">
                       {isReadOnly
                         ? "View workspace profile, booking link, branding, and booking rules."
                         : isServiceProvider
@@ -961,7 +1036,7 @@ export default function SettingsPage() {
 
                 <Link
                   href="/change-password"
-                  className="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg bg-white px-4 py-2.5 text-sm font-semibold text-blue-600 transition hover:bg-blue-50"
+                  className="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg bg-white px-4 py-2 text-sm font-semibold text-indigo-600 transition hover:bg-indigo-50"
                 >
                   <SettingsIcon name="lock" className="h-4 w-4" />
                   Change Password
@@ -983,31 +1058,31 @@ export default function SettingsPage() {
               </div>
             )}
 
-            <div className="grid min-w-0 max-w-full gap-6 py-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,360px)]">
+            <div className="grid min-w-0 max-w-full gap-6 py-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,360px)]">
               <div className="min-w-0 space-y-5">
-                <div className="min-w-0 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
-                  <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+                  <div className="mb-5 flex gap-3 flex-row flex-wrap items-start justify-between">
                     <div className="flex items-start gap-3">
-                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600">
                         <SettingsIcon name="user" className="h-5 w-5" />
                       </div>
                       <div>
                         <h2 className="text-lg font-bold text-slate-950">
                           Account Details
                         </h2>
-                        <p className="mt-1 text-sm text-slate-500">
+                        <p className="text-sm text-slate-500">
                           Basic information about your workspace
                         </p>
                       </div>
                     </div>
-                    <span className="shrink-0 rounded-full bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-700">
+                    <span className="shrink-0 w-fit rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-700">
                       Active
                     </span>
                   </div>
 
                   <div className="grid gap-5">
-                    <div className="grid gap-5 md:grid-cols-2">
-                      <label className="block">
+                    <div className="grid gap-5 sm:grid-cols-3">
+                      <label className="col-span-2 sm:col-span-1 block">
                         <span className="mb-2 block text-sm font-bold text-slate-700">
                           Workspace Name
                         </span>
@@ -1021,7 +1096,7 @@ export default function SettingsPage() {
                         />
                       </label>
 
-                      <label className="block">
+                      <label className="col-span-2 block">
                         <span className="mb-2 block text-sm font-bold text-slate-700">
                           {isServiceProvider ? "Provider Link" : "Workspace Link"}
                         </span>
@@ -1100,7 +1175,7 @@ export default function SettingsPage() {
                           href={publicBookingUrl ?? undefined}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="inline-flex max-w-full items-center gap-1.5 break-all text-sm font-medium text-blue-600 hover:underline"
+                          className="inline-flex max-w-full items-center gap-1.5 break-all text-sm font-medium text-indigo-600 hover:underline"
                         >
                           {previewUrl}
                           <SettingsIcon name="externalLink" className="h-4 w-4" />
@@ -1110,7 +1185,7 @@ export default function SettingsPage() {
                         type="button"
                         onClick={() => void shareBookingPage()}
                         disabled={!publicBookingUrl}
-                        className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-blue-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                        className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-indigo-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         <SettingsIcon name="share" className="h-4 w-4" />
                         Share
@@ -1175,16 +1250,16 @@ export default function SettingsPage() {
                   </div>
                 </div>
 
-                <div className="min-w-0 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+                <div className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
                   <div className="mb-5 flex items-start gap-3">
-                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600">
                       <SettingsIcon name="palette" className="h-5 w-5" />
                     </div>
                     <div>
                       <h2 className="text-lg font-bold text-slate-950">
                         Logo &amp; Branding
                       </h2>
-                      <p className="mt-1 text-sm text-slate-500">
+                      <p className="text-sm text-slate-500">
                         Upload logo and add tagline for your booking pages
                       </p>
                     </div>
@@ -1206,9 +1281,9 @@ export default function SettingsPage() {
                           />
                         </div>
                         <label
-                          className={`inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-blue-600 transition ${
+                          className={`inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-indigo-600 transition ${
                             canEditAllSettings
-                              ? "cursor-pointer hover:border-blue-200 hover:bg-blue-50"
+                              ? "cursor-pointer hover:border-blue-200 hover:bg-indigo-50"
                               : "cursor-not-allowed opacity-60"
                           }`}
                         >
@@ -1222,20 +1297,20 @@ export default function SettingsPage() {
                             className="hidden"
                           />
                         </label>
+                        {logoUrl && canEditAllSettings ? (
+                          <button
+                            type="button"
+                            onClick={handleLogoRemove}
+                            disabled={isUploadingLogo}
+                            className="text-sm block font-medium text-red-500 transition hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            Remove logo
+                          </button>
+                        ) : null}
                       </div>
-                      <p className="mt-2 text-xs text-slate-500">
+                      <p className="mt-1 text-sm text-slate-500">
                         Recommended: PNG, JPG (300x300px)
                       </p>
-                      {logoUrl && canEditAllSettings ? (
-                        <button
-                          type="button"
-                          onClick={handleLogoRemove}
-                          disabled={isUploadingLogo}
-                          className="mt-1 text-xs font-medium text-slate-500 transition hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          Remove logo
-                        </button>
-                      ) : null}
                     </div>
 
                     <label className="block">
@@ -1251,33 +1326,90 @@ export default function SettingsPage() {
                         placeholder="Book appointments with ease"
                         maxLength={TAGLINE_MAX_LENGTH}
                       />
-                      <p className="mt-2 text-xs text-slate-500">
+                      <p className="mt-2 text-sm text-slate-500">
                         {tagline.length}/{TAGLINE_MAX_LENGTH} characters
                         {tagline.length > 0
                           ? ` · ${TAGLINE_MAX_LENGTH - tagline.length} remaining`
                           : ""}
                       </p>
                     </label>
+
+                    <div className="md:col-span-2">
+                      <span className="mb-2 block text-sm font-bold text-slate-700">
+                        Clinic image
+                      </span>
+                      <p className="mb-3 text-sm text-slate-500">
+                        Shown on your public booking page header. If not set, your logo is used
+                        instead.
+                      </p>
+                      <div className="flex flex-wrap items-center gap-3">
+                        <div className="grid h-20 w-20 shrink-0 place-items-center overflow-hidden rounded-2xl border border-slate-200 bg-white p-1">
+                          {clinicImageUrl ? (
+                            <WorkspaceBrandLogo
+                              src={clinicImageUrl}
+                              alt="Clinic image preview"
+                              width={72}
+                              height={72}
+                              className="h-full w-full rounded-xl object-cover"
+                            />
+                          ) : (
+                            <span className="px-2 text-center text-xs text-slate-400">
+                              No image
+                            </span>
+                          )}
+                        </div>
+                        <label
+                          className={`inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-indigo-600 transition ${
+                            canEditAllSettings
+                              ? "cursor-pointer hover:border-blue-200 hover:bg-indigo-50"
+                              : "cursor-not-allowed opacity-60"
+                          }`}
+                        >
+                          <SettingsIcon name="refresh" className="h-4 w-4" />
+                          {isUploadingClinicImage ? "Uploading…" : "Upload"}
+                          <input
+                            type="file"
+                            accept="image/png,image/jpeg,image/jpg,image/webp"
+                            onChange={handleClinicImageChange}
+                            disabled={isUploadingClinicImage || !canEditAllSettings}
+                            className="hidden"
+                          />
+                        </label>
+                      </div>
+                      <p className="mt-1 text-sm text-slate-500">
+                        Recommended: PNG, JPG (square, at least 200×200px)
+                      </p>
+                      {clinicImageUrl && canEditAllSettings ? (
+                        <button
+                          type="button"
+                          onClick={handleClinicImageRemove}
+                          disabled={isUploadingClinicImage}
+                          className="text-sm font-medium text-slate-500 transition hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          Remove clinic image
+                        </button>
+                      ) : null}
+                    </div>
                   </div>
                 </div>
 
-                <div className="min-w-0 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+                <div className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
                   <div className="mb-5 flex items-start gap-3">
-                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600">
                       <SettingsIcon name="globe" className="h-5 w-5" />
                     </div>
                     <div>
                       <h2 className="text-lg font-bold text-slate-950">
                         Regional Preferences
                       </h2>
-                      <p className="mt-1 text-sm text-slate-500">
+                      <p className="text-sm text-slate-500">
                         Set your timezone, language and date/time formats
                       </p>
                     </div>
                   </div>
 
                   <div className="space-y-5">
-                    <div className="grid gap-5 lg:grid-cols-3">
+                    <div className="grid gap-5 sm:grid-cols-2 md:grid-cols-3">
                       <label className="block">
                         <span className="mb-2 block text-sm font-bold text-slate-700">
                           Timezone
@@ -1315,7 +1447,7 @@ export default function SettingsPage() {
                       />
                     </div>
 
-                    <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
+                    <div className="grid gap-5 grid-cols-2 lg:grid-cols-3">
                       <SelectField
                         label="Language"
                         value={language}
@@ -1337,21 +1469,27 @@ export default function SettingsPage() {
                   </div>
                 </div>
 
-                <div className="min-w-0 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
-                  <div className="mb-5">
-                    <h2 className="flex items-center gap-2 text-lg font-bold text-slate-950">
-                      <SettingsIcon
-                        name="shield"
-                        className="h-5 w-5 text-indigo-600"
-                      />{" "}
-                      Booking Rules &amp; Notifications
-                    </h2>
-                    <p className="mt-1 break-words text-sm text-slate-500">
-                      Important SaaS controls for booking flow, reminders, and
-                      customer actions.
-                    </p>
+                <div className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+                  <div className="mb-5 flex items-start gap-3">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600">
+                        <SettingsIcon
+                          name="shield"
+                          className="h-5 w-5 text-indigo-600"
+                        />{" "}
+                    </div>
+
+                    <div>
+                      <h2 className="flex items-center gap-2 text-lg font-bold text-slate-950">
+                        Booking Rules &amp; Notifications
+                      </h2>
+                      <p className="break-words text-sm text-slate-500">
+                        Important SaaS controls for booking flow, reminders, and
+                        customer actions.
+                      </p>
+                    </div>
                   </div>
-                  <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                     <ToggleRow
                       label="Auto confirm new bookings"
                       value={autoConfirm}
@@ -1391,10 +1529,10 @@ export default function SettingsPage() {
                   </div>
                 </div>
 
-                <div className="min-w-0 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+                <div className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
                   <div className="mb-5 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                     <div className="flex items-start gap-3">
-                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600">
                         <SettingsIcon name="palette" className="h-5 w-5" />
                       </div>
                       <div>
@@ -1406,8 +1544,9 @@ export default function SettingsPage() {
                         </p>
                       </div>
                     </div>
+
                     <div className="flex shrink-0 flex-wrap items-center gap-2 lg:justify-end">
-                      <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-gradient-to-r from-amber-500 to-orange-500 px-4 py-2 text-sm font-bold uppercase tracking-wide text-white shadow-lg shadow-amber-300/60 ring-2 ring-amber-400/50 ring-offset-2">
+                      <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-gradient-to-r from-amber-500 to-orange-500 px-4 py-2 text-sm font-semibold uppercase tracking-wide text-white shadow-lg shadow-amber-300/60 ring-2 ring-amber-400/50 ring-offset-2">
                         <SettingsIcon name="sparkles" className="h-4 w-4" />
                         Coming Soon!
                       </span>
@@ -1415,7 +1554,7 @@ export default function SettingsPage() {
                         href={publicBookingUrl ?? undefined}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="inline-flex items-center justify-center gap-2 rounded-xl border border-blue-200 bg-white px-4 py-2.5 text-sm font-semibold text-blue-600 transition hover:bg-blue-50 disabled:pointer-events-none disabled:opacity-50"
+                        className="inline-flex items-center justify-center gap-2 rounded-xl border border-blue-200 bg-white px-4 py-2.5 text-sm font-semibold text-indigo-600 transition hover:bg-indigo-50 disabled:pointer-events-none disabled:opacity-50"
                         aria-disabled={!publicBookingUrl}
                         onClick={(event) => {
                           if (!publicBookingUrl) event.preventDefault();
@@ -1427,37 +1566,41 @@ export default function SettingsPage() {
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-1 gap-5 lg:grid-cols-2 lg:gap-x-8">
-                    <ColorRow
-                      label="Primary Color"
-                      color={primaryColor}
-                      setColor={setPrimaryColor}
-                      disabled={nonLinkFieldsDisabled}
-                    />
-                    <ColorRow
-                      label="Accent Color (CTA / Highlights)"
-                      labelClassName="w-[8.5rem] sm:w-[9.5rem]"
-                      color={accentColor}
-                      setColor={setAccentColor}
-                      disabled={nonLinkFieldsDisabled}
-                    />
-                    <ToggleRow
-                      label="Use gradient background"
-                      value={useGradientBookingBg}
-                      setValue={setUseGradientBookingBg}
-                      disabled={nonLinkFieldsDisabled}
-                      layout="inline"
-                    />
-                    <ToggleRow
-                      label="Enable rounded UI style (modern look)"
-                      value={roundedUiStyle}
-                      setValue={setRoundedUiStyle}
-                      disabled={nonLinkFieldsDisabled}
-                      layout="inline"
-                    />
+                  <div className="grid gap-4">
+                    <div className="grid grid-cols-1 gap-5 md:grid-cols-2 lg:gap-x-8">
+                      <ColorRow
+                        label="Primary Color"
+                        color={primaryColor}
+                        setColor={setPrimaryColor}
+                        disabled={nonLinkFieldsDisabled}
+                      />
+                      <ColorRow
+                        label="Accent Color (CTA / Highlights)"
+                        color={accentColor}
+                        setColor={setAccentColor}
+                        disabled={nonLinkFieldsDisabled}
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:gap-x-8">
+                      <ToggleRow
+                        label="Use gradient background"
+                        value={useGradientBookingBg}
+                        setValue={setUseGradientBookingBg}
+                        disabled={nonLinkFieldsDisabled}
+                        layout="inline"
+                      />
+                      <ToggleRow
+                        label="Enable rounded UI style (modern look)"
+                        value={roundedUiStyle}
+                        setValue={setRoundedUiStyle}
+                        disabled={nonLinkFieldsDisabled}
+                        layout="inline"
+                      />
+                    </div>
                   </div>
 
-                  <div className="mt-5 rounded-2xl bg-blue-50 p-5">
+                  <div className="mt-5 rounded-2xl bg-indigo-50 p-5">
                     <p className="text-sm font-bold text-slate-900">
                       Recommended for MVP
                     </p>
@@ -1474,8 +1617,8 @@ export default function SettingsPage() {
                           key={item}
                           className="flex items-center gap-2.5 text-sm text-slate-700"
                         >
-                          <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-blue-600 text-white">
-                            <SettingsIcon name="check" className="h-3 w-3" />
+                          <span className="flex shrink-0 items-center justify-center text-indigo-600">
+                            <SettingsIcon name="check" className="h-5 w-5" />
                           </span>
                           {item}
                         </div>
@@ -1485,106 +1628,96 @@ export default function SettingsPage() {
                 </div>
               </div>
 
-              <aside className="min-w-0 space-y-5 lg:sticky lg:top-6 lg:self-start">
-                <div className="min-w-0 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
-                  <div className="mb-4">
-                    <h3 className="text-lg font-bold text-slate-950">
-                      Live Booking Preview
-                    </h3>
-                    <p className="mt-1 text-sm text-slate-500">
-                      This is how your booking page looks
-                    </p>
-                  </div>
-
-                  <div
-                    className={`flex flex-col items-center px-5 py-10 text-center text-white ${
-                      roundedUiStyle ? "rounded-3xl" : "rounded-lg"
-                    }`}
-                    style={{
-                      background: useGradientBookingBg
-                        ? `linear-gradient(135deg, ${primaryColor}, ${accentColor})`
-                        : primaryColor,
-                    }}
-                  >
-                    <div
-                      className={`mb-4 flex h-16 w-16 items-center justify-center bg-white/20 text-2xl font-bold text-white shadow-inner ring-1 ring-white/30 ${
-                        roundedUiStyle ? "rounded-full" : "rounded-xl"
-                      }`}
-                      aria-hidden
-                    >
-                      {workspace_name_initial(accountName)}
+              <aside className="min-w-0 space-y-5 lg:sticky lg:top-0 lg:self-start">
+                <div className="grid sm:grid-cols-2 xl:grid-cols-1 gap-5">
+                  <div className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+                    <div className="mb-4">
+                      <h3 className="text-lg font-bold text-slate-950">
+                        Live Booking Preview
+                      </h3>
+                      <p className="mt-1 text-sm text-slate-500">
+                        This is how your booking page looks
+                      </p>
                     </div>
-                    <h4 className="text-lg font-bold leading-snug">
-                      {accountName.trim() || "Workspace Name"}
-                    </h4>
-                    <p className="mt-2 max-w-xs text-sm font-medium text-white/90">
-                      {tagline.trim() || "Book appointments with ease"}
-                    </p>
-                    <button
-                      type="button"
-                      onClick={open_create_booking}
-                      className={`mt-6 w-full max-w-xs px-4 py-3 text-sm font-bold shadow-lg transition hover:-translate-y-0.5 ${
-                        roundedUiStyle ? "rounded-2xl" : "rounded-md"
-                      }`}
-                      style={{ backgroundColor: "#ffffff", color: primaryColor }}
-                    >
-                      Book Appointment
-                    </button>
-                  </div>
-                </div>
 
-                <div className="min-w-0 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
-                  <h3 className="text-base font-bold text-slate-950">
-                    Setup Checklist
-                  </h3>
-                  <div className="mt-4 space-y-3">
-                    {checklist_items.map((item) => (
+                    <div
+                      className={`flex flex-col items-center px-5 py-10 text-center text-white ${
+                        roundedUiStyle ? "rounded-2xl" : "rounded-lg"
+                      }`}
+                      style={{
+                        background: useGradientBookingBg
+                          ? `linear-gradient(135deg, ${primaryColor}, ${accentColor})`
+                          : primaryColor,
+                      }}
+                    >
                       <div
-                        key={item.label}
-                        className={`flex items-center gap-3 rounded-2xl px-4 py-3 text-sm font-semibold ${
-                          item.done
-                            ? "bg-slate-50 text-slate-700"
-                            : "bg-amber-50 text-amber-900"
+                        className={`mb-4 flex h-16 w-16 items-center justify-center bg-white/20 text-2xl font-bold text-white shadow-inner ring-1 ring-white/30 ${
+                          roundedUiStyle ? "rounded-full" : "rounded-lg"
                         }`}
+                        aria-hidden
                       >
-                        <SettingsIcon
-                          name="check"
-                          className={`h-5 w-5 shrink-0 ${item.done ? "text-emerald-500" : "text-amber-500"}`}
-                        />
-                        {item.label}
+                        {workspace_name_initial(accountName)}
                       </div>
-                    ))}
+                      <h4 className="text-lg font-bold leading-snug">
+                        {accountName.trim() || "Workspace Name"}
+                      </h4>
+                      <p className="mt-2 max-w-xs text-sm font-medium text-white/90">
+                        {tagline.trim() || "Book appointments with ease"}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={open_create_booking}
+                        className={`mt-6 w-full px-4 py-2 text-sm font-bold shadow-lg transition hover:-translate-y-0.5 text-slate-700 cursor-pointer ${
+                          roundedUiStyle ? "rounded-2xl" : "rounded-lg"
+                        }`}
+                        style={{ backgroundColor: "#ffffff" }}
+                      >
+                        Book Appointment
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+                    <h3 className="text-base font-bold text-slate-950">
+                      Setup Checklist
+                    </h3>
+                    <div className="mt-4 space-y-3">
+                      {checklist_items.map((item) => (
+                        <div
+                          key={item.label}
+                          className={`flex items-center gap-3 rounded-2xl px-4 py-3 text-sm font-semibold ${
+                            item.done
+                              ? "bg-slate-50 text-slate-700"
+                              : "bg-amber-50 text-amber-900"
+                          }`}
+                        >
+                          <SettingsIcon
+                            name="check"
+                            className={`h-5 w-5 shrink-0 ${item.done ? "text-emerald-500" : "text-amber-500"}`}
+                          />
+                          {item.label}
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 </div>
               </aside>
             </div>
 
-            {saveMessage && (
-              <div
-                className={`mx-5 mb-4 rounded-2xl border px-4 py-3 text-sm font-medium md:mx-8 ${
-                  saveMessage.type === "success"
-                    ? "border-green-200 bg-green-50 text-green-800"
-                    : "border-red-200 bg-red-50 text-red-800"
-                }`}
-              >
-                {saveMessage.text}
-              </div>
-            )}
-
             {canSave ? (
-              <div className="bottom-0 border-t border-slate-200 bg-white/90 px-5 py-4 backdrop-blur md:px-8">
+              <div className="relative">
                 <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
                   <button
                     type="button"
                     onClick={handleCancel}
-                    className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-6 py-3 text-sm font-bold text-slate-700 transition hover:bg-slate-50"
+                    className="inline-flex items-center justify-center gap-2 rounded-lg bg-white px-4 py-2 text-sm font-bold text-slate-700 transition hover:bg-slate-50"
                   >
                     <SettingsIcon name="close" className="h-4 w-4" /> Cancel
                   </button>
                   <button
                     type="submit"
                     disabled={isSaving}
-                    className="inline-flex items-center justify-center gap-2 rounded-2xl bg-indigo-600 px-6 py-3 text-sm font-bold text-white shadow-lg shadow-indigo-600/25 transition hover:-translate-y-0.5 hover:bg-indigo-700 disabled:pointer-events-none disabled:opacity-50"
+                    className="inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-bold text-white shadow-lg shadow-indigo-600/25 transition hover:-translate-y-0.5 hover:bg-indigo-700 disabled:pointer-events-none disabled:opacity-50"
                   >
                     <SettingsIcon name="save" className="h-4 w-4" />
                     {isSaving
@@ -1599,7 +1732,7 @@ export default function SettingsPage() {
           </section>
         </form>
       </div>
-    </main>
+    </div>
   );
 }
 
@@ -1670,13 +1803,13 @@ function ToggleRow({
         if (!disabled) setValue(!value);
       }}
       disabled={disabled}
-      className={`relative inline-flex h-7 w-12 shrink-0 rounded-full transition focus:outline-none focus:ring-2 focus:ring-blue-200 disabled:cursor-not-allowed disabled:opacity-60 ${
-        value ? "bg-blue-600" : "bg-slate-300"
+      className={`relative inline-flex h-6 w-10 shrink-0 rounded-full transition focus:outline-none focus:ring-2 focus:ring-indigo-200 disabled:cursor-not-allowed disabled:opacity-60 ${
+        value ? "bg-indigo-600" : "bg-slate-300"
       }`}
     >
       <span
-        className={`pointer-events-none absolute top-0.5 left-0.5 h-6 w-6 rounded-full bg-white shadow transition-transform ${
-          value ? "translate-x-5" : "translate-x-0"
+        className={`pointer-events-none absolute top-0.5 left-0.2 h-5 w-5 rounded-full bg-white shadow transition-transform ${
+          value ? "translate-x-4.5" : "translate-x-0"
         }`}
       />
     </button>
@@ -1684,8 +1817,8 @@ function ToggleRow({
 
   if (layout === "inline") {
     return (
-      <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
-        <span className="min-w-0 text-sm font-bold leading-snug text-slate-800 sm:flex-1">
+      <div className="flex gap-3 flex-row sm:items-center sm:justify-between sm:gap-4">
+        <span className="min-w-0 text-sm font-semibold leading-snug text-slate-800 sm:flex-1">
           {label}
         </span>
         {switchControl}
@@ -1695,7 +1828,7 @@ function ToggleRow({
 
   return (
     <div className="flex w-full min-w-0 items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3 transition hover:border-indigo-200 hover:bg-indigo-50 has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-60 sm:gap-4 sm:px-4">
-      <span className="min-w-0 flex-1 text-sm font-bold leading-snug text-slate-700">
+      <span className="min-w-0 flex-1 text-sm font-semibold leading-snug text-slate-700">
         {label}
       </span>
       {switchControl}
@@ -1708,7 +1841,7 @@ function ColorRow({
   color,
   setColor,
   disabled = false,
-  labelClassName = "w-[6.75rem] sm:w-[7.5rem]",
+  labelClassName = "w-fit md:w-[7.5rem]",
 }: {
   label: string;
   color: string;
@@ -1719,18 +1852,18 @@ function ColorRow({
   return (
     <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:gap-3 md:gap-4">
       <span
-        className={`text-sm font-bold leading-snug text-slate-800 sm:shrink-0 ${labelClassName}`}
+        className={`text-sm font-semibold leading-snug text-slate-800 sm:shrink-0 ${labelClassName}`}
       >
         {label}
       </span>
-      <div className="flex h-11 min-w-0 w-full flex-1 items-stretch gap-1.5 rounded-xl border border-slate-200 bg-white p-1.5">
+      <div className="flex h-11 min-w-0 w-fit items-stretch gap-1.5 rounded-xl border border-slate-200 bg-white p-1.5">
         <label
-          className={`relative min-w-0 flex-[2] overflow-hidden rounded-lg ${
+          className={`relative overflow-hidden rounded-lg ${
             disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer"
           }`}
         >
           <span
-            className="block h-full w-full rounded-lg"
+            className="block h-full w-[80px] rounded-lg"
             style={{ backgroundColor: color }}
             aria-hidden
           />

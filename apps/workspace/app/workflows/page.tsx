@@ -1,4 +1,5 @@
 "use client";
+import { getWorkspaceSession } from '@/src/lib/auth_session';
 import { useState, useEffect } from "react";
 import { FcFeedback, FcClock, FcPhone, FcOk, FcSettings, FcAutomotive, FcBusinessman, FcBusinesswoman } from "react-icons/fc";
 import { IconType } from "react-icons";
@@ -88,8 +89,7 @@ export default function Workflows({ dark = false }) {
     if (!user) return;
 
     try {
-      const { supabase } = await import('@/lib/supabaseClient');
-      const { data: { session } } = await supabase.auth.getSession();
+      const { session } = await getWorkspaceSession();
 
       if (!session?.access_token) return;
 

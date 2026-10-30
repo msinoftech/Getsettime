@@ -75,15 +75,21 @@ export function parse_department_color(raw: unknown): department_color_id | null
   return DEPARTMENT_COLOR_IDS.has(raw) ? (raw as department_color_id) : null;
 }
 
+function resolve_department_color(department: {
+  id: number;
+  meta_data?: { color?: string | null } | null;
+}) {
+  const colorId = parse_department_color(department.meta_data?.color);
+  if (colorId) {
+    const match = DEPARTMENT_COLORS.find((c) => c.id === colorId);
+    if (match) return match;
+  }
+  return DEPARTMENT_COLORS[Math.abs(department.id) % DEPARTMENT_COLORS.length];
+}
+
 export function get_department_gradient(department: {
   id: number;
   meta_data?: { color?: string | null } | null;
 }): string {
-  const colorId = parse_department_color(department.meta_data?.color);
-  if (colorId) {
-    const match = DEPARTMENT_COLORS.find((c) => c.id === colorId);
-    if (match) return match.gradient;
-  }
-  return DEPARTMENT_COLORS[Math.abs(department.id) % DEPARTMENT_COLORS.length]
-    .gradient;
+  return resolve_department_color(department).gradient;
 }

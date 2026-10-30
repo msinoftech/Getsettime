@@ -1,5 +1,6 @@
 "use client";
 
+import { getWorkspaceSession } from '@/src/lib/auth_session';
 import { useCallback, useEffect, useState } from "react";
 import {
   LuCalendar as Calendar,
@@ -8,7 +9,7 @@ import {
   LuX as X,
 } from "react-icons/lu";
 import { supabase } from "@/lib/supabaseClient";
-import { AlertModal } from "@/src/components/ui/AlertModal";
+import { toast } from "@/src/components/ui/toast";
 import {
   classNames,
   PanelSection,
@@ -82,7 +83,6 @@ export function AddExceptionPanel({
   const isEdit = Boolean(exception?.id);
   const [panelAnimatedOpen, setPanelAnimatedOpen] = useState(false);
   const [busyAction, setBusyAction] = useState(false);
-  const [alertMessage, setAlertMessage] = useState<string | null>(null);
 
   const [name, setName] = useState("");
   const [exceptionDate, setExceptionDate] = useState("");
@@ -170,30 +170,28 @@ export function AddExceptionPanel({
 
   const handleSave = async () => {
     if (!name.trim()) {
-      setAlertMessage("Exception name is required.");
+      toast.error("Exception name is required.");
       return;
     }
     if (!exceptionDate) {
-      setAlertMessage("Date is required.");
+      toast.error("Date is required.");
       return;
     }
     if (availabilityType !== "closed" && (!startTime || !endTime)) {
-      setAlertMessage("Start time and end time are required.");
+      toast.error("Start time and end time are required.");
       return;
     }
     if (availabilityType !== "closed" && startTime >= endTime) {
-      setAlertMessage("End time must be after start time.");
+      toast.error("End time must be after start time.");
       return;
     }
 
     setBusyAction(true);
     try {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
+      const { session } = await getWorkspaceSession();
       const token = session?.access_token;
       if (!token) {
-        setAlertMessage("Please sign in again.");
+        toast.error("Please sign in again.");
         return;
       }
 
@@ -225,7 +223,7 @@ export function AddExceptionPanel({
 
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setAlertMessage(
+        toast.error(
           typeof data.error === "string" ? data.error : "Failed to save exception."
         );
         return;
@@ -234,10 +232,13 @@ export function AddExceptionPanel({
       if (data.exception) {
         onSaved?.(data.exception as date_exception);
       }
+      toast.success(
+        isEdit ? "Date exception updated successfully." : "Date exception added successfully."
+      );
       handleClose();
     } catch (error) {
       console.error("Error saving date exception:", error);
-      setAlertMessage("Failed to save exception.");
+      toast.error("Failed to save exception.");
     } finally {
       setBusyAction(false);
     }
@@ -249,16 +250,22 @@ export function AddExceptionPanel({
     <>
       <aside
         className={classNames(
-          "fixed top-16 right-0 bottom-0 z-30 flex w-full flex-col overflow-hidden border-l border-slate-200 bg-white shadow-2xl lg:w-[28rem]",
-          "transform transition-transform duration-300 ease-in-out will-change-transform",
+          "fixed inset-0 z-100001 h-full flex",
+          "transform transition-transform duration-300 ease-in-out will-change-transform mb-0",
           panelAnimatedOpen
             ? "translate-x-0"
             : "pointer-events-none translate-x-full"
         )}
         aria-hidden={!panelVisible}
       >
+        <button
+            type="button"
+            aria-label="Close exception panel"
+            onClick={handleClose}
+            className="absolute inset-0 cursor-default bg-slate-900/40 backdrop-blur-[2px]"
+          />
         {panelVisible ? (
-          <div className="flex h-full min-h-0 flex-col">
+          <div className="relative ml-auto flex w-full max-w-xl flex-col border-l border-slate-200 bg-white shadow-2xl pb-[60px] lg:pb-0">
             <div className="flex shrink-0 items-center justify-between border-b border-slate-200 px-5 py-4">
               <h2 className="text-lg font-bold text-slate-900">
                 {isEdit ? "Edit Exception" : "Add Exception"}
@@ -335,14 +342,14 @@ export function AddExceptionPanel({
                           className={classNames(
                             "rounded-xl border p-3 text-left transition",
                             selected
-                              ? "border-violet-500 bg-violet-50 ring-1 ring-violet-400"
+                              ? "border-indigo-500 bg-indigo-50 ring-1 ring-indigo-400"
                               : "border-slate-200 bg-white hover:border-slate-300"
                           )}
                         >
                           <Clock
                             className={classNames(
                               "mb-2 h-4 w-4",
-                              selected ? "text-violet-600" : "text-slate-400"
+                              selected ? "text-indigo-600" : "text-slate-400"
                             )}
                           />
                           <p className="text-xs font-semibold text-slate-900">
@@ -406,7 +413,7 @@ export function AddExceptionPanel({
                       onClick={() => setRepeatYearly((v) => !v)}
                       className={classNames(
                         "relative h-6 w-11 shrink-0 rounded-full transition",
-                        repeatYearly ? "bg-violet-600" : "bg-slate-300"
+                        repeatYearly ? "bg-indigo-600" : "bg-slate-300"
                       )}
                     >
                       <span
@@ -442,7 +449,7 @@ export function AddExceptionPanel({
                       <button
                         type="button"
                         onClick={() => applyPreset("holiday")}
-                        className="rounded-xl border border-slate-200 p-3 text-left hover:border-violet-300 hover:bg-violet-50/50"
+                        className="rounded-xl border border-slate-200 p-3 text-left hover:border-indigo-300 hover:bg-indigo-50/50"
                       >
                         <Calendar className="mb-2 h-4 w-4 text-slate-500" />
                         <p className="text-xs font-semibold text-slate-900">
@@ -453,7 +460,7 @@ export function AddExceptionPanel({
                       <button
                         type="button"
                         onClick={() => applyPreset("team")}
-                        className="rounded-xl border border-slate-200 p-3 text-left hover:border-violet-300 hover:bg-violet-50/50"
+                        className="rounded-xl border border-slate-200 p-3 text-left hover:border-indigo-300 hover:bg-indigo-50/50"
                       >
                         <Users className="mb-2 h-4 w-4 text-slate-500" />
                         <p className="text-xs font-semibold text-slate-900">
@@ -464,7 +471,7 @@ export function AddExceptionPanel({
                       <button
                         type="button"
                         onClick={() => applyPreset("special")}
-                        className="rounded-xl border border-slate-200 p-3 text-left hover:border-violet-300 hover:bg-violet-50/50"
+                        className="rounded-xl border border-slate-200 p-3 text-left hover:border-indigo-300 hover:bg-indigo-50/50"
                       >
                         <Clock className="mb-2 h-4 w-4 text-slate-500" />
                         <p className="text-xs font-semibold text-slate-900">
@@ -491,7 +498,7 @@ export function AddExceptionPanel({
                   type="button"
                   onClick={() => void handleSave()}
                   disabled={busyAction}
-                  className="rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-60"
+                  className="rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {busyAction ? "Saving…" : "Save Exception"}
                 </button>
@@ -501,9 +508,6 @@ export function AddExceptionPanel({
         ) : null}
       </aside>
 
-      {alertMessage ? (
-        <AlertModal message={alertMessage} onClose={() => setAlertMessage(null)} />
-      ) : null}
     </>
   );
 }

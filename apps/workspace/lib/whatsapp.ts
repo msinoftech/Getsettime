@@ -197,7 +197,7 @@ export async function sendWhatsAppTemplate(
       document?: { link: string };
       video?: { link: string };
     }>;
-    sub_type?: "url" | "quick_reply";
+    sub_type?: "url" | "quick_reply" | "copy_code";
     index?: number | string;
   }>
 ) {
@@ -281,6 +281,110 @@ export async function sendWhatsAppTemplate(
   }
 
   console.log("WhatsApp template message sent successfully:", responseData);
+  return responseData;
+}
+
+/**
+ * Send an Meta **Authentication** template with the OTP code (required for users outside the 24h chat window).
+ * Configure WHATSAPP_EMBED_OTP_TEMPLATE / WHATSAPP_EMBED_OTP_TEMPLATE_LANGUAGE to match your approved template.
+ */
+export async function sendWhatsAppAuthenticationOtp(to: string, code: string) {
+  const templateName =
+    process.env.WHATSAPP_EMBED_OTP_TEMPLATE?.trim() || "authentication_code";
+  const languageCode =
+    process.env.WHATSAPP_EMBED_OTP_TEMPLATE_LANGUAGE?.trim() || "en";
+
+  const otp = String(code).trim();
+  if (!otp) {
+    throw new Error("OTP code is required for WhatsApp authentication template");
+  }
+
+  // Copy-code Authentication templates need TWO API parameters (same OTP twice):
+  // 1) body {{1}}  2) button index "0" as sub_type "url" with text param (Meta copy-code spec).
+  // See: developers.facebook.com .../copy-code-button-authentication-templates
+  const components: Array<Record<string, unknown>> = [
+    {
+      type: "body",
+      parameters: [{ type: "text", text: otp }],
+    },
+  ];
+
+  if (process.env.WHATSAPP_EMBED_OTP_SKIP_URL_BUTTON !== "true") {
+    components.push({
+      type: "button",
+      sub_type: "url",
+      index: "0",
+      parameters: [{ type: "text", text: otp }],
+    });
+  }
+
+  const formattedPhone = formatPhoneNumber(to);
+
+  if (!PHONE_NUMBER_ID) {
+    throw new Error("WHATSAPP_PHONE_NUMBER_ID is not configured");
+  }
+  if (!FALLBACK_ACCESS_TOKEN) {
+    throw new Error("WHATSAPP_FALLBACK_TOKEN is not configured");
+  }
+
+  const token = await getValidToken();
+  if (!token) {
+    throw new Error("Failed to obtain WhatsApp access token");
+  }
+
+  const apiUrl = `${WHATSAPP_API_URL}/${PHONE_NUMBER_ID}/messages`;
+  const requestBody = {
+    messaging_product: "whatsapp",
+    recipient_type: "individual",
+    to: formattedPhone,
+    type: "template",
+    template: {
+      name: templateName,
+      language: { code: languageCode },
+      components,
+    },
+  };
+
+  console.log("Sending WhatsApp authentication OTP template:", {
+    to: formattedPhone,
+    template: templateName,
+    language: languageCode,
+  });
+
+  if (process.env.NODE_ENV === "development") {
+    console.log(
+      "WhatsApp auth OTP request:",
+      JSON.stringify(requestBody, null, 2)
+    );
+  }
+
+  const res = await fetch(apiUrl, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(requestBody),
+  });
+
+  const responseData = await res.json().catch(() => ({}));
+
+  if (!res.ok) {
+    const errorMessage =
+      responseData.error?.message ||
+      responseData.error?.error_user_msg ||
+      `WhatsApp API error: ${res.status}`;
+    console.error("WhatsApp authentication OTP error:", {
+      status: res.status,
+      error: responseData.error,
+      phone: formattedPhone,
+      template: templateName,
+      requestComponents: components,
+    });
+    throw new Error(errorMessage);
+  }
+
+  console.log("WhatsApp authentication OTP sent successfully:", responseData);
   return responseData;
 }
 

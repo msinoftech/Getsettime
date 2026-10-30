@@ -107,7 +107,7 @@ export function Step4IntakeForm({
   const [showTermsModal, setShowTermsModal] = useState(false);
   const showFieldError = (key: string) => attemptedConfirm && Boolean(intakeValidation[key]);
   const baseInputClass =
-    'w-full px-4 py-4 rounded-xl border-2 border-gray-200 focus:outline-none focus:border-indigo-500 transition-all bg-white hover:border-gray-300';
+    'h-12 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 text-sm font-medium outline-none transition focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:opacity-60';
   const totalFilesSize = files.reduce((sum, f) => sum + f.size, 0);
 
   const addIncomingFiles = (incoming: FileList | File[]) => {
@@ -120,10 +120,10 @@ export function Step4IntakeForm({
   };
 
   return (
-    <div className="space-y-4 sm:space-y-6 lg:space-y-8 animate-fadeIn">
+    <div className="w-full space-y-4 animate-fadeIn">
       <div className="text-center lg:text-left">
-        <h2 className="text-2xl font-bold text-gray-900">{BOOKING_STEP_TITLES.step4}</h2>
-        <p className="text-xs sm:text-sm text-gray-500">{BOOKING_STEP_TITLES.step4Subtitle}</p>
+        <h2 className="text-lg font-bold tracking-tight text-slate-900 sm:text-xl md:text-2xl">{BOOKING_STEP_TITLES.step4}</h2>
+        <p className="mt-0.5 text-sm text-slate-500">{BOOKING_STEP_TITLES.step4Subtitle}</p>
       </div>
 
       {attemptedConfirm && intakeValidation._config && (
@@ -131,7 +131,7 @@ export function Step4IntakeForm({
           {intakeValidation._config}
         </div>
       )}
-      <div className="grid gap-6">
+      <div className="w-full grid grid-cols-1 gap-3">
         {intakeForm?.name !== false && (
           <div className="group">
             <div className="relative">
@@ -150,7 +150,7 @@ export function Step4IntakeForm({
               />
             </div>
             {showFieldError('name') && (
-              <p className="mt-2 text-xs font-medium text-red-600">{intakeValidation.name}</p>
+              <p className="mt-2 text-xs text-red-600">{intakeValidation.name}</p>
             )}
           </div>
         )}
@@ -174,7 +174,7 @@ export function Step4IntakeForm({
               />
             </div>
             {showFieldError('email') && (
-              <p className="mt-2 text-xs font-medium text-red-600">{intakeValidation.email}</p>
+              <p className="mt-2 text-xs text-red-600">{intakeValidation.email}</p>
             )}
           </div>
         )}
@@ -189,7 +189,7 @@ export function Step4IntakeForm({
               profileCountry={profileCountry}
             />
             {showFieldError('phone') && (
-              <p className="mt-2 text-xs font-medium text-red-600">{intakeValidation.phone}</p>
+              <p className="mt-2 text-xs text-red-600">{intakeValidation.phone}</p>
             )}
           </div>
         )}
@@ -214,7 +214,7 @@ export function Step4IntakeForm({
                 return (
                   <label
                     key={key}
-                    className={`inline-flex cursor-pointer items-center gap-2 rounded-full border-2 px-4 py-2 text-sm font-semibold transition-all ${
+                    className={`inline-flex cursor-pointer items-center gap-2 rounded-full border px-3 py-1 text-sm transition-all ${
                       selected
                         ? 'border-indigo-600 bg-indigo-600 text-white shadow-lg'
                         : 'border-gray-200 bg-white text-gray-700 hover:border-indigo-400 hover:bg-indigo-50'
@@ -234,7 +234,7 @@ export function Step4IntakeForm({
               })}
             </div>
             {showFieldError('meeting_option') && (
-              <p className="mt-2 text-xs font-medium text-red-600">{intakeValidation.meeting_option}</p>
+              <p className="mt-2 text-xs text-red-600">{intakeValidation.meeting_option}</p>
             )}
           </div>
         )}
@@ -257,10 +257,10 @@ export function Step4IntakeForm({
                   onChange={(e) => onCustomFieldChange(field.id, e.target.value)}
                   onBlur={() => onTouchedCustomField(field.id)}
                   placeholder={placeholder}
-                  className={`${baseInputClass} h-36 resize-none mt-2`}
+                  className={`${baseInputClass} h-28 resize-none mt-2`}
                   required={required}
                 />
-                {showError && <p className="mt-2 text-xs font-medium text-red-600">{intakeValidation[field.id]}</p>}
+                {showError && <p className="mt-2 text-xs text-red-600">{intakeValidation[field.id]}</p>}
               </div>
             );
           }
@@ -284,9 +284,9 @@ export function Step4IntakeForm({
                     return (
                       <option key={o.value} value={o.value}>{o.label}</option>
                     );
-                  })}
+                  })}                  
                 </select>
-                {showError && <p className="mt-2 text-xs font-medium text-red-600">{intakeValidation[field.id]}</p>}
+                {showError && <p className="mt-2 text-xs text-red-600">{intakeValidation[field.id]}</p>}
               </div>
             );
           }
@@ -308,7 +308,7 @@ export function Step4IntakeForm({
                 className={`${baseInputClass} mt-2`}
                 required={required}
               />
-              {showError && <p className="mt-2 text-xs font-medium text-red-600">{intakeValidation[field.id]}</p>}
+              {showError && <p className="mt-2 text-xs text-red-600">{intakeValidation[field.id]}</p>}
             </div>
           );
         })}
@@ -397,14 +397,14 @@ export function Step4IntakeForm({
                 value={notes}
                 onChange={(e) => onNotesChange(e.target.value)}
                 placeholder={BOOKING_PLACEHOLDERS.notes}
-                className="w-full pl-12 pr-4 py-4 rounded-xl border-2 border-gray-200 h-36 resize-none focus:outline-none focus:border-indigo-500 transition-all bg-white hover:border-gray-300"
+                className="w-full pl-12 pr-4 py-4 h-28 w-full rounded-xl border border-slate-200 bg-slate-50 text-sm font-medium outline-none transition focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:opacity-60"
               />
             </div>
           </div>
         )}
 
         <div className="group">
-          <label className="inline-flex items-center gap-3 cursor-pointer select-none">
+          <label className="inline-flex items-start gap-2 cursor-pointer select-none">
             <input
               type="checkbox"
               checked={sendWhatsapp}
@@ -420,10 +420,10 @@ export function Step4IntakeForm({
         
       </div>
 
-      <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 mt-6 sm:mt-8 lg:mt-10 pt-6 sm:pt-8 border-t border-gray-200">
+      <div className="flex flex-col items-center  sm:flex-row justify-center sm:justify-between gap-3 sm:gap-4 pt-4 scroll-mt-6">
         <button
           onClick={onBack}
-          className="w-full sm:w-auto px-6 sm:px-8 py-3 sm:py-3.5 rounded-xl border-2 border-gray-200 hover:border-gray-300 hover:bg-gray-50 transition-all font-semibold text-gray-700 hover:shadow-md"
+          className="w-full sm:w-auto px-4 py-2 rounded-lg border border-gray-200 hover:border-gray-300 hover:bg-gray-50 transition-all font-semibold text-gray-700 hover:shadow-md"
         >
           {BOOKING_BUTTON_LABELS.back}
         </button>
@@ -437,13 +437,13 @@ export function Step4IntakeForm({
             onConfirm();
           }}
           disabled={loading}
-          className={`w-full sm:w-auto sm:ml-auto px-6 sm:px-10 py-3 sm:py-3.5 rounded-xl text-white transition-all font-semibold flex items-center justify-center gap-2 ${
-            loading ? 'bg-gray-300 cursor-not-allowed' : 'bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-700 hover:to-indigo-800 shadow-xl hover:shadow-2xl hover:scale-105'
+          className={`w-full sm:w-auto px-4 py-2 text-sm font-semibold text-white text-center rounded-lg bg-indigo-600 transition-all font-semibold flex gap-1 justify-center items-center ${
+            loading ? 'bg-gray-300 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700'
           }`}
         >
           {loading ? (
             <>
-              <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+              <div className="w-5 h-5 border border-white border-t-transparent rounded-full animate-spin" />
               <span>{BOOKING_BUTTON_LABELS.creating}</span>
             </>
           ) : (

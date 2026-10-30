@@ -72,6 +72,7 @@ export const BOOKING_EMPTY_MESSAGES = {
   selectEventFirst: 'Please select an event type first',
   selectDateFirst: 'Please select a date first',
   noServices: 'No services available',
+  groupSlotFull: 'All seats for this time slot are booked.',
 } as const;
 
 /** @deprecated Prefer `resolve_workspace_logo_src` / `WORKSPACE_LOGO_FALLBACK_SRC` from `@/src/utils/workspace_logo`. Kept for legacy imports. */

@@ -1,4 +1,5 @@
 "use client";
+import { getWorkspaceSession } from '@/src/lib/auth_session';
 import { useState, useEffect } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { useAuth } from "@/src/providers/AuthProvider";
@@ -105,7 +106,7 @@ export default function RoutingForm({ dark = false }) {
 
   const fetchServices = async () => {
     try {
-      const { data: { session } } = await supabase.auth.getSession();
+      const { session } = await getWorkspaceSession();
       if (!session) return;
 
       const response = await fetch('/api/services', {
@@ -179,7 +180,7 @@ export default function RoutingForm({ dark = false }) {
     setLoading(true);
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
+      const { session } = await getWorkspaceSession();
       if (!session) {
         alert('Not authenticated');
         return;

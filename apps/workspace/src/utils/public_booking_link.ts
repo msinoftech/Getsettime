@@ -1,3 +1,4 @@
+import { getWorkspaceSession } from '@/src/lib/auth_session';
 import { get_provider_link_slug_for_user } from '@/lib/provider_booking_link';
 
 /** Origin for workspace public booking pages (`/{workspaceSlug}`). */
@@ -189,10 +190,7 @@ export async function fetch_or_create_short_public_url(
   if (!trimmed) return null;
 
   try {
-    const { supabase } = await import('@/lib/supabaseClient');
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
+    const { session } = await getWorkspaceSession();
     const token = session?.access_token;
     if (!token) return null;
 

@@ -9,6 +9,8 @@ import {
   resolvePlanFeatures,
 } from "@app/db/subscription";
 import { PlanPricingBreakdown } from "./PlanPricingBreakdown";
+import { useSubscription } from "@/src/hooks/useSubscription";
+import { Z_MODAL } from "@/src/constants/z-index";
 
 type payment_method = "Razorpay" | "Stripe";
 
@@ -34,6 +36,10 @@ export function DashboardUpgradeModal({
   usedBookings = 0,
   bookingLimit = 250,
 }: DashboardUpgradeModalProps) {
+  const { data: subscription, loading: subscriptionLoading } = useSubscription(open);
+  const currentPlan = subscription?.plan ?? null;
+  const currentPlanSlug = currentPlan?.slug ?? null;
+
   const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
   const [planOptions, setPlanOptions] = useState<plans_with_content[]>([]);
   const [plansLoading, setPlansLoading] = useState(false);
@@ -56,12 +62,19 @@ export function DashboardUpgradeModal({
         if (!res.ok) throw new Error(data.error || "Failed to load plans");
 
         const rows = (data.plans || []) as plans_with_content[];
-        const paid = rows.filter((row) => row.slug !== "free" && row.price > 0);
+        const sorted = [...rows].sort(
+          (a, b) => (a.display_order ?? 0) - (b.display_order ?? 0)
+        );
 
         if (!cancelled) {
-          setPlanOptions(paid);
-          setSelectedPlan(paid[0] ?? null);
-          setRequestedProviderCount(paid[0]?.service_provider_limit ?? 2);
+          setPlanOptions(sorted);
+          const firstUpgrade = sorted.find(
+            (row) => row.slug !== currentPlanSlug && row.price > 0
+          );
+          setSelectedPlan(firstUpgrade ?? null);
+          setRequestedProviderCount(
+            firstUpgrade?.service_provider_limit ?? sorted[0]?.service_provider_limit ?? 2
+          );
         }
       } catch (err: unknown) {
         if (!cancelled) {
@@ -78,7 +91,7 @@ export function DashboardUpgradeModal({
     return () => {
       cancelled = true;
     };
-  }, [open]);
+  }, [open, currentPlanSlug]);
 
   const pricing = useMemo(() => {
     if (!selectedPlan) return null;
@@ -94,11 +107,27 @@ export function DashboardUpgradeModal({
     ? null
     : Math.max(0, bookingLimit - usedBookings);
 
+  const displayPlans = useMemo(() => {
+    const upgradePlans = planOptions.filter((plan) => plan.slug !== "free");
+    if (!currentPlan || currentPlan.slug === "free") {
+      return upgradePlans;
+    }
+    if (upgradePlans.some((plan) => plan.slug === currentPlan.slug)) {
+      return upgradePlans;
+    }
+    const currentWithContent: plans_with_content = {
+      ...currentPlan,
+      content: null,
+    };
+    return [currentWithContent, ...upgradePlans];
+  }, [planOptions, currentPlan]);
+
   const handleClose = () => {
     setStep(1);
-    const first = planOptions[0] ?? null;
-    setSelectedPlan(first);
-    setRequestedProviderCount(first?.service_provider_limit ?? 2);
+    const firstUpgrade =
+      planOptions.find((row) => row.slug !== currentPlanSlug && row.price > 0) ?? null;
+    setSelectedPlan(firstUpgrade);
+    setRequestedProviderCount(firstUpgrade?.service_provider_limit ?? 2);
     setPaymentMethod("Razorpay");
     setIsProcessing(false);
     onClose();
@@ -122,7 +151,8 @@ export function DashboardUpgradeModal({
 
   return (
     <div
-      className="fixed inset-0 z-[120] bg-slate-950/60 p-3 backdrop-blur-md"
+      className="fixed inset-0 bg-slate-950/60 p-3 backdrop-blur-md"
+      style={{ zIndex: Z_MODAL }}
       role="dialog"
       aria-modal="true"
       aria-labelledby="dashboard-upgrade-title"
@@ -182,17 +212,23 @@ export function DashboardUpgradeModal({
             {step === 1 && (
               <>
                 <div className="mb-5 rounded-3xl border border-emerald-200 bg-emerald-50 p-4">
-                  <h3 className="font-black text-emerald-900">Your Free Plan is active</h3>
+                  <h3 className="font-black text-emerald-900">
+                    {subscriptionLoading
+                      ? "Loading your plan…"
+                      : `Your ${currentPlan?.name ?? "current"} plan is active`}
+                  </h3>
                   <p className="text-sm font-semibold text-emerald-700">
                     {isUnlimitedBookingLimit(bookingLimit) ? (
                       <>
-                        {usedBookings} bookings used this month on your free plan. Upgrade for
-                        automation, payments, analytics, and scaling.
+                        {usedBookings} bookings used this month on your{" "}
+                        {currentPlan?.name ?? "current"} plan. Upgrade for automation, payments,
+                        analytics, and scaling.
                       </>
                     ) : (
                       <>
-                        {usedBookings} of {bookingLimit} free bookings used. {remainingBookings}{" "}
-                        bookings remaining. Upgrade for automation, payments, analytics, and scaling.
+                        {usedBookings} of {bookingLimit} bookings used on your{" "}
+                        {currentPlan?.name ?? "current"} plan. {remainingBookings} bookings
+                        remaining. Upgrade for automation, payments, analytics, and scaling.
                       </>
                     )}
                   </p>
@@ -217,9 +253,12 @@ export function DashboardUpgradeModal({
                 )}
 
                 <div className="grid gap-5 lg:grid-cols-2">
-                  {planOptions.map((plan) => {
+                  {displayPlans.map((plan) => {
                     const content = plan.content;
-                    const highlighted = content?.is_highlighted ?? false;
+                    const isCurrentPlan =
+                      currentPlanSlug != null && plan.slug === currentPlanSlug;
+                    const highlighted =
+                      !isCurrentPlan && (content?.is_highlighted ?? false);
                     const features = resolvePlanFeatures(plan);
                     const seatPrice = plan.extra_service_provider_seat_price;
 
@@ -227,11 +266,18 @@ export function DashboardUpgradeModal({
                       <div
                         key={plan.id}
                         className={`relative rounded-[28px] bg-white p-6 ${
-                          highlighted
-                            ? "overflow-hidden border-2 border-indigo-500 shadow-xl shadow-indigo-100"
-                            : "border border-slate-200 shadow-sm"
+                          isCurrentPlan
+                            ? "overflow-hidden border-2 border-emerald-500 bg-emerald-50/40 shadow-md shadow-emerald-100 ring-2 ring-emerald-500/20"
+                            : highlighted
+                              ? "overflow-hidden border-2 border-indigo-500 shadow-xl shadow-indigo-100"
+                              : "border border-slate-200 shadow-sm"
                         }`}
                       >
+                        {isCurrentPlan && (
+                          <div className="absolute right-0 top-0 rounded-bl-3xl bg-emerald-600 px-5 py-2 text-xs font-black text-white">
+                            Current plan
+                          </div>
+                        )}
                         {highlighted && content?.badge_label && (
                           <div className="absolute right-0 top-0 rounded-bl-3xl bg-indigo-600 px-5 py-2 text-xs font-black text-white">
                             {content.badge_label}
@@ -262,11 +308,14 @@ export function DashboardUpgradeModal({
 
                         <button
                           type="button"
-                          // onClick={() => handlePlanSelect(plan)}
-                          className={`mt-8 h-12 w-full rounded-2xl font-black transition ${ctaClassNameForVariant(content?.cta_variant)}`}
+                          disabled
+                          className={`mt-8 h-12 w-full rounded-2xl font-black transition ${
+                            isCurrentPlan
+                              ? "cursor-default bg-emerald-600 text-white"
+                              : `${ctaClassNameForVariant(content?.cta_variant)} opacity-90`
+                          }`}
                         >
-                          {/* {content?.cta_label ?? `Continue with ${plan.name}`} */}
-                          Coming Soon
+                          {isCurrentPlan ? "Selected" : "Coming Soon"}
                         </button>
                       </div>
                     );

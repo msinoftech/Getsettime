@@ -24,7 +24,7 @@ export interface WhatsAppTemplateParameter {
   export interface WhatsAppTemplateComponent {
     type: "header" | "body" | "button";
     parameters?: WhatsAppTemplateParameter[];
-    sub_type?: "url" | "quick_reply";
+    sub_type?: "url" | "quick_reply" | "copy_code";
     index?: number | string;
   }
   

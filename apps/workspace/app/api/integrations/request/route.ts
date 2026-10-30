@@ -2,22 +2,10 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import nodemailer from 'nodemailer';
 import { getAuthFromRequest } from '@/lib/auth-helpers';
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
-
-function superadminNotifyEmail(): string | null {
-  const v =
-    (process.env.SUPERADMIN_NOTIFICATION_EMAIL || '').trim() ||
-    (process.env.SEND_TO || '').trim() ||
-    (process.env.SMTP_USER || '').trim();
-  return v || null;
-}
+import {
+  escapeHtmlForEmail,
+  resolveSuperadminNotifyEmail,
+} from '@/lib/superadmin-notify-email';
 
 export async function POST(req: Request) {
   try {
@@ -95,7 +83,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: insertErr.message || 'Failed to save request' }, { status: 500 });
     }
 
-    const to = superadminNotifyEmail();
+    const to = resolveSuperadminNotifyEmail();
     let emailSent = false;
     if (to && process.env.SMTP_HOST && process.env.SMTP_USER) {
       try {
@@ -111,8 +99,8 @@ export async function POST(req: Request) {
             },
           });
           const from = process.env.SMTP_FROM || process.env.SMTP_USER;
-          const subSafe = escapeHtml(subjectRaw);
-          const msgSafe = escapeHtml(messageRaw).replace(/\n/g, '<br>');
+          const subSafe = escapeHtmlForEmail(subjectRaw);
+          const msgSafe = escapeHtmlForEmail(messageRaw).replace(/\n/g, '<br>');
 
           await transporter.sendMail({
             from: `"GetSetTime" <${from}>`,
@@ -121,9 +109,9 @@ export async function POST(req: Request) {
             subject: `[Integration request] ${subjectRaw}`,
             html: `
               <h2>New integration request</h2>
-              <p><b>Workspace:</b> ${escapeHtml(String(workspaceRow.name))} (id: ${auth.workspaceId})</p>
-              <p><b>Workspace admin:</b> ${escapeHtml(workspaceAdminEmail)}</p>
-              <p><b>User id:</b> ${escapeHtml(auth.userId)}</p>
+              <p><b>Workspace:</b> ${escapeHtmlForEmail(String(workspaceRow.name))} (id: ${auth.workspaceId})</p>
+              <p><b>Workspace admin:</b> ${escapeHtmlForEmail(workspaceAdminEmail)}</p>
+              <p><b>User id:</b> ${escapeHtmlForEmail(auth.userId)}</p>
               <p><b>Subject:</b> ${subSafe}</p>
               <p><b>Message:</b></p>
               <p>${msgSafe}</p>

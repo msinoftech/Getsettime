@@ -3,7 +3,10 @@
 import Link from "next/link";
 import { useAuth } from "@/src/providers/AuthProvider";
 import { useSubscription } from "@/src/hooks/useSubscription";
-import { formatBookingLimitLabel, isUnlimitedBookingLimit } from "@app/db/subscription";
+import {
+  formatBookingLimitFeature,
+  isUnlimitedBookingLimit,
+} from "@app/db/subscription";
 
 export function BookingUsageBanner() {
   const { user } = useAuth();
@@ -13,13 +16,14 @@ export function BookingUsageBanner() {
   if (data.thresholds.booking_limit_reached) return null;
   if (isUnlimitedBookingLimit(data.usage.booking_limit)) return null;
 
-  const { bookings_this_month, booking_limit } = data.usage;
+  const { bookings_used, booking_limit, booking_limit_period } = data.usage;
+  const limitLabel = formatBookingLimitFeature(booking_limit, booking_limit_period);
 
   return (
     <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
       <p>
-        You&apos;ve used <strong>{bookings_this_month}</strong> of{" "}
-        <strong>{formatBookingLimitLabel(booking_limit)}</strong> monthly bookings.
+        You&apos;ve used <strong>{bookings_used}</strong> of{" "}
+        <strong>{limitLabel}</strong>.
       </p>
       <p className="mt-1">
         Upgrade to continue accepting appointments without interruption.{" "}

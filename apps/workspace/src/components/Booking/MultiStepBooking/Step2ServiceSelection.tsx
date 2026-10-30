@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useCallback, useEffect, useRef } from 'react';
 import type { EventType } from '@/src/types/bookingForm';
 import {
   BOOKING_BUTTON_LABELS,
@@ -28,11 +28,32 @@ export function Step2ServiceSelection({
   onBack,
   onContinue,
 }: Step2ServiceSelectionProps) {
+  const continueSectionRef = useRef<HTMLDivElement | null>(null);
+
+  const handleSelectType = useCallback(
+    (eventType: EventType) => {
+      onSelectType(eventType);
+    },
+    [onSelectType]
+  );
+
+  // Scroll after the parent re-render settles so a catalog refetch does not
+  // unmount this step before the continue button is on screen.
+  useEffect(() => {
+    if (!selectedType) return;
+    requestAnimationFrame(() => {
+      continueSectionRef.current?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'start',
+      });
+    });
+  }, [selectedType?.id]);
+
   return (
     <div className="space-y-4 sm:space-y-6 animate-fadeIn">
       <div className="text-center lg:text-left">
-        <h2 className="text-2xl font-bold text-gray-900">{BOOKING_STEP_TITLES.step2}</h2>
-        <p className="text-xs sm:text-sm text-gray-500">{BOOKING_STEP_TITLES.step2Subtitle}</p>
+        <h2 className="text-lg font-bold tracking-tight text-slate-900 sm:text-xl md:text-2xl">{BOOKING_STEP_TITLES.step2}</h2>
+        <p className="mt-0.5 text-sm text-slate-500">{BOOKING_STEP_TITLES.step2Subtitle}</p>
       </div>
 
       {loadingEventTypes ? (
@@ -60,11 +81,11 @@ export function Step2ServiceSelection({
             return (
               <button
                 key={t.id}
-                onClick={() => onSelectType(t)}
-                className={`group relative w-full text-left p-4 sm:p-5 lg:p-6 rounded-xl sm:rounded-2xl border-2 flex items-center gap-3 sm:gap-4 lg:gap-5 transition-all duration-300 overflow-hidden ${
+                onClick={() => handleSelectType(t)}
+                className={`group relative w-full text-left px-4 py-4 rounded-xl border flex items-center justify-between gap-3 transition-all duration-300 overflow-hidden ${
                   isSelected
-                    ? 'border-indigo-400 bg-gradient-to-br from-white to-indigo-50/30 shadow-2xl scale-[1.02]'
-                    : 'border-gray-200 hover:border-indigo-400 bg-white hover:bg-gradient-to-br hover:from-white hover:to-indigo-50/30 hover:shadow-2xl hover:scale-[1.02]'
+                    ? 'border-indigo-400 bg-gradient-to-br from-white to-indigo-50/30 shadow-lg scale-[1.02]'
+                    : 'border-gray-200 hover:border-indigo-400 bg-white hover:bg-gradient-to-br hover:from-white hover:to-indigo-50/30 hover:shadow-xl hover:scale-[1.02]'
                 }`}
                 style={{ animationDelay: `${index * 100}ms` }}
               >
@@ -73,39 +94,44 @@ export function Step2ServiceSelection({
                     isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
                   }`}
                 />
-                <div
-                  className={`relative bg-indigo-600 z-10 w-12 h-12 sm:w-14 sm:h-14 lg:w-16 lg:h-16 rounded-xl sm:rounded-2xl flex items-center justify-center text-white flex-shrink-0 transition-all duration-300 shadow-lg ${
-                    isSelected ? 'scale-110 rotate-3' : 'group-hover:scale-110 group-hover:rotate-3'
-                  }`}
-                >
-                  {getServiceIcon(duration)}
-                </div>
-                <div className="flex-1 relative z-10 min-w-0">
+                <div className="flex items-center gap-3">
                   <div
-                    className={`font-bold text-base sm:text-lg lg:text-xl mb-1 sm:mb-2 transition-colors truncate ${
-                      isSelected ? 'text-indigo-700' : 'text-gray-900 group-hover:text-indigo-700'
+                    className={`relative bg-indigo-600 z-10 w-10 h-10 sm:w-12 sm:h-12 xl:w-14 xl:h-14 rounded-xl flex items-center justify-center text-white flex-shrink-0 transition-all duration-300 shadow-lg ${
+                      isSelected ? 'scale-102 rotate-2 xl:scale-110 xl:rotate-3' : 'group-hover:scale-110 group-hover:rotate-3'
                     }`}
                   >
-                    {t.title}
+                    {getServiceIcon(duration)}
                   </div>
-                  <div className="text-xs sm:text-sm text-gray-600 line-clamp-2">{getServiceSubtitle(duration)}</div>
+                  <div className="flex-1 relative z-10 min-w-0">
+                    <div
+                      className={`font-semibold text-md xl:text-lg transition-colors truncate ${
+                        isSelected ? 'text-indigo-600' : 'text-gray-900 group-hover:text-indigo-700'
+                      }`}
+                    >
+                      {t.title}
+                    </div>
+                    <div className="text-xs xl:text-sm text-gray-600">{getServiceSubtitle(duration)}</div>
+                  </div>
                 </div>
-                <div
-                  className={`relative z-10 flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 lg:px-4 py-1.5 sm:py-2 rounded-lg sm:rounded-xl transition-colors flex-shrink-0 ${
-                    isSelected ? 'bg-blue-100' : 'bg-blue-50 group-hover:bg-blue-100'
-                  }`}
-                >
-                  <svg className="w-3.5 h-3.5 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" style={{ color: DEFAULT_ACCENT_COLOR }}>
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                  <span className="text-xs sm:text-sm font-bold whitespace-nowrap" style={{ color: DEFAULT_ACCENT_COLOR }}>
-                    {duration} min
-                  </span>
-                </div>
-                <div className={`relative z-10 transition-opacity hidden sm:block ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
-                  <svg className="w-5 h-5 sm:w-6 sm:h-6 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                  </svg>
+
+                <div className="flex items-center gap-2">
+                  <div
+                    className={`relative z-10 flex items-center gap-1.5 sm:gap-2 px-3 py-1 rounded-lg transition-colors flex-shrink-0 ${
+                      isSelected ? 'bg-indigo-100' : 'bg-indigo-50 group-hover:bg-indigo-100'
+                    }`}
+                  >
+                    <svg className="w-3.5 h-3.5 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" style={{ color: DEFAULT_ACCENT_COLOR }}>
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <span className="text-xs font-semibold whitespace-nowrap" style={{ color: DEFAULT_ACCENT_COLOR }}>
+                      {duration} min
+                    </span>
+                  </div>
+                  <div className={`relative z-10 transition-opacity hidden xl:block ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
+                    <svg className="w-5 h-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                    </svg>
+                  </div>
                 </div>
               </button>
             );
@@ -113,12 +139,15 @@ export function Step2ServiceSelection({
         </div>
       )}
 
-      <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 mt-6 sm:mt-8 lg:mt-10 pt-6 sm:pt-8 border-t border-gray-200">
+      <div
+        ref={continueSectionRef}
+        className="flex flex-col sm:flex-row justify-between gap-3 sm:gap-4 pt-4 scroll-mt-6"
+      >
         {onBack && (
           <button
             type="button"
             onClick={onBack}
-            className="w-full sm:w-auto px-6 sm:px-8 py-3 sm:py-3.5 rounded-xl border-2 border-gray-200 hover:border-gray-300 hover:bg-gray-50 transition-all font-semibold text-gray-700 hover:shadow-md"
+            className="w-full sm:w-auto px-4 py-2 rounded-lg border border-gray-200 hover:border-gray-300 hover:bg-gray-50 transition-all font-semibold text-gray-700 hover:shadow-md"
           >
             {BOOKING_BUTTON_LABELS.back}
           </button>
@@ -127,7 +156,7 @@ export function Step2ServiceSelection({
           type="button"
           disabled={!selectedType || loadingEventTypes}
           onClick={onContinue}
-          className={`w-full sm:w-auto sm:ml-auto px-6 sm:px-10 py-3 sm:py-3.5 rounded-xl text-white transition-all font-semibold ${
+          className={`w-full sm:w-auto sm:ml-auto px-4 py-2 text-sm font-semibold text-white rounded-lg transition-all font-semibold ${
             !selectedType || loadingEventTypes
               ? 'bg-gray-300 cursor-not-allowed'
               : 'bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-700 hover:to-indigo-800 shadow-xl hover:shadow-2xl hover:scale-105'

@@ -20,7 +20,7 @@ import {
   sole_workspace_department_display_name,
 } from '@/lib/booking_service_provider_phone';
 import { post_booking_whatsapp_notification } from '@/lib/post_booking_whatsapp_notification';
-import { run_post_booking_processing } from '@/lib/post_booking_processing';
+import { run_post_booking_processing, type post_booking_row } from '@/lib/post_booking_processing';
 import {
   is_whatsapp_admin_enabled,
   is_whatsapp_user_enabled,
@@ -32,6 +32,7 @@ import {
 } from '@/src/utils/google_meet';
 import { list_bookable_meeting_option_keys } from '@/src/utils/meeting_options';
 import { normalizeInviteePhoneForStorage } from '@/src/utils/phone';
+import { buildBookingsSearchOrExpression } from '@/src/utils/bookingListSearch';
 import {
   resolveMeetingOptionsForServiceProvider,
   resolveNotificationsForServiceProvider,
@@ -45,6 +46,18 @@ import {
   fetchActiveDateExceptionsForSlot,
   validateSlotDateExceptions,
 } from '@/src/utils/dateExceptionApiValidation';
+import {
+  insert_validated_booking,
+  load_event_type_for_booking,
+  uses_offered_schedule_slots,
+} from '@/lib/complete_booking_create';
+import { should_block_booking_on_external_calendar } from '@/src/features/booking-flow';
+import { assert_no_duplicate_invitee_booking_on_date } from '@/lib/invitee_duplicate_booking';
+import {
+  cancel_booking_series,
+  load_booking_series,
+  modify_series_start_time,
+} from '@/lib/booking_series_service';
 
 type DayName = "Sun" | "Mon" | "Tue" | "Wed" | "Thu" | "Fri" | "Sat";
 
@@ -164,9 +177,12 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // Apply search filter if provided
+    // Apply search filter if provided (name, email, provider, phone)
     if (search.trim()) {
-      query = query.ilike('invitee_name', `%${search.trim()}%`);
+      const searchOr = buildBookingsSearchOrExpression(search);
+      if (searchOr) {
+        query = query.or(searchOr);
+      }
     }
 
     // Apply date filter if provided (fetch bookings for a specific date)
@@ -413,6 +429,7 @@ export async function POST(req: NextRequest) {
       location,
       payment_id,
       metadata,
+      book_series,
     } = body;
 
     if (!invitee_name || !invitee_name.trim()) {
@@ -435,6 +452,22 @@ export async function POST(req: NextRequest) {
     if (!workspaceId) {
       return NextResponse.json({ error: 'Workspace ID not found' }, { status: 400 });
     }
+
+    const loadedEventType = await load_event_type_for_booking(
+      supabase,
+      workspaceId,
+      event_type_id
+    );
+    if (event_type_id && !loadedEventType) {
+      return NextResponse.json({ error: 'Event type not found' }, { status: 404 });
+    }
+    if (loadedEventType?.status === 'draft') {
+      return NextResponse.json(
+        { error: 'Event type is not available for booking' },
+        { status: 400 }
+      );
+    }
+    const skipTimesheet = uses_offered_schedule_slots(loadedEventType);
 
     const serviceRoleClient = getServiceRoleClient();
     if (serviceRoleClient) {
@@ -551,6 +584,7 @@ export async function POST(req: NextRequest) {
       timesheetEnd
     );
 
+    if (!skipTimesheet) {
     if (exceptionValidation.blocked && exceptionValidation.error?.includes('closed')) {
       return NextResponse.json({ error: exceptionValidation.error }, { status: 400 });
     }
@@ -603,56 +637,28 @@ export async function POST(req: NextRequest) {
         error: exceptionValidation.error || 'This time slot is blocked by an availability exception.',
       }, { status: 400 });
     }
-
-    // Check Google Calendar for busy slots (if integrated)
-    try {
-      const { isSlotBusyInCalendar } = await import('@/lib/google-calendar-service');
-      const isBusy = await isSlotBusyInCalendar(
-        Number(workspaceId),
-        start_at,
-        resolvedEndAt,
-        service_provider_id || undefined
-      );
-      if (isBusy) {
-        return NextResponse.json({
-          error: 'This time slot is already booked or blocked in calendar. Please select another time.',
-        }, { status: 400 });
-      }
-    } catch (calErr) {
-      console.warn('Google Calendar conflict check failed (non-blocking):', calErr);
     }
 
-    // Check for existing booking conflicts for the same service provider
-    // A booking conflicts if: new_start < existing_end AND new_end > existing_start
-    let conflictQuery = supabase
-      .from('bookings')
-      .select('start_at, end_at')
-      .eq('workspace_id', workspaceId)
-      .neq('status', 'cancelled')
-      .gte('start_at', new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate()).toISOString())
-      .lte('start_at', new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate() + 1).toISOString());
-    
-    // Only check conflicts for the same service provider
-    if (service_provider_id) {
-      conflictQuery = conflictQuery.eq('service_provider_id', service_provider_id);
-    }
-    
-    const { data: existingBookings } = await conflictQuery;
-
-    if (existingBookings && existingBookings.length > 0) {
-      const hasConflict = existingBookings.some((booking) => {
-        const bookingStart = new Date(booking.start_at);
-        const bookingEnd = booking.end_at ? new Date(booking.end_at) : new Date(bookingStart);
-        return startDate < bookingEnd && endDate > bookingStart;
-      });
-
-      if (hasConflict) {
-        return NextResponse.json({ 
-          error: 'This time slot is already booked. Please select another time.' 
-        }, { status: 400 });
+    if (should_block_booking_on_external_calendar(loadedEventType)) {
+      try {
+        const { isSlotBusyInCalendar } = await import('@/lib/google-calendar-service');
+        const isBusy = await isSlotBusyInCalendar(
+          Number(workspaceId),
+          start_at,
+          resolvedEndAt,
+          service_provider_id || undefined
+        );
+        if (isBusy) {
+          return NextResponse.json({
+            error: 'This time slot is already booked or blocked in calendar. Please select another time.',
+          }, { status: 400 });
+        }
+      } catch (calErr) {
+        console.warn('Google Calendar conflict check failed (non-blocking):', calErr);
       }
     }
 
+    // Capacity is enforced transactionally on insert (group slots allowed).
     const contactId = await findOrCreateContact(
       supabase,
       workspaceId,
@@ -663,29 +669,8 @@ export async function POST(req: NextRequest) {
 
     const publicCode = crypto.randomUUID();
 
-    let eventTypeLocationTypeForBooking: string | null = null;
-    if (event_type_id) {
-      const { data: etloc } = await supabase
-        .from('event_types')
-        .select('location_type, status')
-        .eq('id', event_type_id)
-        .eq('workspace_id', workspaceId)
-        .maybeSingle();
-
-      if (!etloc) {
-        return NextResponse.json({ error: 'Event type not found' }, { status: 404 });
-      }
-
-      if (etloc.status === 'draft') {
-        return NextResponse.json(
-          { error: 'Event type is not available for booking' },
-          { status: 400 }
-        );
-      }
-
-      eventTypeLocationTypeForBooking =
-        typeof etloc.location_type === 'string' ? etloc.location_type : null;
-    }
+    let eventTypeLocationTypeForBooking: string | null =
+      typeof loadedEventType?.location_type === 'string' ? loadedEventType.location_type : null;
     const bookableMeetingKeys = list_bookable_meeting_option_keys(
       eventTypeLocationTypeForBooking,
       resolvedMeetingOptions
@@ -718,9 +703,40 @@ export async function POST(req: NextRequest) {
         bookingServiceProviderId
       );
 
-    let { data, error } = await supabase
-      .from('bookings')
-      .insert({
+    const duplicateInviteeCheck = await assert_no_duplicate_invitee_booking_on_date(
+      supabase,
+      {
+        workspace_id: workspaceId,
+        start_at,
+        timezone:
+          tz ||
+          tzFields.provider_timezone ||
+          tzFields.customer_timezone ||
+          'UTC',
+        event_type_id,
+        invitee: {
+          invitee_email: invitee_email?.trim() || null,
+          invitee_phone: invitee_phone_e164,
+        },
+      }
+    );
+    if (!duplicateInviteeCheck.ok) {
+      return NextResponse.json(
+        {
+          error: duplicateInviteeCheck.message,
+          duplicate_booking: duplicateInviteeCheck.duplicate_booking,
+        },
+        { status: 400 }
+      );
+    }
+
+    const created = await insert_validated_booking({
+      supabase,
+      event_type: loadedEventType,
+      book_series: typeof book_series === 'boolean' ? book_series : undefined,
+      timezone: tz || tzFields.provider_timezone || tzFields.customer_timezone || 'UTC',
+      duration_minutes: effectiveDurationMinutes,
+      row: {
         workspace_id: workspaceId,
         event_type_id: event_type_id || null,
         service_provider_id: service_provider_id || null,
@@ -731,7 +747,7 @@ export async function POST(req: NextRequest) {
         invitee_email: invitee_email?.trim() || null,
         invitee_phone: invitee_phone_e164,
         contact_id: contactId ?? null,
-        start_at: start_at,
+        start_at,
         end_at: resolvedEndAt || null,
         customer_timezone: tzFields.customer_timezone,
         provider_timezone: tzFields.provider_timezone,
@@ -740,14 +756,14 @@ export async function POST(req: NextRequest) {
         payment_id: payment_id || null,
         metadata: metadata || null,
         public_code: publicCode,
-      })
-      .select()
-      .single();
+      },
+    });
 
-    if (error) {
-      console.error('Error creating booking:', error);
-      return NextResponse.json({ error: error.message }, { status: 500 });
+    if (!created.ok) {
+      console.error('Error creating booking:', created.message);
+      return NextResponse.json({ error: created.message }, { status: 400 });
     }
+    const data = created.data as post_booking_row;
 
     const origin = new URL(req.url).origin;
     const bookingMetadata =
@@ -757,6 +773,16 @@ export async function POST(req: NextRequest) {
 
     after(async () => {
       try {
+        const serviceRoleClient = getServiceRoleClient();
+        if (serviceRoleClient) {
+          const { notifyBookingLimitReachedIfNeeded } = await import(
+            '@/lib/send-booking-limit-reached-notifications'
+          );
+          await notifyBookingLimitReachedIfNeeded(
+            serviceRoleClient,
+            Number(workspaceId)
+          );
+        }
         await run_post_booking_processing({
           origin,
           booking: data,
@@ -860,6 +886,7 @@ export async function PATCH(req: NextRequest) {
       is_reschedule_viewed,
       customer_timezone,
       provider_timezone,
+      series_scope,
     } = body;
 
     if (!id) {
@@ -875,7 +902,7 @@ export async function PATCH(req: NextRequest) {
     const { data: existingRow, error: existingError } = await supabase
       .from('bookings')
       .select(
-        'start_at, end_at, status, invitee_name, invitee_email, invitee_phone, event_type_id, service_provider_id, department_id, metadata, public_code, contact_id, customer_timezone, provider_timezone'
+        'start_at, end_at, status, invitee_name, invitee_email, invitee_phone, event_type_id, service_provider_id, department_id, metadata, public_code, contact_id, customer_timezone, provider_timezone, series_id'
       )
       .eq('id', id)
       .eq('workspace_id', workspaceId)
@@ -892,6 +919,29 @@ export async function PATCH(req: NextRequest) {
     const nextStatusRaw = status !== undefined ? status : existingRow.status;
     const nextIsRescheduleStatus =
       String(nextStatusRaw ?? '').toLowerCase() === 'reschedule';
+
+    const apply_to_series =
+      series_scope === 'series' &&
+      typeof existingRow.series_id === 'string' &&
+      existingRow.series_id.length > 0;
+
+    if (apply_to_series && String(nextStatusRaw ?? '').toLowerCase() === 'cancelled') {
+      const cancelled = await cancel_booking_series(
+        supabase,
+        existingRow.series_id as string,
+        workspaceId
+      );
+      if (!cancelled.ok) {
+        return NextResponse.json({ error: cancelled.message }, { status: 400 });
+      }
+      const { data: cancelledRow } = await supabase
+        .from('bookings')
+        .select()
+        .eq('id', id)
+        .eq('workspace_id', workspaceId)
+        .maybeSingle();
+      return NextResponse.json({ data: cancelledRow ?? existingRow });
+    }
 
     const updateData: Record<string, unknown> = {};
     if (event_type_id !== undefined) updateData.event_type_id = event_type_id || null;
@@ -1204,6 +1254,79 @@ export async function PATCH(req: NextRequest) {
         }
       } catch (e) {
         console.error('resolveContactForInviteeUpdate:', e);
+      }
+    }
+
+    if (timeChanged && typeof start_at === 'string' && start_at) {
+      const duplicateInviteeCheck = await assert_no_duplicate_invitee_booking_on_date(
+        supabase,
+        {
+          workspace_id: workspaceId,
+          start_at,
+          timezone:
+            (updateData.provider_timezone as string | null | undefined) ??
+            (updateData.customer_timezone as string | null | undefined) ??
+            (typeof existingRow.provider_timezone === 'string'
+              ? existingRow.provider_timezone.trim() || null
+              : null) ??
+            (typeof existingRow.customer_timezone === 'string'
+              ? existingRow.customer_timezone.trim() || null
+              : null) ??
+            'UTC',
+          event_type_id:
+            event_type_id !== undefined ? event_type_id : existingRow.event_type_id,
+          invitee: {
+            invitee_email: next_invitee_email,
+            invitee_phone: next_invitee_phone,
+            contact_id:
+              typeof existingRow.contact_id === 'number'
+                ? existingRow.contact_id
+                : existingRow.contact_id != null
+                  ? Number(existingRow.contact_id)
+                  : null,
+          },
+          exclude_booking_id: id,
+        }
+      );
+      if (!duplicateInviteeCheck.ok) {
+        return NextResponse.json(
+          {
+            error: duplicateInviteeCheck.message,
+            duplicate_booking: duplicateInviteeCheck.duplicate_booking,
+          },
+          { status: 400 }
+        );
+      }
+    }
+
+    if (apply_to_series && timeChanged && typeof start_at === 'string' && start_at) {
+      const series = await load_booking_series(
+        supabase,
+        existingRow.series_id as string,
+        workspaceId
+      );
+      if (!series) {
+        return NextResponse.json({ error: 'Booking series not found' }, { status: 404 });
+      }
+      const duration_minutes = await resolveEffectiveDurationForBookingRequest(
+        supabase,
+        workspaceId,
+        (event_type_id !== undefined ? event_type_id : existingRow.event_type_id) as string | null,
+        (metadata !== undefined ? metadata : existingRow.metadata) as Record<string, unknown> | null
+      );
+      const modified = await modify_series_start_time({
+        supabase,
+        series,
+        next_start_at: start_at,
+        duration_minutes,
+        capacity: 1,
+      });
+      if (!modified.ok) {
+        return NextResponse.json({ error: modified.message }, { status: 400 });
+      }
+      if (String(existingRow.start_at) <= new Date().toISOString()) {
+        delete updateData.start_at;
+        delete updateData.end_at;
       }
     }
 

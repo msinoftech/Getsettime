@@ -1,5 +1,6 @@
 'use client';
 
+import { getWorkspaceSession } from '@/src/lib/auth_session';
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 import { filterBookableEventTypes } from '@/src/utils/bookingFormUtils';
@@ -13,22 +14,9 @@ import type {
 import type { service_provider_display_source } from '@/src/utils/service_provider_display';
 import { userActsAsServiceProviderFromMetadata } from '@/lib/service_provider_role';
 import { normalizeDepartmentIdsFromUserMetadata } from '@/lib/sync_department_service_providers_from_team';
+import { useWorkspaceUsers, type WorkspaceUser } from '@/src/providers/WorkspaceUsersProvider';
 
-interface TeamMember {
-  id: string;
-  email: string;
-  name?: string;
-  role?: string;
-  additional_roles?: string[];
-  phone?: string | null;
-  avatar_url?: string | null;
-  raw_user_meta_data?: { full_name?: string; name?: string; phone?: string };
-  is_workspace_owner?: boolean;
-  deactivated?: boolean;
-  departments?: unknown;
-}
-
-function memberActsAsServiceProvider(m: TeamMember): boolean {
+function memberActsAsServiceProvider(m: WorkspaceUser): boolean {
   return userActsAsServiceProviderFromMetadata({
     role: m.role ?? null,
     is_workspace_owner: m.is_workspace_owner,
@@ -44,7 +32,7 @@ export function useEventTypes() {
     let cancelled = false;
 
     const run = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
+      const { session } = await getWorkspaceSession();
       if (!session?.access_token) {
         setLoading(false);
         return;
@@ -82,11 +70,27 @@ export function useDepartments() {
       try {
         const { data: result, error } = await supabase
           .from('departments')
-          .select('id, name')
+          .select('id, name, meta_data')
           .order('name');
         if (cancelled) return;
         if (!error && result) {
-          setData(result.map((d) => ({ id: String(d.id), name: d.name })));
+          setData(
+            result.map((d) => {
+              const raw_meta = d.meta_data;
+              const color =
+                raw_meta &&
+                typeof raw_meta === 'object' &&
+                !Array.isArray(raw_meta) &&
+                typeof (raw_meta as { color?: unknown }).color === 'string'
+                  ? (raw_meta as { color: string }).color
+                  : null;
+              return {
+                id: String(d.id),
+                name: d.name,
+                meta_data: { color },
+              };
+            })
+          );
         }
       } catch {
         if (!cancelled) setData([]);
@@ -110,7 +114,7 @@ export function useServices() {
     let cancelled = false;
 
     const run = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
+      const { session } = await getWorkspaceSession();
       if (!session?.access_token) {
         setLoading(false);
         return;
@@ -150,9 +154,7 @@ export function useUserServices() {
   const [loading, setLoading] = useState(true);
 
   const fetchRows = useCallback(async () => {
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
+    const { session } = await getWorkspaceSession();
     if (!session?.access_token) {
       setRows([]);
       setLoading(false);
@@ -209,9 +211,7 @@ export function useUserDepartments() {
   const [loading, setLoading] = useState(true);
 
   const fetchRows = useCallback(async () => {
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
+    const { session } = await getWorkspaceSession();
     if (!session?.access_token) {
       setRows([]);
       setLoading(false);
@@ -256,120 +256,66 @@ export function useUserDepartments() {
 }
 
 function team_member_to_owner_source(
-  m: TeamMember
+  m: WorkspaceUser
 ): service_provider_display_source {
-  const phoneFromMeta = m.raw_user_meta_data?.phone;
   const phone =
     typeof m.phone === 'string' && m.phone.trim() !== ''
       ? m.phone.trim()
-      : typeof phoneFromMeta === 'string' && phoneFromMeta.trim() !== ''
-        ? phoneFromMeta.trim()
-        : undefined;
+      : undefined;
   return {
     email: m.email ?? '',
     raw_user_meta_data: {
-      full_name: m.raw_user_meta_data?.full_name,
-      name: m.name ?? m.raw_user_meta_data?.name,
+      name: m.name,
       phone,
     },
   };
 }
 
-function team_member_to_display(m: TeamMember): TeamMemberDisplay {
+function team_member_to_display(m: WorkspaceUser): TeamMemberDisplay {
   return {
     id: m.id,
     email: m.email ?? '',
-    name:
-      m.raw_user_meta_data?.full_name ||
-      m.name ||
-      m.raw_user_meta_data?.name ||
-      undefined,
+    name: m.name || undefined,
   };
 }
 
 export function useServiceProviders() {
-  const [data, setData] = useState<ServiceProvider[]>([]);
-  const [teamMembers, setTeamMembers] = useState<TeamMemberDisplay[]>([]);
-  const [workspaceOwner, setWorkspaceOwner] =
-    useState<service_provider_display_source | null>(null);
-  const [workspaceOwnerUserId, setWorkspaceOwnerUserId] = useState<string | null>(
-    null
-  );
-  const [loading, setLoading] = useState(true);
+  const { members, loading } = useWorkspaceUsers();
 
-  useEffect(() => {
-    let cancelled = false;
+  return useMemo(() => {
+    const ownerMember = members.find((m) => m.is_workspace_owner === true);
+    const teamMembers = members.map(team_member_to_display);
+    const data: ServiceProvider[] = members
+      .filter(memberActsAsServiceProvider)
+      .map((m) => {
+        const phone =
+          typeof m.phone === 'string' && m.phone.trim() !== ''
+            ? m.phone.trim()
+            : undefined;
+        const departments = normalizeDepartmentIdsFromUserMetadata(m.departments);
+        return {
+          id: m.id,
+          email: m.email ?? '',
+          departments,
+          deactivated: Boolean(m.deactivated),
+          is_workspace_owner: m.is_workspace_owner === true,
+          avatar_url:
+            typeof m.avatar_url === 'string' && m.avatar_url.trim() !== ''
+              ? m.avatar_url.trim()
+              : null,
+          raw_user_meta_data: {
+            name: m.name,
+            phone,
+          },
+        };
+      });
 
-    const run = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session?.access_token) {
-        setLoading(false);
-        return;
-      }
-
-      try {
-        const res = await fetch('/api/team-members', {
-          headers: { Authorization: `Bearer ${session.access_token}` },
-        });
-        if (cancelled) return;
-        const json = res.ok ? await res.json() : null;
-        const members = (json?.teamMembers ?? []) as TeamMember[];
-        const ownerMember = members.find((m) => m.is_workspace_owner === true);
-        if (!cancelled) {
-          setWorkspaceOwner(
-            ownerMember ? team_member_to_owner_source(ownerMember) : null
-          );
-          setWorkspaceOwnerUserId(ownerMember?.id ?? null);
-        }
-        if (!cancelled) {
-          setTeamMembers(members.map(team_member_to_display));
-        }
-        const providers: ServiceProvider[] = members
-          .filter(memberActsAsServiceProvider)
-          .map((m) => {
-            const phoneFromMeta = m.raw_user_meta_data?.phone;
-            const phone =
-              typeof m.phone === 'string' && m.phone.trim() !== ''
-                ? m.phone.trim()
-                : typeof phoneFromMeta === 'string' &&
-                    phoneFromMeta.trim() !== ''
-                  ? phoneFromMeta.trim()
-                  : undefined;
-            const departments =
-              normalizeDepartmentIdsFromUserMetadata(m.departments);
-            return {
-              id: m.id,
-              email: m.email ?? '',
-              departments,
-              deactivated: Boolean(m.deactivated),
-              is_workspace_owner: m.is_workspace_owner === true,
-              avatar_url:
-                typeof m.avatar_url === 'string' && m.avatar_url.trim() !== ''
-                  ? m.avatar_url.trim()
-                  : null,
-              raw_user_meta_data: {
-                full_name: m.raw_user_meta_data?.full_name,
-                name: m.name,
-                phone,
-              },
-            };
-          });
-        setData(providers);
-      } catch {
-        if (!cancelled) {
-          setData([]);
-          setTeamMembers([]);
-          setWorkspaceOwner(null);
-          setWorkspaceOwnerUserId(null);
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
+    return {
+      data,
+      teamMembers,
+      workspaceOwner: ownerMember ? team_member_to_owner_source(ownerMember) : null,
+      workspaceOwnerUserId: ownerMember?.id ?? null,
+      loading,
     };
-
-    run();
-    return () => { cancelled = true; };
-  }, []);
-
-  return { data, teamMembers, workspaceOwner, workspaceOwnerUserId, loading };
+  }, [members, loading]);
 }

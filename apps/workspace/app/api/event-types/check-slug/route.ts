@@ -58,32 +58,29 @@ export async function GET(req: NextRequest) {
     const excludeId =
       excludeRaw != null && excludeRaw !== "" ? Number(excludeRaw) : null;
 
-    const { data: rows, error } = await supabase
+    let query = supabase
       .from("event_types")
-      .select("id, slug")
-      .eq("workspace_id", wid);
+      .select("id")
+      .eq("workspace_id", wid)
+      .eq("slug", slug)
+      .limit(1);
+
+    if (excludeId != null && Number.isFinite(excludeId)) {
+      query = query.neq("id", excludeId);
+    }
+
+    const { data: rows, error } = await query;
 
     if (error) {
       console.error("check-slug:", error);
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    const taken = (rows ?? []).some((row) => {
-      if (
-        excludeId != null &&
-        Number.isFinite(excludeId) &&
-        Number(row.id) === excludeId
-      ) {
-        return false;
-      }
-      return typeof row.slug === "string" && row.slug === slug;
-    });
-
-    if (taken) {
+    if ((rows ?? []).length > 0) {
       return NextResponse.json({
         available: false,
         message:
-          "This URL slug is already used by another event type, Please try a different slug.",
+          "This URL slug is already used by another event type in your workspace.",
       });
     }
 

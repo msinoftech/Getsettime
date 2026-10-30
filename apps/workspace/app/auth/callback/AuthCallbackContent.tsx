@@ -1,5 +1,6 @@
 "use client";
 
+import { getWorkspaceSession } from '@/src/lib/auth_session';
 import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
@@ -70,9 +71,7 @@ export default function AuthCallbackContent() {
         if (!cancelled) setError(USER_FRIENDLY_ERROR);
         return false;
       }
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
+      const { session } = await getWorkspaceSession();
       if (!session?.user) {
         assignToAppPath(nextPath.startsWith("/") ? nextPath : "/");
         return true;

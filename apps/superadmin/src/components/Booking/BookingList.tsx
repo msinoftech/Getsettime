@@ -4,6 +4,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import type { Booking } from '@/src/types/booking';
 import { type Workspace, BOOKING_STATUSES, BOOKING_SORT_OPTIONS } from '@app/db';
 import { BookingTableSkeleton } from '@/src/components/Booking/BookingTableSkeleton';
+import { Pagination } from '@app/ui';
 
 interface BookingListProps {
   workspaces: Workspace[];
@@ -403,66 +404,15 @@ const BookingList = ({ workspaces }: BookingListProps) => {
         )}
       </div>
 
-      {!loading && pagination.total > 0 && (
-        <div className="flex justify-between flex-wrap items-center gap-4">
-          <div className="text-sm text-slate-600">
-            Showing {((currentPage - 1) * itemsPerPage) + 1} to {Math.min(currentPage * itemsPerPage, pagination.total)} of {pagination.total} bookings
-          </div>
-          <div className="flex justify-center flex-wrap gap-2">
-            <button
-              onClick={() => handlePageChange(currentPage - 1)}
-              disabled={currentPage === 1 || loading}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors duration-200 ${
-                currentPage === 1 || loading
-                  ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
-                  : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-              }`}
-              aria-label="Previous page"
-            >
-              Previous
-            </button>
-            {Array.from({ length: Math.min(pagination.totalPages, 10) }, (_, index) => {
-              let pageNum: number;
-              if (pagination.totalPages <= 10) {
-                pageNum = index + 1;
-              } else if (currentPage <= 5) {
-                pageNum = index + 1;
-              } else if (currentPage >= pagination.totalPages - 4) {
-                pageNum = pagination.totalPages - 9 + index;
-              } else {
-                pageNum = currentPage - 5 + index;
-              }
-              return (
-                <button
-                  key={pageNum}
-                  onClick={() => handlePageChange(pageNum)}
-                  disabled={loading}
-                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors duration-200 ${
-                    currentPage === pageNum
-                      ? 'bg-indigo-600 text-white'
-                      : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                  }`}
-                  aria-label={`Go to page ${pageNum}`}
-                >
-                  {pageNum}
-                </button>
-              );
-            })}
-            <button
-              onClick={() => handlePageChange(currentPage + 1)}
-              disabled={currentPage === pagination.totalPages || loading}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors duration-200 ${
-                currentPage === pagination.totalPages || loading
-                  ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
-                  : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-              }`}
-              aria-label="Next page"
-            >
-              Next
-            </button>
-          </div>
-        </div>
-      )}
+      <Pagination
+        currentPage={currentPage}
+        totalPages={pagination.totalPages}
+        totalItems={pagination.total}
+        itemsPerPage={itemsPerPage}
+        onPageChange={handlePageChange}
+        loading={loading}
+        itemLabel="bookings"
+      />
     </section>
   );
 };

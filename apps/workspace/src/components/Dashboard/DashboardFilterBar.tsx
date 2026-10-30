@@ -30,7 +30,7 @@ export default function DashboardFilterBar({
               className={`rounded-lg px-5 py-2 text-sm font-semibold transition ${
                 active
                   ? "bg-indigo-600 text-white shadow-sm"
-                  : "text-slate-600 hover:bg-slate-50"
+                  : "text-slate-600 hover:text-indigo-600 hover:bg-indigo-50"
               }`}
             >
               {option.label}

@@ -1,5 +1,6 @@
 "use client";
 
+import { getWorkspaceSession } from '@/src/lib/auth_session';
 import { useCallback } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { useAuth } from "@/src/providers/AuthProvider";
@@ -46,9 +47,7 @@ export default function DashboardTimezoneSelect() {
 
   const save_timezone = useCallback(
     async (value: string) => {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
+      const { session } = await getWorkspaceSession();
       if (!session?.access_token) throw new Error("No active session");
 
       const res = await fetch("/api/settings", {

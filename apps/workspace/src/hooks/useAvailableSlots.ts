@@ -1,5 +1,6 @@
 "use client";
 
+import { getWorkspaceSession } from '@/src/lib/auth_session';
 import { useEffect, useMemo, useState } from "react";
 import { buildTimeslotsForDay } from "@/src/utils/bookingTime";
 import { getBrowserTimezone } from "@app/location";
@@ -87,10 +88,7 @@ export function useAvailableSlots(
     (async () => {
       set_duration_loading(true);
       try {
-        const { supabase } = await import("@/lib/supabaseClient");
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
+        const { session } = await getWorkspaceSession();
         if (!session?.access_token || ac.signal.aborted) {
           set_duration(30);
           return;
@@ -134,10 +132,7 @@ export function useAvailableSlots(
     (async () => {
       set_bookings_loading(true);
       try {
-        const { supabase } = await import("@/lib/supabaseClient");
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
+        const { session } = await getWorkspaceSession();
         if (!session?.access_token || ac.signal.aborted) {
           set_bookings([]);
           return;

@@ -1,8 +1,13 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
-import { supabase } from '@/lib/supabaseClient';
 import { logAuthActivityFromSession } from '@/src/lib/auth_activity_log_client';
+import {
+  clearAuthSessionCache,
+  getCachedSession,
+  validateWorkspaceUser,
+} from '@/src/lib/auth_session';
+import { supabase } from '@/lib/supabaseClient';
 
 /** How often to ask Supabase Auth if this JWT is still valid (detect login elsewhere / revoked refresh). */
 const POLL_INTERVAL_MS = 20_000;
@@ -34,49 +39,53 @@ export function useRemoteSessionInvalidation(enabled: boolean, pathname: string)
 
     const validate = async () => {
       if (stopped) return;
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      if (!session?.user) {
-        consecutiveFailures = 0;
-        return;
-      }
 
-      let lastError: unknown = null;
-      for (let attempt = 0; attempt < 3; attempt++) {
-        if (stopped) return;
-        const { error } = await supabase.auth.getUser();
-        if (!error) {
+      try {
+        const session = getCachedSession();
+        if (!session?.user) {
           consecutiveFailures = 0;
           return;
         }
-        lastError = error;
-        await new Promise((r) => setTimeout(r, 450 * (attempt + 1)));
-      }
-      if (stopped) return;
 
-      consecutiveFailures += 1;
-      if (consecutiveFailures < CONSECUTIVE_FAILURES_BEFORE_SIGNOUT) {
-        console.warn(
-          '[useRemoteSessionInvalidation] getUser failed after retries; waiting for another failed cycle before sign-out',
-          lastError
-        );
-        return;
-      }
+        let lastError: unknown = null;
+        for (let attempt = 0; attempt < 3; attempt++) {
+          if (stopped) return;
+          const { error } = await validateWorkspaceUser();
+          if (!error) {
+            consecutiveFailures = 0;
+            return;
+          }
+          lastError = error;
+          await new Promise((r) => setTimeout(r, 450 * (attempt + 1)));
+        }
+        if (stopped) return;
 
-      console.warn('[useRemoteSessionInvalidation] getUser failed repeatedly; signing out', lastError);
+        consecutiveFailures += 1;
+        if (consecutiveFailures < CONSECUTIVE_FAILURES_BEFORE_SIGNOUT) {
+          console.warn(
+            '[useRemoteSessionInvalidation] getUser failed after retries; waiting for another failed cycle before sign-out',
+            lastError
+          );
+          return;
+        }
 
-      try {
-        await logAuthActivityFromSession('logout', { reason: 'remote_invalidation' });
-      } catch {
-        /* ignore */
+        console.warn('[useRemoteSessionInvalidation] getUser failed repeatedly; signing out', lastError);
+
+        try {
+          await logAuthActivityFromSession('logout', { reason: 'remote_invalidation' });
+        } catch {
+          /* ignore */
+        }
+        try {
+          await supabase.auth.signOut({ scope: 'local' });
+        } catch {
+          /* ignore */
+        }
+        clearAuthSessionCache();
+        redirectSessionEnded();
+      } catch (err) {
+        console.warn('[useRemoteSessionInvalidation] validation skipped due to auth lock contention', err);
       }
-      try {
-        await supabase.auth.signOut({ scope: 'local' });
-      } catch {
-        /* ignore */
-      }
-      redirectSessionEnded();
     };
 
     const intervalId = window.setInterval(() => {

@@ -114,7 +114,7 @@ export function PortalActionsMenu({
         type="button"
         onClick={onToggle}
         className={classNames(
-          "inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 text-slate-500 transition hover:bg-slate-50",
+          "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-slate-200 text-slate-500 transition hover:bg-slate-50",
           triggerClassName
         )}
         aria-label="More actions"
@@ -127,7 +127,7 @@ export function PortalActionsMenu({
             <div
               ref={menuRef}
               data-portal-actions-menu
-              className="fixed z-[100] w-44 rounded-xl border border-slate-200 bg-white p-1.5 shadow-lg"
+              className="fixed z-[50] w-44 rounded-xl border border-slate-200 bg-white p-1.5 shadow-lg"
               style={{
                 top: menuPosition.top,
                 left: menuPosition.left,

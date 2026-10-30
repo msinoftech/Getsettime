@@ -43,7 +43,7 @@ export async function GET(req: NextRequest) {
 
     const supabaseAdmin = createSupabaseServerClient();
     const snapshot = await getWorkspacePlanSnapshot(supabaseAdmin, workspaceId);
-    const usage = await getWorkspaceUsage(supabaseAdmin, workspaceId);
+    const usage = await getWorkspaceUsage(supabaseAdmin, workspaceId, snapshot);
 
     return NextResponse.json({
       plan: snapshot.plan,

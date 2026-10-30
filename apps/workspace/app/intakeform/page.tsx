@@ -1,11 +1,13 @@
 "use client";
+import { getWorkspaceSession } from '@/src/lib/auth_session';
 import { useState, useEffect, useMemo } from "react";
 import { supabase } from "@/lib/supabaseClient";
-import { AlertModal } from "@/src/components/ui/AlertModal";
+import { toast } from "@/src/components/ui/toast";
 import { useAuth } from "@/src/providers/AuthProvider";
 import { useWorkspaceSettings } from "@/src/hooks/useWorkspaceSettings";
 import { sync_settings_response } from "@/src/lib/workspace_shell_sync";
 import type { WorkspaceSettings } from "@/src/types/workspace";
+import ScreenGate from "@/src/components/ScreenGate";
 
 interface CustomField {
   id: string;
@@ -40,7 +42,7 @@ const DEFAULT_INTAKE_FIELD_META: Array<{
 
 type IconName = FieldIcon | "search" | "plus" | "save" | "trash" | "edit" | "sparkles" | "grip" | "clipboard" | "send" | "lock" | "info" | "arrowUpDown" | "users";
 
-function Icon({ name, className = "h-5 w-5" }: { name: IconName; className?: string }) {
+function Icon({ name, className = "" }: { name: IconName; className?: string }) {
   const common = {
     className,
     viewBox: "0 0 24 24" as const,
@@ -89,13 +91,13 @@ function FormsStatCard({
   return (
     <div className="rounded-2xl border border-slate-200 bg-white px-4 py-4 shadow-sm">
       <div className="flex items-start gap-3">
-        <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-xl ${iconClassName}`}>
-          <Icon name={icon} className="h-5 w-5" />
+        <div className={`flex h-10 w-10 xl:h-14 xl:w-14 shrink-0 items-center justify-center rounded-xl ${iconClassName}`}>
+          <Icon name={icon} className="h-4 w-4 md:h-5 md:w-5" />
         </div>
         <div className="min-w-0">
-          <p className="text-sm font-semibold text-slate-900">{label}</p>
+          <p className="text-sm font-semibold text-slate-500">{label}</p>
           <p className="mt-1 text-3xl font-bold leading-none text-slate-950">{value}</p>
-          <p className="mt-1 text-xs font-medium text-slate-400">{helper}</p>
+          <p className="mt-1 text-sm font-medium text-slate-600">{helper}</p>
         </div>
       </div>
     </div>
@@ -155,7 +157,6 @@ export default function RoutingForm({ dark = false }) {
 
   const [loading, setLoading] = useState(false);
   const [fileUploadSaving, setFileUploadSaving] = useState(false);
-  const [alertMessage, setAlertMessage] = useState<string | null>(null);
   const [draggedCustomFieldId, setDraggedCustomFieldId] = useState<string | null>(null);
   const [dragOverCustomFieldId, setDragOverCustomFieldId] = useState<string | null>(null);
 
@@ -190,9 +191,9 @@ export default function RoutingForm({ dark = false }) {
   ): Promise<boolean> => {
     if (isStaffUser) return false;
     try {
-      const { data: { session } } = await supabase.auth.getSession();
+      const { session } = await getWorkspaceSession();
       if (!session) {
-        setAlertMessage('Not authenticated');
+        toast.error('Not authenticated');
         return false;
       }
 
@@ -211,7 +212,7 @@ export default function RoutingForm({ dark = false }) {
 
       const result = await response.json().catch(() => ({}));
       if (!response.ok) {
-        setAlertMessage(`Error: ${(result as { error?: string }).error || 'Failed to save settings'}`);
+        toast.error(`Error: ${(result as { error?: string }).error || 'Failed to save settings'}`);
         return false;
       }
       if (user?.id && (result as { settings?: WorkspaceSettings }).settings) {
@@ -220,7 +221,7 @@ export default function RoutingForm({ dark = false }) {
       return true;
     } catch (error) {
       console.error('Error saving intake form settings:', error);
-      setAlertMessage('An error occurred while saving settings');
+      toast.error('An error occurred while saving settings');
       return false;
     }
   };
@@ -232,7 +233,7 @@ export default function RoutingForm({ dark = false }) {
     try {
       const ok = await persistIntakeFormSettings();
       if (ok) {
-        setAlertMessage('Intake form settings saved successfully!');
+        toast.success('Intake form settings saved successfully!');
       }
     } finally {
       setLoading(false);
@@ -422,15 +423,15 @@ export default function RoutingForm({ dark = false }) {
   };
 
   return (
-    <div className="min-h-screen text-slate-900">
+    <div className=" text-slate-900">
       <div className="mx-auto space-y-6">
-        <div className="rounded-2xl border border-slate-200 bg-white px-5 py-5 shadow-sm md:px-6">
+        <div className="relative">
           <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <h1 className="text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">
                 Routing &amp; Forms
               </h1>
-              <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">
+              <p className="max-w-2xl text-sm leading-6 text-slate-500">
                 Configure intake, pre-check in, feedback, and security forms visible to your workspace.
               </p>
             </div>
@@ -441,7 +442,7 @@ export default function RoutingForm({ dark = false }) {
                 value={fieldSearch}
                 onChange={(event) => setFieldSearch(event.target.value)}
                 placeholder="Search fields..."
-                className="h-11 w-full rounded-xl border border-slate-200 bg-slate-50 pl-11 pr-4 text-sm outline-none transition focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100"
+                className="h-12 w-full rounded-xl border border-slate-200 bg-white pl-11 pr-4 text-sm outline-none transition focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-100"
                 type="search"
                 autoComplete="off"
               />
@@ -449,40 +450,42 @@ export default function RoutingForm({ dark = false }) {
           </div>
         </div>
 
-        <div className="grid gap-3 md:grid-cols-3">
-          <FormsStatCard
-            icon="clipboard"
-            iconClassName="bg-blue-600 text-white"
-            label="Active Forms"
-            value={enabledFieldsCount}
-            helper="Currently active"
-          />
-          <FormsStatCard
-            icon="send"
-            iconClassName="bg-emerald-500 text-white"
-            label="Required Fields"
-            value={requiredFieldsCount}
-            helper="Mandatory fields"
-          />
-          <FormsStatCard
-            icon="lock"
-            iconClassName="bg-violet-600 text-white"
-            label="Custom Fields"
-            value={intakeFormSettings.custom_fields.length}
-            helper="Created by you"
-          />
-        </div>
+        <ScreenGate minWidth={1024}>
+          <div className="grid gap-3 md:grid-cols-3">
+            <FormsStatCard
+              icon="clipboard"
+              iconClassName="bg-indigo-50 text-indigo-600"
+              label="Active Forms"
+              value={enabledFieldsCount}
+              helper="Currently active"
+            />
+            <FormsStatCard
+              icon="send"
+              iconClassName="bg-emerald-50 text-emerald-600"
+              label="Required Fields"
+              value={requiredFieldsCount}
+              helper="Mandatory fields"
+            />
+            <FormsStatCard
+              icon="lock"
+              iconClassName="bg-sky-50 text-sky-600"
+              label="Custom Fields"
+              value={intakeFormSettings.custom_fields.length}
+              helper="Created by you"
+            />
+          </div>
+        </ScreenGate>
 
         <form onSubmit={handleIntakeFormSubmit} className="space-y-6">
           <div className="grid gap-6 lg:grid-cols-[1fr_1fr] lg:items-start">
             <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:p-6">
               <div className="flex items-start gap-3">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
+                {/* <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600">
                   <Icon name="clipboard" className="h-5 w-5" />
-                </div>
+                </div> */}
                 <div>
                   <h2 className="text-lg font-semibold text-slate-900">Default Intake Fields</h2>
-                  <p className="mt-1 text-sm leading-6 text-slate-500">
+                  <p className="text-sm leading-6 text-slate-600">
                     Enable or disable standard fields shown during appointment booking.
                   </p>
                 </div>
@@ -499,17 +502,17 @@ export default function RoutingForm({ dark = false }) {
                       key={field.key}
                       className="flex items-center gap-3 py-4"
                     >
-                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600">
                         <Icon name={field.icon} className="h-4 w-4" />
                       </div>
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2">
                           <h3 className="text-sm font-semibold text-slate-900">{field.label}</h3>
                           {isFileUpload && fileUploadSaving ? (
-                            <span className="text-xs font-medium text-blue-600">Saving…</span>
+                            <span className="text-sm font-medium text-indigo-600">Saving…</span>
                           ) : null}
                         </div>
-                        <p className="mt-0.5 text-sm text-slate-500">{field.description}</p>
+                        <p className="text-sm text-slate-500">{field.description}</p>
                       </div>
                       <button
                         type="button"
@@ -517,7 +520,7 @@ export default function RoutingForm({ dark = false }) {
                         aria-label={isLocked ? `${field.label} is always enabled` : `Toggle ${field.label}`}
                         aria-pressed={enabled}
                         disabled={toggleDisabled || isStaffUser}
-                        className={`relative h-6 w-11 shrink-0 rounded-full transition ${enabled ? "bg-blue-600" : "bg-slate-300"} ${isLocked ? "cursor-not-allowed opacity-20" : ""} ${isFileUpload && fileUploadSaving ? "cursor-wait opacity-60" : ""}`}
+                        className={`relative h-6 w-11 shrink-0 rounded-full transition ${enabled ? "bg-indigo-600" : "bg-slate-300"} ${isLocked ? "cursor-not-allowed opacity-20" : ""} ${isFileUpload && fileUploadSaving ? "cursor-wait opacity-60" : ""}`}
                       >
                         <span
                           className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow transition ${enabled ? "left-6" : "left-1"}`}
@@ -531,12 +534,12 @@ export default function RoutingForm({ dark = false }) {
 
             <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:p-6 lg:sticky lg:top-6 lg:self-start">
               <div className="flex items-start gap-3">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-600">
+                {/* <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-600">
                   <Icon name="file" className="h-5 w-5" />
-                </div>
+                </div> */}
                 <div>
                   <h3 className="text-lg font-semibold text-slate-900">Live Form Preview</h3>
-                  <p className="mt-0.5 text-sm text-slate-500">Customer&apos;s visible fields</p>
+                  <p className="text-sm text-slate-600">Customer&apos;s visible fields</p>
                 </div>
               </div>
 
@@ -546,7 +549,7 @@ export default function RoutingForm({ dark = false }) {
                     key={field.key}
                     className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3"
                   >
-                    <Icon name={field.icon} className="h-4 w-4 shrink-0 text-blue-600" />
+                    <Icon name={field.icon} className="h-4 w-4 shrink-0 text-indigo-600" />
                     <span className="text-sm font-medium text-slate-800">{field.label}</span>
                   </div>
                 ))}
@@ -556,15 +559,15 @@ export default function RoutingForm({ dark = false }) {
                     key={field.id}
                     className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3"
                   >
-                    <Icon name="file" className="h-4 w-4 shrink-0 text-blue-600" />
+                    <Icon name="file" className="h-4 w-4 shrink-0 text-indigo-600" />
                     <span className="min-w-0 flex-1 text-sm font-medium text-slate-800">{field.label}</span>
                     <div className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-2">
                       {field.required && (
-                        <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-semibold text-blue-700">
+                        <span className="rounded-full bg-indigo-100 border border-indigo-200 px-3 py-1 text-xs font-semibold text-indigo-700">
                           Required
                         </span>
                       )}
-                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600">
+                      <span className="rounded-full bg-slate-100 border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-600">
                         {fieldTypeLabel(field.field_type)}
                       </span>
                     </div>
@@ -572,14 +575,14 @@ export default function RoutingForm({ dark = false }) {
                 ))}
               </div>
 
-              <div className="mt-5 rounded-xl bg-blue-50 px-4 py-4">
+              <div className="mt-5 rounded-xl bg-indigo-50 px-4 py-4">
                 <div className="flex items-start gap-3">
-                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-blue-100 text-blue-600">
-                    <Icon name="info" className="h-4 w-4" />
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-indigo-600 text-white">
+                    <Icon name="info" className="h-5 w-5" />
                   </div>
                   <div>
-                    <p className="text-sm font-semibold text-blue-900">Preview as a customer</p>
-                    <p className="mt-1 text-sm leading-6 text-blue-700">
+                    <p className="text-md font-semibold text-indigo-900">Preview as a customer</p>
+                    <p className="text-sm leading-6 text-indigo-600">
                       This is how the form appears before appointment confirmed and can be used for security checks.
                     </p>
                   </div>
@@ -592,7 +595,7 @@ export default function RoutingForm({ dark = false }) {
             <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
               <div>
                 <h2 className="text-lg font-semibold text-slate-900">Custom Fields</h2>
-                <p className="mt-1 text-sm leading-6 text-slate-500">
+                <p className="text-sm leading-6 text-slate-600">
                   Add custom fields to collect additional information from your customers.
                 </p>
               </div>
@@ -602,7 +605,7 @@ export default function RoutingForm({ dark = false }) {
                     <button
                       type="submit"
                       disabled={loading}
-                      className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-blue-200 bg-white px-4 text-sm font-semibold text-blue-700 transition hover:bg-blue-50 disabled:opacity-50"
+                      className="inline-flex items-center justify-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm font-semibold text-indigo-600 transition hover:bg-indigo-100 disabled:opacity-50"
                     >
                       <Icon name="arrowUpDown" className="h-4 w-4" />
                       {loading ? "Saving..." : "Save Order"}
@@ -610,7 +613,7 @@ export default function RoutingForm({ dark = false }) {
                     <button
                       type="button"
                       onClick={addCustomFieldInline}
-                      className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white transition hover:bg-blue-700"
+                      className="inline-flex items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-indigo-700"
                     >
                       <Icon name="plus" className="h-4 w-4" />
                       Add Field
@@ -627,13 +630,13 @@ export default function RoutingForm({ dark = false }) {
                 onChange={(e) => setNewCustomLabel(e.target.value)}
                 disabled={isStaffUser}
                 placeholder="Field Name (e.g. Patient ID)"
-                className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm outline-none transition focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
+                className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm outline-none transition focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
               />
               <select
                 value={newCustomFieldType}
                 onChange={(e) => setNewCustomFieldType(e.target.value as CustomField["field_type"])}
                 disabled={isStaffUser}
-                className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm outline-none transition focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
+                className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm outline-none transition focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
               >
                 {CUSTOM_FIELD_TYPE_OPTIONS.map((opt) => (
                   <option key={opt.value} value={opt.value}>
@@ -672,63 +675,68 @@ export default function RoutingForm({ dark = false }) {
                       setDraggedCustomFieldId(null);
                       setDragOverCustomFieldId(null);
                     }}
-                    className={`flex items-center gap-3 rounded-xl border bg-white px-4 py-3 transition ${
+                    className={`flex flex-wrap justify-between items-center gap-3 rounded-xl border bg-white px-4 py-3 transition ${
                       dragOverCustomFieldId === field.id
-                        ? "border-blue-300 ring-2 ring-blue-100"
+                        ? "border-indigo-300 ring-2 ring-indigo-100"
                         : "border-slate-200"
                     } ${draggedCustomFieldId === field.id ? "opacity-50" : ""}`}
                   >
-                    <button
-                      type="button"
-                      draggable
-                      disabled={isStaffUser}
-                      onDragStart={(event) => {
-                        setDraggedCustomFieldId(field.id);
-                        event.dataTransfer.setData("text/plain", field.id);
-                        event.dataTransfer.effectAllowed = "move";
-                      }}
-                      onDragEnd={() => {
-                        setDraggedCustomFieldId(null);
-                        setDragOverCustomFieldId(null);
-                      }}
-                      className="flex h-9 w-9 shrink-0 cursor-grab items-center justify-center rounded-lg border border-transparent text-slate-400 transition hover:border-slate-200 hover:bg-slate-50 active:cursor-grabbing"
-                      aria-label={`Drag to reorder ${field.label}`}
-                    >
-                      <Icon name="grip" className="h-4 w-4" aria-hidden />
-                    </button>
-                    <div className="min-w-0 flex-1">
-                      <h4 className="text-sm font-semibold text-slate-900">{field.label}</h4>
-                      <p className="text-xs text-slate-500">{fieldTypeLabel(field.field_type)} field</p>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        draggable
+                        disabled={isStaffUser}
+                        onDragStart={(event) => {
+                          setDraggedCustomFieldId(field.id);
+                          event.dataTransfer.setData("text/plain", field.id);
+                          event.dataTransfer.effectAllowed = "move";
+                        }}
+                        onDragEnd={() => {
+                          setDraggedCustomFieldId(null);
+                          setDragOverCustomFieldId(null);
+                        }}
+                        className="flex h-9 w-9 shrink-0 cursor-grab items-center justify-center rounded-lg bg-slate-50 border border-slate-200 text-slate-900 transition hover:border-slate-300 hover:bg-slate-100 active:cursor-grabbing"
+                        aria-label={`Drag to reorder ${field.label}`}
+                      >
+                        <Icon name="grip" className="h-4 w-4" aria-hidden />
+                      </button>
+                      <div className="min-w-0 flex-1">
+                        <h4 className="text-sm font-semibold text-slate-900">{field.label}</h4>
+                        <p className="text-sm text-slate-600">{fieldTypeLabel(field.field_type)} field</p>
+                      </div>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => toggleCustomFieldRequired(field.id)}
-                      disabled={isStaffUser}
-                      className={`shrink-0 rounded-full px-3 py-1 text-xs font-semibold transition ${field.required ? "bg-blue-100 text-blue-700" : "bg-slate-100 text-slate-600"}`}
-                      aria-label={field.required ? "Mark optional" : "Mark required"}
-                    >
-                      {field.required ? "Required" : "Optional"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleEditCustomField(field)}
-                      disabled={isStaffUser}
-                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 transition hover:text-blue-600"
-                      title="Edit field"
-                      aria-label="Edit custom field"
-                    >
-                      <Icon name="edit" className="h-4 w-4" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveCustomField(field.id)}
-                      disabled={isStaffUser}
-                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-red-100 bg-red-50 text-red-500 transition hover:bg-red-100"
-                      title="Remove field"
-                      aria-label="Delete custom field"
-                    >
-                      <Icon name="trash" className="h-4 w-4" />
-                    </button>
+
+                    <div className="flex gap-2 items-center">
+                      <button
+                        type="button"
+                        onClick={() => toggleCustomFieldRequired(field.id)}
+                        disabled={isStaffUser}
+                        className={`shrink-0 rounded-full px-3 py-1 text-xs font-semibold border transition ${field.required ? "bg-indigo-100 border-indigo-200 text-indigo-700" : "bg-slate-100 text-slate-600"}`}
+                        aria-label={field.required ? "Mark optional" : "Mark required"}
+                      >
+                        {field.required ? "Required" : "Optional"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleEditCustomField(field)}
+                        disabled={isStaffUser}
+                        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-600 transition hover:text-indigo-700"
+                        title="Edit field"
+                        aria-label="Edit custom field"
+                      >
+                        <Icon name="edit" className="h-4 w-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveCustomField(field.id)}
+                        disabled={isStaffUser}
+                        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-red-100 bg-red-50 text-red-500 transition hover:bg-red-100"
+                        title="Remove field"
+                        aria-label="Delete custom field"
+                      >
+                        <Icon name="trash" className="h-4 w-4" />
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -738,15 +746,15 @@ export default function RoutingForm({ dark = false }) {
 
         {/* Edit Custom Field Modal */}
         {showCustomFieldForm && editingCustomField && (
-        <div className={`fixed inset-0 z-50 flex items-center justify-center px-4 py-6 transition-opacity duration-200 ${showCustomFieldForm ? 'pointer-events-auto opacity-100' : 'pointer-events-none opacity-0'}`}>
+        <div className={`fixed inset-0 z-999 flex items-center justify-center px-4 py-6 transition-opacity duration-200 ${showCustomFieldForm ? 'pointer-events-auto opacity-100' : 'pointer-events-none opacity-0'}`}>
           <div className={`absolute inset-0 bg-black/40 transition-opacity duration-300 ${showCustomFieldForm ? 'opacity-100' : 'opacity-0'}`} aria-hidden="true" onClick={handleCustomFieldFormCancel}/>
           <section className={`relative w-full max-w-4xl transform bg-white rounded-2xl shadow-2xl transition-all duration-300 ${showCustomFieldForm ? 'scale-100 opacity-100' : 'scale-95 opacity-0'}`}>
             <div className={`flex items-center justify-between border-b border-gray-200 px-6 py-4`}>
               <div>
                 <h2 className={`text-lg font-semibold text-gray-800`}>Edit Custom Field</h2>
-                <p className="text-xs text-slate-500 mt-1">Update field details</p>
+                <p className="text-sm text-slate-500 mt-1">Update field details</p>
               </div>
-              <button className={`rounded-full p-2 text-gray-500 hover:bg-gray-100 transition`} aria-label="Close form" onClick={handleCustomFieldFormCancel}>
+              <button className={`rounded-xl p-3 text-gray-500 bg-gray-100 transition`} aria-label="Close form" onClick={handleCustomFieldFormCancel}>
                 <svg className="h-5 w-5" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" viewBox="0 0 24 24">
                   <path d="M6 18L18 6M6 6l12 12" />
                 </svg>
@@ -827,9 +835,6 @@ export default function RoutingForm({ dark = false }) {
         </div>
       )}
 
-      {alertMessage && (
-        <AlertModal message={alertMessage} onClose={() => setAlertMessage(null)} />
-      )}
       </div>
     </div>
   );

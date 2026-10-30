@@ -164,7 +164,7 @@ export default function ForgotPasswordPage() {
                 setSuccess(false);
                 setEmail("");
               }}
-              className="w-full mt-3 bg-white text-blue-600 py-3 rounded-lg font-medium border-2 border-blue-600 hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition"
+              className="w-full mt-3 bg-white text-indigo-600 py-3 rounded-lg font-medium border-2 border-blue-600 hover:bg-indigo-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition"
             >
               Try a Different Email
             </button>
@@ -175,7 +175,7 @@ export default function ForgotPasswordPage() {
         <div className="mt-6 text-center">
           <p className="text-sm text-gray-500">
             Remember your password?{" "}
-            <Link href="/login" className="text-blue-600 hover:text-blue-800 font-medium">
+            <Link href="/login" className="text-indigo-600 hover:text-indigo-800 font-medium">
               Sign in here
             </Link>
           </p>

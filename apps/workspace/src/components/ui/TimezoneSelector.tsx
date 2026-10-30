@@ -199,7 +199,7 @@ export function TimezoneSelector({
         type="button"
         onClick={() => void handle_save()}
         disabled={is_saving || disabled}
-        className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+        className="rounded-lg bg-indigo-600 px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
       >
         {is_saving ? "Saving…" : "Save"}
       </button>
@@ -207,7 +207,7 @@ export function TimezoneSelector({
         type="button"
         onClick={handle_cancel}
         disabled={is_saving || disabled}
-        className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+        className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
       >
         Cancel
       </button>
@@ -217,10 +217,7 @@ export function TimezoneSelector({
   const menu = open && is_interactive ? (
     <div
       role="listbox"
-      className={`absolute ${menuAlign === "right" ? "right-0" : "left-0"} z-50 max-h-72 w-72 overflow-y-auto rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl ${
-        resolved_placement === "top" ? "bottom-full mb-2" : "top-full mt-2"
-      }`}
-    >
+      className={`absolute sm:right-0 z-50 max-h-72 w-72 overflow-y-auto rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl ${ resolved_placement === "top" ? "bottom-full mb-2" : "top-full mt-2" }`}>
       {normalized_options.map((option) => {
         const selected = option.value === draft;
         return (
@@ -233,7 +230,7 @@ export function TimezoneSelector({
             className={`flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-sm transition ${
               selected
                 ? "bg-indigo-50 font-semibold text-indigo-700"
-                : "text-slate-700 hover:bg-slate-50"
+                : "text-slate-700"
             }`}
           >
             <span className="truncate">{option.label}</span>
@@ -266,11 +263,11 @@ export function TimezoneSelector({
           disabled={disabled || is_saving || !is_interactive}
           aria-haspopup={is_interactive ? "listbox" : undefined}
           aria-expanded={open}
-          className="inline-flex items-center gap-3 rounded-lg px-1 py-1 text-left transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-70"
+          className="inline-flex items-center gap-3 rounded-lg px-1 py-1 text-left transition disabled:cursor-not-allowed disabled:opacity-70"
         >
           <Globe className="h-5 w-5 shrink-0 text-slate-600" />
           <span className="min-w-0">
-            <span className="block text-xs text-slate-500">Timezone</span>
+            <span className="block text-sm text-slate-500">Timezone</span>
             <span className="block truncate text-sm font-medium text-slate-800">
               {display_label}
             </span>
@@ -293,7 +290,7 @@ export function TimezoneSelector({
           disabled={disabled || is_saving || !is_interactive}
           aria-haspopup={is_interactive ? "listbox" : undefined}
           aria-expanded={open}
-          className="inline-flex h-8 items-center gap-2 rounded-md border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-70"
+          className="inline-flex h-8 items-center gap-2 rounded-md border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-70"
         >
           <span className="text-slate-500">Time Zone:</span>
           <span className="max-w-[180px] truncate">{display_label}</span>

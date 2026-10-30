@@ -4,6 +4,10 @@ import {
   resolveEffectiveBookingDurationMinutes,
   type ServiceDurationCatalogItem,
 } from '@/src/utils/bookingDuration';
+import {
+  event_type_session_duration_minutes,
+  type booking_event_type_flow_fields,
+} from '@/src/features/booking-flow/event_type_booking_flow';
 
 export async function loadServiceDurationsForWorkspace(
   supabase: SupabaseClient,
@@ -40,16 +44,22 @@ export async function resolveEffectiveDurationForBookingRequest(
   const serviceIds =
     serviceIdsOverride ?? intakeServiceIdsFromMetadata(metadata);
 
-  let eventTypeRow: { duration_minutes: number | null } = { duration_minutes: null };
+  let eventTypeRow: booking_event_type_flow_fields & {
+    duration_minutes: number | null;
+  } = { duration_minutes: null };
   if (eventTypeId) {
     const { data: et } = await supabase
       .from('event_types')
-      .select('duration_minutes')
+      .select('duration_minutes, event_type_format, recurrence')
       .eq('id', eventTypeId)
       .eq('workspace_id', workspaceId)
       .maybeSingle();
     if (et) {
-      eventTypeRow = { duration_minutes: et.duration_minutes ?? null };
+      eventTypeRow = {
+        duration_minutes: et.duration_minutes ?? null,
+        event_type_format: et.event_type_format ?? null,
+        recurrence: et.recurrence ?? null,
+      };
     }
   }
 
@@ -59,10 +69,9 @@ export async function resolveEffectiveDurationForBookingRequest(
     serviceIds
   );
 
-  return resolveEffectiveBookingDurationMinutes(
+  return event_type_session_duration_minutes(
     eventTypeRow,
-    serviceIds,
-    catalog
+    resolveEffectiveBookingDurationMinutes(eventTypeRow, serviceIds, catalog)
   );
 }
 

@@ -25,3 +25,13 @@ export function workspace_logo_is_remote(src: string): boolean {
     (src.startsWith('http://') || src.startsWith('https://'))
   );
 }
+
+export function read_clinic_image_url(
+  general: Record<string, unknown> | null | undefined
+): string | null {
+  if (!general) return null;
+  const raw = general.clinic_image_url ?? general.clinicImageUrl;
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  return trimmed !== '' ? trimmed : null;
+}

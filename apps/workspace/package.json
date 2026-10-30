@@ -8,6 +8,9 @@
     "start": "next start",
     "lint": "eslint",
     "test:booking-duration": "npx tsx src/utils/bookingDuration.test.ts",
+    "test:booking-recurrence": "npx tsx lib/booking_recurrence.test.ts",
+    "test:booking-steps": "npx tsx src/features/booking-flow/booking_step_resolution.test.ts",
+    "test:booking-assignments": "npx tsx src/utils/bookingFormAssignments.test.ts",
     "test:timezone": "npx tsx src/utils/timezoneBooking.test.ts"
   },
   "dependencies": {

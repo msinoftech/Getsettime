@@ -1,10 +1,12 @@
 "use client";
 
+import { getWorkspaceSession } from '@/src/lib/auth_session';
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import DashboardIcon from "./DashboardIcon";
 import type { Booking } from "@/src/types/booking";
 import { toDateKey } from "@/src/components/Calendar/calendar_utils";
+import ScreenGate from "@/src/components/ScreenGate";
 
 const WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
 
@@ -76,10 +78,7 @@ export default function DashboardCalendarSnapshot() {
     const load = async () => {
       set_loading(true);
       try {
-        const { supabase } = await import("@/lib/supabaseClient");
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
+        const { session } = await getWorkspaceSession();
         if (!session?.access_token) {
           if (alive) set_bookings([]);
           return;
@@ -140,20 +139,21 @@ export default function DashboardCalendarSnapshot() {
   })}, ${week_days[6].getFullYear()}`;
 
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:p-6">
-      <div className="mb-4 flex items-center justify-between gap-4">
+    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm lg:p-6">
+      <div className="mb-2 lg:mb-4 flex items-center justify-between sm:gap-4 gap-2">
         <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600">
             <DashboardIcon name="calendarDays" size={20} />
           </div>
-          <h3 className="text-lg font-bold text-slate-900">Calendar Snapshot</h3>
+          <h3 className="text-lg font-bold text-slate-900">Calendar <span className="hidden sm:inline">Snapshot</span></h3>
         </div>
+        
         <div className="flex items-center gap-2">
           <button
             type="button"
             onClick={() => set_week_offset((o) => o - 1)}
             aria-label="Previous week"
-            className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 text-slate-600 transition hover:bg-slate-50"
+            className="flex shrink-0  sm:h-9 sm:w-9 h-7 w-7 items-center justify-center rounded-md sm:rounded-xl border border-slate-200 text-slate-600 transition hover:bg-slate-50"
           >
             <DashboardIcon name="chevronLeft" size={18} />
           </button>
@@ -161,58 +161,51 @@ export default function DashboardCalendarSnapshot() {
             type="button"
             onClick={() => set_week_offset((o) => o + 1)}
             aria-label="Next week"
-            className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 text-slate-600 transition hover:bg-slate-50"
+            className="flex shrink-0 sm:h-9 sm:w-9 h-7 w-7 items-center justify-center rounded-md sm:rounded-xl border border-slate-200 text-slate-600 transition hover:bg-slate-50"
           >
             <DashboardIcon name="chevronRight" size={18} />
           </button>
         </div>
       </div>
 
-      <p className="mb-4 text-sm font-bold text-slate-700">{range_label}</p>
+      <p className="lg:mb-4 mb-2 text-sm font-semibold text-slate-700">{range_label}</p>
 
-      <div className="grid grid-cols-7 gap-1 text-center">
-        {week_days.map((d, i) => {
-          const items = bookings_by_day.get(toDateKey(d)) ?? [];
-          const is_today = is_same_day(d, today);
-          return (
-            <div
-              key={toDateKey(d)}
-              className="flex flex-col items-center gap-1.5 py-1"
-            >
-              <span className="text-xs font-bold text-slate-400">
-                {WEEKDAY_LABELS[i]}
-              </span>
-              <span
-                className={`flex h-9 w-9 items-center justify-center rounded-full text-sm font-bold ${
-                  is_today
-                    ? "bg-indigo-600 text-white shadow-sm"
-                    : "text-slate-700"
-                }`}
-              >
-                {d.getDate()}
-              </span>
-              <span
-                className={`h-1.5 w-1.5 rounded-full ${day_dot_class(items)}`}
-              />
-            </div>
-          );
-        })}
+      <div className="overflow-hidden rounded-xl border border-slate-200">
+        <div className="grid grid-cols-7 divide-x divide-slate-200">
+          {week_days.map((d, i) => {
+            const items = bookings_by_day.get(toDateKey(d)) ?? [];
+            const is_today = is_same_day(d, today);
+            return (
+              <div key={toDateKey(d)} className={`flex flex-col items-center justify-between px-0.5 py-3 ${is_today ? "bg-indigo-500" : ""}`}>
+                <span className={`${is_today ? "text-white" : "text-slate-600"} text-xs font-medium`}>{WEEKDAY_LABELS[i]}</span>
+                <span className={`flex items-center justify-center rounded-full text-sm font-semibold ${
+                    is_today ? "text-white" : "text-slate-700"
+                  }`}
+                >
+                  {d.getDate()}
+                </span>
+                <span className={`h-1.5 w-1.5 rounded-full ${day_dot_class(items)}`}/>
+              </div>
+            );
+          })}
+        </div>
       </div>
+      
 
-      <div className="mt-5 flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-slate-100 pt-4">
+      <div className="lg:mt-5 mt-4 flex flex-wrap items-center max-[450px]:gap-x-2 gap-x-5 gap-y-2 border-t border-slate-100 pt-3">
         {loading ? (
-          <span className="text-xs font-semibold text-slate-400">Loading…</span>
+          <span className="text-sm font-semibold text-slate-400">Loading…</span>
         ) : (
           <>
-            <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-600">
+            <span className="inline-flex items-center gap-1.5 text-sm font-medium text-slate-600">
               <span className="h-2 w-2 rounded-full bg-indigo-500" />
               {total_count} Bookings
             </span>
-            <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-600">
+            <span className="inline-flex items-center gap-1.5 text-sm font-medium text-slate-600">
               <span className="h-2 w-2 rounded-full bg-emerald-500" />
               {confirmed_count} Appointments
             </span>
-            <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-600">
+            <span className="inline-flex items-center gap-1.5 text-sm font-medium text-slate-600">
               <span className="h-2 w-2 rounded-full bg-amber-500" />
               {pending_count} Pending
             </span>
@@ -220,12 +213,9 @@ export default function DashboardCalendarSnapshot() {
         )}
       </div>
 
-      <div className="pt-4 text-center">
-        <Link
-          href="/calendar"
-          className="inline-flex items-center justify-center gap-2 text-sm font-bold text-indigo-600 hover:text-indigo-700"
-        >
-          View full calendar
+      <div className="lg:pt-4 pt-3 text-center">
+        <Link href="/calendar" className="inline-flex items-center justify-center gap-2 text-sm font-bold text-indigo-600 hover:text-indigo-700">
+          View calendar
           <DashboardIcon name="arrow" size={16} />
         </Link>
       </div>

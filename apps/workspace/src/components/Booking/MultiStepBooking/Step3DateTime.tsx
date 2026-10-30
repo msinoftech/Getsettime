@@ -1,6 +1,17 @@
 'use client';
 
-import React, { useRef, useCallback, useEffect, useMemo } from 'react';
+import React, { useRef, useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react';
+import {
+  describe_event_type_booking_slot_availability,
+  event_type_session_duration_minutes,
+  event_type_slot_capacity,
+  list_scheduled_session_dates,
+  uses_scheduled_event_type_slots,
+} from '@/src/features/booking-flow';
+import {
+  resolveEffectiveBookingDurationMinutes,
+  type ServiceDurationCatalogItem,
+} from '@/src/utils/bookingDuration';
 import type {
   AvailabilitySettings,
   Booking,
@@ -8,7 +19,6 @@ import type {
   Timeslot,
 } from '@/src/types/bookingForm';
 import type { date_exception } from '@/src/types/date_exceptions';
-import type { ServiceDurationCatalogItem } from '@/src/utils/bookingDuration';
 import {
   BOOKING_BUTTON_LABELS,
   BOOKING_EMPTY_MESSAGES,
@@ -20,6 +30,7 @@ import {
 } from '@/src/constants/booking';
 import { getCalendarDays, isToday, normalizeDate } from '@/src/utils/bookingTime';
 import { isDateAvailable } from '@/src/utils/bookingAvailability';
+import { BookSeriesOption } from './BookSeriesOption';
 import { TimezoneSelector } from './TimezoneSelector';
 import {
   formatFullDateTimeInTimezone,
@@ -72,6 +83,16 @@ interface Step3DateTimeProps {
   onSelectSlot?: (slot: Timeslot) => void;
   dateExceptions?: date_exception[];
   serviceProviderId?: string | null;
+  bookSeries?: boolean;
+  onBookSeriesChange?: (value: boolean) => void;
+  showBookSeriesOption?: boolean;
+  maxWindowDays?: number;
+  /** When true, auto-selects the sole date/time and continues to the next step. */
+  allowAutoAdvance?: boolean;
+  /** Prevents the date strip from auto-expanding (avoids repeated busy-slot refetches). */
+  disableStripExpansion?: boolean;
+  /** Keep showing timeslots while bookings refresh in the background. */
+  retainTimeslotsWhileLoading?: boolean;
 }
 
 export function Step3DateTime({
@@ -112,11 +133,59 @@ export function Step3DateTime({
   onSelectSlot,
   dateExceptions = [],
   serviceProviderId = null,
+  bookSeries = false,
+  onBookSeriesChange,
+  showBookSeriesOption = false,
+  maxWindowDays,
+  allowAutoAdvance = false,
+  disableStripExpansion = false,
+  retainTimeslotsWhileLoading = false,
 }: Step3DateTimeProps) {
+  const [slotWarning, setSlotWarning] = useState<string | null>(null);
+  const slotCapacity = useMemo(
+    () => event_type_slot_capacity(selectedType),
+    [selectedType]
+  );
+  const showCapacitySlots = slotCapacity > 1;
+  const visibleTimeslots = useMemo(
+    () => (showCapacitySlots ? timeslots : timeslots.filter((slot) => !slot.disabled)),
+    [showCapacitySlots, timeslots]
+  );
+
+  const slotAvailabilityMessage = useMemo(() => {
+    if (!selectedType) return null;
+    const duration = event_type_session_duration_minutes(
+      selectedType,
+      resolveEffectiveBookingDurationMinutes(
+        selectedType,
+        selectedServiceIds,
+        serviceCatalog
+      )
+    );
+    return describe_event_type_booking_slot_availability({
+      event_type: selectedType,
+      selected_date: selectedDate,
+      provider_timezone: providerTimezone || customerTimezone,
+      viewer_timezone: customerTimezone || providerTimezone,
+      duration_minutes: duration,
+    });
+  }, [
+    selectedType,
+    selectedDate,
+    providerTimezone,
+    customerTimezone,
+    selectedServiceIds,
+    serviceCatalog,
+  ]);
+
+  useEffect(() => {
+    setSlotWarning(null);
+  }, [selectedDate?.toDateString()]);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const selectedDateRef = useRef<HTMLButtonElement | null>(null);
   const isLoadingMoreRef = useRef(false);
   const timeslotSectionRef = useRef<HTMLDivElement>(null);
+  const continueSectionRef = useRef<HTMLDivElement>(null);
   // Tracks the date we've already auto-scrolled timeslots for. Initialized to
   // any preselected date so we don't scroll on mount (e.g. reschedule flows).
   const scrolledForDateRef = useRef<string | null | undefined>(undefined);
@@ -129,14 +198,26 @@ export function Step3DateTime({
   // (e.g. navigating back/forth between steps) are preserved. The selection waits
   // for availability to load and runs after `availableDays` is computed below.
   const autoSelectedDefaultDateRef = useRef(false);
+  const auto_advanced_step3_ref = useRef(false);
+
+  const sole_bookable_slot = useMemo(() => {
+    const bookable = visibleTimeslots.filter((slot) => !slot.disabled);
+    return bookable.length === 1 ? bookable[0] : null;
+  }, [visibleTimeslots]);
 
   const loadMoreDates = useCallback(() => {
+    if (disableStripExpansion) return;
     if (isLoadingMoreRef.current) return;
     isLoadingMoreRef.current = true;
+    const windowCap = Math.min(
+      STRIP_MAX_DAYS,
+      typeof maxWindowDays === 'number' && maxWindowDays >= 1 ? maxWindowDays : STRIP_MAX_DAYS
+    );
     onDaysChange((prevDays) => {
+      if (prevDays.length >= windowCap) return prevDays;
       const lastDate = prevDays[prevDays.length - 1];
       const newDates: Date[] = [];
-      for (let i = 1; i <= 10; i++) {
+      for (let i = 1; i <= 10 && prevDays.length + newDates.length < windowCap; i++) {
         const d = new Date(lastDate);
         d.setDate(d.getDate() + i);
         newDates.push(normalizeDate(d));
@@ -144,9 +225,10 @@ export function Step3DateTime({
       return [...prevDays, ...newDates];
     });
     setTimeout(() => { isLoadingMoreRef.current = false; }, 300);
-  }, [onDaysChange]);
+  }, [disableStripExpansion, onDaysChange, maxWindowDays]);
 
   useEffect(() => {
+    if (disableStripExpansion) return;
     const container = scrollContainerRef.current;
     if (!container) return;
 
@@ -156,7 +238,11 @@ export function Step3DateTime({
       const hasOverflow = scrollWidth > clientWidth + 2;
       const distanceToEnd = scrollWidth - (scrollLeft + clientWidth);
       const nearEnd = hasOverflow && distanceToEnd < SCROLL_LOAD_DISTANCE;
-      const stripDoesNotFillWidth = !hasOverflow && days.length < STRIP_MAX_DAYS;
+      const stripDoesNotFillWidth = !hasOverflow && days.length < (
+        typeof maxWindowDays === 'number' && maxWindowDays >= 1
+          ? Math.min(STRIP_MAX_DAYS, maxWindowDays)
+          : STRIP_MAX_DAYS
+      );
       if (nearEnd || stripDoesNotFillWidth) {
         loadMoreDates();
       }
@@ -174,7 +260,7 @@ export function Step3DateTime({
       container.removeEventListener('scroll', checkAndLoadMore);
       resizeObserver.disconnect();
     };
-  }, [loadMoreDates, days.length]);
+  }, [disableStripExpansion, loadMoreDates, days.length]);
 
   useEffect(() => {
     if (selectedDate && selectedDateRef.current && scrollContainerRef.current) {
@@ -202,6 +288,16 @@ export function Step3DateTime({
     timeslotSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }, [selectedDate, loadingAvailability, loadingBookings, timeslots.length]);
 
+  // Guiding from the click handler keeps restored selections from scrolling.
+  const guideToContinue = useCallback(() => {
+    requestAnimationFrame(() => {
+      continueSectionRef.current?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'start',
+      });
+    });
+  }, []);
+
   const hasNewSelection = Boolean(selectedDate && selectedTime);
 
   const viewerTimezoneAbbrev = useMemo(() => {
@@ -217,9 +313,33 @@ export function Step3DateTime({
     [existingBookings]
   );
 
+  const scheduledSessionDates = useMemo(() => {
+    if (!selectedType || !uses_scheduled_event_type_slots(selectedType)) return null;
+    const duration = event_type_session_duration_minutes(
+      selectedType,
+      resolveEffectiveBookingDurationMinutes(
+        selectedType,
+        selectedServiceIds,
+        serviceCatalog
+      )
+    );
+    return list_scheduled_session_dates({
+      event_type: selectedType,
+      provider_timezone: providerTimezone || customerTimezone,
+      duration_minutes: duration,
+    });
+  }, [
+    selectedType,
+    selectedServiceIds,
+    serviceCatalog,
+    providerTimezone,
+    customerTimezone,
+  ]);
+
   const availableDays = useMemo(() => {
     const t0 = performance.now();
-    const result = days.filter((d) => {
+    const candidateDays = scheduledSessionDates ?? days;
+    const result = candidateDays.filter((d) => {
       const past = d < new Date() && !isToday(d);
       if (past) return false;
       if (!availabilitySettings?.timesheet || !selectedType) return true;
@@ -247,6 +367,7 @@ export function Step3DateTime({
     }
     return result;
   }, [
+    scheduledSessionDates,
     days,
     availabilitySettings,
     selectedType,
@@ -272,8 +393,51 @@ export function Step3DateTime({
     if (loadingAvailability || loadingBookings) return;
     autoSelectedDefaultDateRef.current = true;
     const firstAvailable = availableDays[0];
-    onSelectDate(normalizeDate(firstAvailable ?? new Date()));
+    if (!firstAvailable) return;
+    onSelectDate(normalizeDate(firstAvailable));
   }, [selectedDate, onSelectDate, loadingAvailability, loadingBookings, availableDays]);
+
+  useEffect(() => {
+    auto_advanced_step3_ref.current = false;
+  }, [selectedType?.id]);
+
+  useLayoutEffect(() => {
+    if (!allowAutoAdvance || auto_advanced_step3_ref.current) return;
+    if (loadingAvailability || loadingBookings) return;
+    if (availableDays.length !== 1 || !sole_bookable_slot) return;
+
+    const sole_date = normalizeDate(availableDays[0]);
+    const date_ready = selectedDate?.toDateString() === sole_date.toDateString();
+    if (!date_ready) {
+      onSelectDate(sole_date);
+      return;
+    }
+
+    const slot_ready =
+      selectedStartUtc === sole_bookable_slot.startUtc ||
+      (!selectedStartUtc && selectedTime === sole_bookable_slot.time);
+    if (!slot_ready) {
+      onSelectTime(sole_bookable_slot.time);
+      onSelectSlot?.(sole_bookable_slot);
+      return;
+    }
+
+    auto_advanced_step3_ref.current = true;
+    onContinue();
+  }, [
+    allowAutoAdvance,
+    loadingAvailability,
+    loadingBookings,
+    availableDays,
+    sole_bookable_slot,
+    selectedDate,
+    selectedTime,
+    selectedStartUtc,
+    onSelectDate,
+    onSelectTime,
+    onSelectSlot,
+    onContinue,
+  ]);
 
   const formatPreviousDateTime = (iso: string) => {
     if (customerTimezone) {
@@ -298,10 +462,10 @@ export function Step3DateTime({
   };
 
   return (
-    <div className="space-y-4 sm:space-y-6 lg:space-y-8 animate-fadeIn">
+    <div className="space-y-4 animate-fadeIn">
       <div className="text-center lg:text-left">
-        <h2 className="text-2xl font-bold text-gray-900">{BOOKING_STEP_TITLES.step3}</h2>
-        <p className="text-xs sm:text-sm text-gray-500">{BOOKING_STEP_TITLES.step3Subtitle}</p>
+        <h2 className="text-lg font-bold tracking-tight text-slate-900 sm:text-xl md:text-2xl">{BOOKING_STEP_TITLES.step3}</h2>
+        <p className="mt-0.5 text-sm text-slate-500">{BOOKING_STEP_TITLES.step3Subtitle}</p>
       </div>
 
       {previousStartAt && (
@@ -341,8 +505,8 @@ export function Step3DateTime({
       <div className="relative">
         <div className="relative z-20 flex items-center justify-between mb-3 sm:mb-4">
           <div className="flex items-center gap-2">
-            <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-gradient-to-br from-indigo-100 to-indigo-200 flex items-center justify-center flex-shrink-0">
-              <svg className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <div className="w-4 h-4 rounded-lg flex items-center justify-center flex-shrink-0">
+              <svg className="w-4 h-4 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
               </svg>
             </div>
@@ -484,20 +648,20 @@ export function Step3DateTime({
                       onSelectTime('');
                       step3PerfSync('Step3DateTime date strip click handler', t0);
                     }}
-                    className={`group flex-none min-w-[70px] p-2 rounded-xl sm:rounded-2xl transition-all duration-300 relative overflow-hidden ${
+                    className={`group flex-none min-w-[70px] p-2 rounded-xl transition-all duration-300 relative overflow-hidden ${
                       isSelected
-                        ? 'text-white bg-indigo-600 shadow-xl scale-105 ring-2 sm:ring-4 ring-indigo-200 z-10'
-                        : 'bg-indigo-50 border-2 border-gray-200 hover:border-indigo-400 hover:shadow-lg hover:scale-105'
+                        ? 'text-white bg-indigo-600 scale-105 z-10 ring-2 sm:ring-4 ring-indigo-200'
+                        : 'bg-indigo-50 border border-indigo-200 hover:border-indigo-400 hover:scale-105'
                     }`} >
                     {isSelected && <div className="absolute inset-0 bg-gradient-to-br from-white/20 to-transparent" />}
                     <div className="relative z-10 text-center">
-                      <div className={`text-[10px] sm:text-xs font-bold ${isSelected ? 'text-indigo-100' : 'text-gray-500'}`}>
+                      <div className={`text-[10px] sm:text-xs font-semibold ${isSelected ? 'text-indigo-100' : 'text-gray-500'}`}>
                         {d.toLocaleDateString(undefined, { weekday: 'short' })}
                       </div>
-                      <div className={`font-bold text-base sm:text-lg lg:text-xl ${isSelected ? 'text-white' : 'text-gray-900'}`}>
+                      <div className={`font-bold text-base sm:text-lg ${isSelected ? 'text-white' : 'text-gray-900'}`}>
                         {d.toLocaleDateString(undefined, { day: 'numeric' })}
                       </div>
-                      <div className={`text-[10px] sm:text-xs ${isSelected ? 'text-indigo-100' : 'text-gray-500'}`}>
+                      <div className={`text-[10px] sm:text-xs font-semibold ${isSelected ? 'text-indigo-100' : 'text-gray-500'}`}>
                         {d.toLocaleDateString(undefined, { month: 'short' })}
                       </div>
                       {isTodayDate && !isSelected && (
@@ -521,8 +685,8 @@ export function Step3DateTime({
           />
         ) : null}
         <div className="flex items-center gap-2 mb-3 sm:mb-4">
-          <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-gradient-to-br from-blue-100 to-blue-200 flex items-center justify-center flex-shrink-0">
-            <svg className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <div className="w-4 h-4 rounded-lg flex items-center justify-center flex-shrink-0">
+            <svg className="w-4 h-4 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
           </div>
@@ -536,65 +700,113 @@ export function Step3DateTime({
             ) : null}
           </div>
         </div>
-        {loadingAvailability || loadingBookings ? (
+        {!loadingAvailability &&
+        !loadingBookings &&
+        slotAvailabilityMessage &&
+        (!selectedDate || availableDays.length === 0) ? (
+          <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            {slotAvailabilityMessage}
+          </div>
+        ) : null}
+        {loadingAvailability ||
+        (loadingBookings &&
+          !(retainTimeslotsWhileLoading && visibleTimeslots.length > 0)) ? (
           <div className="text-center py-12">
             <div className="inline-flex items-center gap-3 text-gray-500">
               <div className="w-6 h-6 border-[3px] border-indigo-600 border-t-transparent rounded-full animate-spin" />
               <span>{BOOKING_LOADING_MESSAGES.availability}</span>
             </div>
           </div>
-        ) : timeslots.length === 0 ? (
+        ) : visibleTimeslots.length === 0 ? (
           <div className="text-center py-12 bg-gray-50 rounded-2xl border-2 border-dashed border-gray-200">
             <p className="text-gray-500 font-medium">
               {!selectedType
                 ? BOOKING_EMPTY_MESSAGES.selectEventFirst
                 : !selectedDate
                   ? BOOKING_EMPTY_MESSAGES.selectDateFirst
-                  : BOOKING_EMPTY_MESSAGES.noTimeSlots}
+                  : slotAvailabilityMessage ?? BOOKING_EMPTY_MESSAGES.noTimeSlots}
             </p>
           </div>
         ) : (
-          <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-2 sm:gap-3">
-            {timeslots
-              .filter((s) => !s.disabled)
-              .map((slot) => {
+          <>
+            {slotWarning ? (
+              <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                {slotWarning}
+              </div>
+            ) : null}
+            <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-2 sm:gap-3">
+              {visibleTimeslots.map((slot) => {
                 const isSelected =
                   selectedStartUtc === slot.startUtc ||
                   (!selectedStartUtc && selectedTime === slot.time);
+                const isFullGroupSlot =
+                  showCapacitySlots &&
+                  slot.disabled &&
+                  slot.reason === 'booked' &&
+                  (slot.seatsRemaining ?? 0) <= 0;
+                const isSelectable = !slot.disabled && selectedDate;
+
                 return (
                   <button
                     key={slot.startUtc}
+                    type="button"
                     onClick={() => {
+                      if (isFullGroupSlot) {
+                        setSlotWarning(BOOKING_EMPTY_MESSAGES.groupSlotFull);
+                        return;
+                      }
+                      if (!isSelectable) return;
+                      setSlotWarning(null);
                       step3PerfSlotClickStart(slot.time);
                       const t0 = performance.now();
                       onSelectTime(slot.time);
                       onSelectSlot?.(slot);
+                      guideToContinue();
                       step3PerfSync('Step3DateTime timeslot click handler', t0, {
                         startUtc: slot.startUtc,
                       });
                     }}
-                    disabled={!selectedDate}
+                    disabled={!selectedDate && !isFullGroupSlot}
                     title={slot.hostTime ? `Host: ${slot.hostTime}` : undefined}
-                    className={`group relative p-2.5 sm:p-3 lg:p-4 rounded-lg sm:rounded-xl transition-all duration-300 text-xs sm:text-sm font-bold overflow-hidden ${
-                      isSelected
-                        ? 'bg-gradient-to-br from-indigo-600 to-indigo-700 text-white shadow-xl scale-105 ring-2 sm:ring-4 ring-indigo-200'
-                        : 'bg-white border-2 border-gray-200 hover:border-indigo-400 hover:shadow-lg hover:scale-105 hover:bg-indigo-50'
-                    } ${!selectedDate ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    className={`group relative p-2 sm:p-3 rounded-lg transition-all duration-300 text-xs sm:text-sm font-bold overflow-hidden ${
+                      isFullGroupSlot
+                        ? 'bg-red-100 border border-red-400 text-red-700 cursor-pointer hover:bg-red-200'
+                        : isSelected
+                          ? 'bg-indigo-600 text-white shadow-xl scale-105 ring-2 sm:ring-4 ring-indigo-200'
+                          : slot.disabled
+                            ? 'bg-gray-100 border border-gray-200 text-gray-400 cursor-not-allowed'
+                            : 'bg-white border border-gray-200 hover:border-indigo-200 hover:scale-105 hover:bg-indigo-50'
+                    } ${!selectedDate && !isFullGroupSlot ? 'opacity-50 cursor-not-allowed' : ''}`}
                   >
-                    {isSelected && <div className="absolute inset-0 bg-gradient-to-br from-white/20 to-transparent" />}
+                    {isSelected && !isFullGroupSlot ? (
+                      <div className="absolute inset-0 bg-gradient-to-br from-white/20 to-transparent" />
+                    ) : null}
                     <span className="relative z-10">{slot.time}</span>
+                    {showCapacitySlots && typeof slot.seatsRemaining === 'number' ? (
+                      <span className="relative z-10 mt-0.5 block text-[10px] font-medium opacity-80">
+                        {slot.seatsRemaining} left
+                      </span>
+                    ) : null}
                   </button>
                 );
               })}
-          </div>
+            </div>
+          </>
         )}
       </div>
 
-      <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 mt-6 sm:mt-8 lg:mt-10 pt-6 sm:pt-8 border-t border-gray-200">
+      {showBookSeriesOption && onBookSeriesChange ? (
+        <BookSeriesOption checked={bookSeries} onChange={onBookSeriesChange} />
+      ) : null}
+
+      <div
+        ref={continueSectionRef}
+        className="flex flex-col sm:flex-row justify-between gap-3 sm:gap-4 pt-4 scroll-mt-6"
+      >
         {onBack && (
           <button
             onClick={onBack}
-            className="w-full sm:w-auto px-6 sm:px-8 py-3 sm:py-3.5 rounded-xl border-2 border-gray-200 hover:border-gray-300 hover:bg-gray-50 transition-all font-semibold text-gray-700 hover:shadow-md"
+            className="w-full sm:w-auto px-4 py-2 rounded-lg border border-gray-200 hover:border-gray-300 hover:bg-gray-50 transition-all font-semibold text-gray-700 hover:shadow-md"
           >
             {BOOKING_BUTTON_LABELS.back}
           </button>
@@ -602,10 +814,10 @@ export function Step3DateTime({
         <button
           disabled={!selectedDate || !selectedTime || continueDisabled}
           onClick={onContinue}
-          className={`w-full sm:w-auto sm:ml-auto px-6 sm:px-10 py-3 sm:py-3.5 rounded-xl text-white transition-all font-semibold ${
+          className={`w-full sm:w-auto px-4 py-2 text-sm font-semibold text-white rounded-lg bg-indigo-600 transition-all font-semibold ${
             !selectedDate || !selectedTime || continueDisabled
               ? 'bg-gray-300 cursor-not-allowed'
-              : 'bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-700 hover:to-indigo-800 shadow-xl hover:shadow-2xl hover:scale-105'
+              : 'hover:bg-indigo-700'
           }`}
         >
           {continueLabel || BOOKING_BUTTON_LABELS.continue}

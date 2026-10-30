@@ -1,5 +1,6 @@
 'use client';
 
+import { getWorkspaceSession } from '@/src/lib/auth_session';
 import React, { useState, useCallback, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { type public_booking } from '@/src/types/public_booking';
@@ -12,7 +13,7 @@ const STATUS_COLORS: Record<string, string> = {
   pending: 'bg-yellow-100 text-yellow-800',
   confirmed: 'bg-green-100 text-green-800',
   cancelled: 'bg-red-100 text-red-800',
-  completed: 'bg-blue-100 text-blue-800',
+  completed: 'bg-indigo-100 text-indigo-800',
   emergency: 'bg-orange-100 text-orange-800',
   reschedule: 'bg-purple-100 text-purple-800',
 };
@@ -59,6 +60,8 @@ export default function MyBookingsPage() {
   const [selectedBooking, setSelectedBooking] = useState<public_booking | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [emailHint, setEmailHint] = useState('');
+  const [otpLockedOut, setOtpLockedOut] = useState(false);
   const [cooldown, setCooldown] = useState(0);
 
   const startCooldown = useCallback(() => {
@@ -101,7 +104,7 @@ export default function MyBookingsPage() {
     let cancelled = false;
     const checkSession = async () => {
       try {
-        const { data: { session } } = await supabase.auth.getSession();
+        const { session } = await getWorkspaceSession();
         if (cancelled) return;
         if (session?.user?.user_metadata?.role === 'customer') {
           const name = session.user.user_metadata?.name || session.user.email || 'Customer';
@@ -134,9 +137,12 @@ export default function MyBookingsPage() {
 
       if (!res.ok) {
         setError(data.error || 'Failed to send OTP');
+        if (res.status === 429) setOtpLockedOut(true);
         return;
       }
 
+      setEmailHint(typeof data.email_hint === 'string' ? data.email_hint : '');
+      setOtpLockedOut(false);
       setStep('otp_verify');
       startCooldown();
     } catch {
@@ -162,9 +168,11 @@ export default function MyBookingsPage() {
 
       if (!res.ok) {
         setError(data.error || 'Verification failed');
+        if (res.status === 429 || data.lockout) setOtpLockedOut(true);
         return;
       }
 
+      setOtpLockedOut(false);
       setToken(data.token);
       await fetchBookings(data.token);
     } catch {
@@ -232,8 +240,13 @@ export default function MyBookingsPage() {
 
       if (!res.ok) {
         setError(data.error || 'Failed to resend code');
+        if (res.status === 429) setOtpLockedOut(true);
         return;
       }
+      if (typeof data.email_hint === 'string') {
+        setEmailHint(data.email_hint);
+      }
+      setOtpLockedOut(false);
       startCooldown();
     } catch {
       setError('Network error. Please try again.');
@@ -247,6 +260,8 @@ export default function MyBookingsPage() {
     setPhone('');
     setOtpCode('');
     setToken('');
+    setEmailHint('');
+    setOtpLockedOut(false);
     setBookings([]);
     setPagination({ page: 1, limit: ITEMS_PER_PAGE, total: 0, totalPages: 0 });
     setError('');
@@ -289,7 +304,8 @@ export default function MyBookingsPage() {
                 Enter your phone number
               </h2>
               <p className="mb-6 text-sm text-gray-500">
-                We&apos;ll send a verification code via SMS
+                We&apos;ll send a verification code to your WhatsApp and to the email
+                on your booking (when we have one on file).
               </p>
               <form onSubmit={handleSendOtp}>
                 <label
@@ -327,7 +343,14 @@ export default function MyBookingsPage() {
                 Enter verification code
               </h2>
               <p className="mb-6 text-sm text-gray-500">
-                Code sent to <span className="font-medium">{phone}</span>
+                Code sent to WhatsApp at{' '}
+                <span className="font-medium">{phone}</span>
+                {emailHint ? (
+                  <>
+                    {' '}
+                    and email <span className="font-medium">{emailHint}</span>
+                  </>
+                ) : null}
               </p>
               <form onSubmit={handleVerifyOtp}>
                 <label
@@ -352,7 +375,7 @@ export default function MyBookingsPage() {
                 />
                 <button
                   type="submit"
-                  disabled={loading || otpCode.length < 6}
+                  disabled={loading || otpCode.length < 6 || otpLockedOut}
                   className="w-full rounded-lg bg-purple-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-purple-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {loading ? 'Verifying...' : 'Verify & View Bookings'}
@@ -364,6 +387,8 @@ export default function MyBookingsPage() {
                   onClick={() => {
                     setStep('phone_input');
                     setOtpCode('');
+                    setEmailHint('');
+                    setOtpLockedOut(false);
                     setError('');
                   }}
                   className="text-gray-500 hover:text-gray-700"
@@ -373,7 +398,7 @@ export default function MyBookingsPage() {
                 <button
                   type="button"
                   onClick={handleResend}
-                  disabled={cooldown > 0 || loading}
+                  disabled={cooldown > 0 || loading || otpLockedOut}
                   className="text-purple-600 hover:text-purple-700 disabled:text-gray-400"
                 >
                   {cooldown > 0 ? `Resend in ${cooldown}s` : 'Resend code'}

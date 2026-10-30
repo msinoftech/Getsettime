@@ -1,5 +1,6 @@
 'use client';
 
+import { getWorkspaceSession } from '@/src/lib/auth_session';
 import React, { useCallback, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -13,7 +14,7 @@ import {
   type BookingQuickActionFeedback,
 } from '@/src/components/Booking/BookingDetailsCard';
 import { BookingDetailDatetimeModal } from '@/src/components/Booking/BookingDetailDatetimeModal';
-import { AlertModal } from '@/src/components/ui/AlertModal';
+import { toast } from '@/src/components/ui/toast';
 import { ConfirmModal } from '@/src/components/ui/ConfirmModal';
 import type { Booking } from '@/src/types/booking';
 import type {
@@ -28,11 +29,17 @@ import {
   is_whatsapp_admin_enabled,
   is_whatsapp_user_enabled,
 } from '@/lib/workspace-notification-flags';
+import { map_event_types_for_booking_flow } from '@/src/features/booking-flow';
 import type { EventType } from '@/src/types/bookingForm';
 import {
   LuCircleCheck as CircleCheck,
   LuLoader as LoaderIcon,
 } from 'react-icons/lu';
+import {
+  apply_booking_form_error_from_api,
+  BookingFormSubmitError,
+  throw_if_booking_api_error,
+} from '@/src/utils/bookingFormDuplicateInvitee';
 
 type ReminderSendFeedback =
   | null
@@ -93,13 +100,10 @@ export function BookingDetailsWithActions({
     typeof general?.accent_color === 'string' ? String(general.accent_color) : null;
 
   const { data: eventTypesEntities, loading: loadingEventTypes } = useEventTypes();
-  const eventTypesBookingForm = useMemo<EventType[]>(() => {
-    return (eventTypesEntities || []).map((e) => ({
-      id: e.id,
-      title: e.title,
-      duration_minutes: e.duration_minutes ?? 30,
-    }));
-  }, [eventTypesEntities]);
+  const eventTypesBookingForm = useMemo<EventType[]>(
+    () => map_event_types_for_booking_flow(eventTypesEntities ?? []),
+    [eventTypesEntities]
+  );
 
   const [booking, setBooking] = useState(initialBooking);
   React.useEffect(() => setBooking(initialBooking), [initialBooking]);
@@ -110,8 +114,11 @@ export function BookingDetailsWithActions({
   >(null);
   const [saving_patch, set_saving_patch] = useState(false);
   const [saving_follow, set_saving_follow] = useState(false);
+  const [dt_save_error, set_dt_save_error] = useState<string | null>(null);
+  const [dt_save_duplicate_preview, set_dt_save_duplicate_preview] = useState<
+    string | null
+  >(null);
 
-  const [alert_message, set_alert_message] = useState<string | null>(null);
   const [delete_confirm_open, set_delete_confirm_open] = useState(false);
   const [quick_action_feedback, set_quick_action_feedback] =
     useState<BookingQuickActionFeedback>(null);
@@ -133,9 +140,16 @@ export function BookingDetailsWithActions({
     };
   }, []);
 
+  React.useEffect(() => {
+    if (dt_mode) {
+      set_dt_save_error(null);
+      set_dt_save_duplicate_preview(null);
+    }
+  }, [dt_mode]);
+
   const patch_booking_json = useCallback(
     async (body: Record<string, unknown>) => {
-      const { data: { session } } = await supabase.auth.getSession();
+      const { session } = await getWorkspaceSession();
       if (!session?.access_token) throw new Error('Not authenticated');
       const res = await fetch('/api/bookings', {
         method: 'PATCH',
@@ -146,7 +160,7 @@ export function BookingDetailsWithActions({
         body: JSON.stringify({ id: booking.id, ...body }),
       });
       const json = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(json?.error || 'Update failed');
+      throw_if_booking_api_error(res, json, 'Update failed');
       if (json?.data) onBookingUpdated(json.data as Booking);
       return json?.data as Booking | undefined;
     },
@@ -187,7 +201,7 @@ export function BookingDetailsWithActions({
 
   const submit_reminder_email = async () => {
     if (!email_reminder_on) {
-      set_alert_message('Email reminders are turned off in workspace notifications.');
+      toast.warning('Email reminders are turned off in workspace notifications.');
       return;
     }
     if (reminder_success_clear_ref.current) {
@@ -196,7 +210,7 @@ export function BookingDetailsWithActions({
     }
     set_reminder_send_feedback({ channel: 'email', phase: 'loading' });
     try {
-      const { data: { session } } = await supabase.auth.getSession();
+      const { session } = await getWorkspaceSession();
       if (!session?.access_token) throw new Error('Not authenticated');
       const res = await fetch(`/api/bookings/${booking.id}/send-reminder`, {
         method: 'POST',
@@ -209,7 +223,7 @@ export function BookingDetailsWithActions({
       const json = await res.json().catch(() => ({}));
       if (!res.ok) {
         set_reminder_send_feedback(null);
-        set_alert_message(json?.error || 'Could not send email reminder.');
+        toast.error(json?.error || 'Could not send email reminder.');
         return;
       }
       set_reminder_send_feedback({ channel: 'email', phase: 'success' });
@@ -218,7 +232,7 @@ export function BookingDetailsWithActions({
       }, 2000);
     } catch (e: unknown) {
       set_reminder_send_feedback(null);
-      set_alert_message(
+      toast.error(
         e instanceof Error ? e.message : 'Could not send email reminder.'
       );
     }
@@ -231,7 +245,7 @@ export function BookingDetailsWithActions({
     }
     set_reminder_send_feedback({ channel: 'whatsapp', phase: 'loading' });
     try {
-      const { data: { session } } = await supabase.auth.getSession();
+      const { session } = await getWorkspaceSession();
       if (!session?.access_token) throw new Error('Not authenticated');
       const res = await fetch(`/api/bookings/${booking.id}/send-reminder`, {
         method: 'POST',
@@ -244,7 +258,7 @@ export function BookingDetailsWithActions({
       const json = await res.json().catch(() => ({}));
       if (!res.ok) {
         set_reminder_send_feedback(null);
-        set_alert_message(json?.error || 'Could not send WhatsApp reminder.');
+        toast.error(json?.error || 'Could not send WhatsApp reminder.');
         return;
       }
       set_reminder_send_feedback({ channel: 'whatsapp', phase: 'success' });
@@ -253,7 +267,7 @@ export function BookingDetailsWithActions({
       }, 2000);
     } catch (e: unknown) {
       set_reminder_send_feedback(null);
-      set_alert_message(
+      toast.error(
         e instanceof Error ? e.message : 'Could not send WhatsApp reminder.'
       );
     }
@@ -275,10 +289,12 @@ export function BookingDetailsWithActions({
     }) => {
       const mode_now = dt_mode;
       if (!mode_now) return;
+      set_dt_save_error(null);
+      set_dt_save_duplicate_preview(null);
       try {
         if (mode_now === 'follow_up') {
           set_saving_follow(true);
-          const { data: { session } } = await supabase.auth.getSession();
+          const { session } = await getWorkspaceSession();
           if (!session?.access_token) throw new Error('Not authenticated');
 
           const baseMeta =
@@ -336,18 +352,32 @@ export function BookingDetailsWithActions({
             body: JSON.stringify(body),
           });
           const json = await res.json().catch(() => ({}));
-          if (!res.ok) throw new Error(json?.error || 'Failed to schedule follow-up');
+          if (!res.ok) {
+            const formErr = apply_booking_form_error_from_api(
+              json,
+              'Failed to schedule follow-up'
+            );
+            set_dt_save_error(formErr.message);
+            set_dt_save_duplicate_preview(formErr.duplicatePreviewPath ?? null);
+            return;
+          }
           set_dt_mode(null);
-          set_alert_message('Follow-up booking created.');
+          toast.success('Follow-up booking created.');
         } else {
           set_saving_patch(true);
           const updated = await patch_booking_json({ ...payload });
           if (updated) setBooking(updated);
           set_dt_mode(null);
-          set_alert_message('Booking rescheduled.');
+          toast.success('Booking rescheduled.');
         }
       } catch (e: unknown) {
-        set_alert_message(e instanceof Error ? e.message : 'Save failed.');
+        if (e instanceof BookingFormSubmitError) {
+          set_dt_save_error(e.message);
+          set_dt_save_duplicate_preview(e.duplicatePreviewPath ?? null);
+        } else {
+          set_dt_save_error(e instanceof Error ? e.message : 'Save failed.');
+          set_dt_save_duplicate_preview(null);
+        }
       } finally {
         set_saving_patch(false);
         set_saving_follow(false);
@@ -402,10 +432,11 @@ export function BookingDetailsWithActions({
           metadata: meta,
         });
         if (updated) setBooking(updated);
+        toast.success('Booking details saved successfully.');
       } catch (e: unknown) {
         const message =
           e instanceof Error ? e.message : 'Could not save booking details.';
-        set_alert_message(message);
+        toast.error(message);
         throw e instanceof Error ? e : new Error(message);
       } finally {
         set_saving_patch(false);
@@ -427,10 +458,11 @@ export function BookingDetailsWithActions({
           invitee_phone: payload.invitee_phone.trim() || null,
         });
         if (updated) setBooking(updated);
+        toast.success('Invitee updated successfully.');
       } catch (e: unknown) {
         const message =
           e instanceof Error ? e.message : 'Could not save invitee.';
-        set_alert_message(message);
+        toast.error(message);
         throw e instanceof Error ? e : new Error(message);
       } finally {
         set_saving_patch(false);
@@ -464,7 +496,7 @@ export function BookingDetailsWithActions({
       return true;
     } catch (e: unknown) {
       set_quick_action_feedback(null);
-      set_alert_message(e instanceof Error ? e.message : 'Update failed.');
+      toast.error(e instanceof Error ? e.message : 'Update failed.');
       return false;
     } finally {
       set_saving_patch(false);
@@ -476,10 +508,11 @@ export function BookingDetailsWithActions({
       set_saving_patch(true);
       await patch_booking_json({ status: 'deleted' });
       set_delete_confirm_open(false);
+      toast.success('Booking deleted successfully.');
       router.push('/bookings');
     } catch (e: unknown) {
       set_delete_confirm_open(false);
-      set_alert_message(e instanceof Error ? e.message : 'Could not delete booking.');
+      toast.error(e instanceof Error ? e.message : 'Could not delete booking.');
     } finally {
       set_saving_patch(false);
     }
@@ -518,7 +551,7 @@ export function BookingDetailsWithActions({
 
       {reminder_open && (
         <div
-          className="fixed inset-0 z-[60] flex items-center justify-center overflow-y-auto bg-black/40 p-4"
+          className="fixed inset-0 z-100001 flex items-center justify-center overflow-y-auto bg-slate-900/40 backdrop-blur-[2px] p-4"
           role="dialog"
           aria-modal
           onClick={() => close_reminder_modal()}
@@ -607,7 +640,7 @@ export function BookingDetailsWithActions({
                     type="button"
                     className="text-xs text-indigo-600 underline"
                     onClick={() =>
-                      set_alert_message(
+                      toast.info(
                         'Enable WhatsApp for admin or invitees on the Notifications page.'
                       )
                     }
@@ -645,11 +678,17 @@ export function BookingDetailsWithActions({
           workspacePrimaryColor={primary}
           workspaceAccentColor={accent}
           clientTimezone={timezone}
-          onClose={() => set_dt_mode(null)}
+          onClose={() => {
+            set_dt_mode(null);
+            set_dt_save_error(null);
+            set_dt_save_duplicate_preview(null);
+          }}
           onConfirm={handle_datetime_confirm}
           saving={
             dt_mode === 'follow_up' ? saving_follow : saving_patch
           }
+          saveError={dt_save_error}
+          saveDuplicatePreviewPath={dt_save_duplicate_preview}
         />
       )}
 
@@ -666,12 +705,6 @@ export function BookingDetailsWithActions({
         />
       )}
 
-      {alert_message !== null && alert_message !== '' && (
-        <AlertModal
-          message={alert_message}
-          onClose={() => set_alert_message(null)}
-        />
-      )}
     </>
   );
 }

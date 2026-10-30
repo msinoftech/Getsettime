@@ -8,6 +8,7 @@ import {
 } from "@/lib/workspace-service";
 import { sendWorkspaceWelcomeEmail } from "@/lib/send-workspace-welcome-email";
 import { resolveRegistrationGeoFromHeaders } from "@/lib/ipapi-geo";
+import { isFreeClaimSignupMetadata } from "@app/db/subscription";
 
 export async function POST(req: Request) {
   try {
@@ -118,17 +119,33 @@ export async function POST(req: Request) {
       userEmail,
       supabaseAdmin,
       registrationGeo,
+      userMetadata: meta,
     });
 
     if (workspaceError || !workspaceResult) {
       console.error("Bootstrap workspace error:", workspaceError);
-      return NextResponse.json({ error: "Failed to get or create workspace" }, { status: 500 });
+      const status =
+        workspaceError === "Your claim is not valid." ? 400 : 500;
+      return NextResponse.json(
+        { error: workspaceError || "Failed to get or create workspace" },
+        { status }
+      );
     }
+
+    const isFreeClaim = isFreeClaimSignupMetadata(meta);
+    const metaForUpdate =
+      workspaceResult.isNewWorkspace && !isFreeClaim
+        ? {
+            ...meta,
+            onboarding_completed: true,
+            onboarding_last_completed_step: 4,
+          }
+        : meta;
 
     const { error: updateError } = await updateUserWorkspaceMetadata(
       user.id,
       workspaceResult.workspaceId,
-      meta,
+      metaForUpdate,
       supabaseAdmin,
       workspaceResult.isNewWorkspace
     );
@@ -147,7 +164,11 @@ export async function POST(req: Request) {
       }).catch((err) => console.error("Welcome email failed (non-critical):", err));
     }
 
-    return NextResponse.json({ workspace_id: workspaceResult.workspaceId });
+    return NextResponse.json({
+      workspace_id: workspaceResult.workspaceId,
+      is_free_claim: isFreeClaim,
+      skip_onboarding: workspaceResult.isNewWorkspace && !isFreeClaim,
+    });
   } catch (err: unknown) {
     console.error("Bootstrap workspace error:", err);
     return NextResponse.json(

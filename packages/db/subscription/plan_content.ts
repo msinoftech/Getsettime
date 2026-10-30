@@ -96,7 +96,7 @@ export async function getPlanContentForPlan(
 
 export function planFeaturesFromEntitlements(plan: plans): string[] {
   const features = [
-    formatBookingLimitFeature(plan.booking_limit),
+    formatBookingLimitFeature(plan.booking_limit, plan.booking_limit_period),
     `${plan.admin_limit} admin`,
     `Up to ${plan.service_provider_limit} service providers`,
   ];

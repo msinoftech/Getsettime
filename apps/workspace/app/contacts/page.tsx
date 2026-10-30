@@ -1,5 +1,6 @@
 "use client";
 
+import { getWorkspaceSession } from '@/src/lib/auth_session';
 import {
   useState,
   useEffect,
@@ -8,13 +9,26 @@ import {
   type ReactNode,
 } from "react";
 
+import {
+  LuChevronDown,
+  LuChevronUp,
+  LuFilter,
+  LuRefreshCw,
+  LuSearch,
+  LuSlidersHorizontal,
+} from "react-icons/lu";
+
+import { LuEllipsis } from "react-icons/lu";
+
 import type { Contact, FormContact } from "@/src/types/contact";
 
-import { AlertModal } from "@/src/components/ui/AlertModal";
+import { toast } from "@/src/components/ui/toast";
 
 import { ConfirmModal } from "@/src/components/ui/ConfirmModal";
 
 import { ContactTableSkeleton } from "@/src/components/Contacts/ContactTableSkeleton";
+
+import ScreenGate from "@/src/components/ScreenGate";
 
 type contact_source = "Manual" | "Booking" | "Website";
 
@@ -198,7 +212,8 @@ export default function ContactsCreative() {
 
   const [delete_confirm, set_delete_confirm] = useState<string | null>(null);
 
-  const [alert_message, set_alert_message] = useState<string | null>(null);
+
+  const [openActionsId, setOpenActionsId] = useState<string | null>(null);
 
   const [form_data, set_form_data] = useState({
     name: "",
@@ -224,11 +239,7 @@ export default function ContactsCreative() {
 
       setError(null);
 
-      const { supabase } = await import("@/lib/supabaseClient");
-
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
+      const { session } = await getWorkspaceSession();
 
       if (!session?.access_token) {
         setError("Not authenticated");
@@ -349,19 +360,18 @@ export default function ContactsCreative() {
     }
 
     try {
-      const { supabase } = await import("@/lib/supabaseClient");
-
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
+      const { session } = await getWorkspaceSession();
 
       if (!session?.access_token) {
         set_delete_confirm(null);
 
-        set_alert_message("Not authenticated");
+        toast.error("Not authenticated");
 
         return;
       }
+
+      const deletedContact = contacts.find((c) => c.id === delete_confirm);
+      const deletedName = deletedContact?.name?.trim() || "Contact";
 
       const res = await fetch(`/api/contacts?id=${delete_confirm}`, {
         method: "DELETE",
@@ -378,11 +388,13 @@ export default function ContactsCreative() {
       setContacts((prev) => prev.filter((c) => c.id !== delete_confirm));
 
       set_delete_confirm(null);
+
+      toast.success(`"${deletedName}" deleted successfully.`);
     } catch (e) {
       set_delete_confirm(null);
 
-      set_alert_message(
-        e instanceof Error ? e.message : "Failed to delete contact",
+      toast.error(
+        e instanceof Error ? e.message : "Failed to delete contact"
       );
     }
   };
@@ -393,13 +405,16 @@ export default function ContactsCreative() {
     try {
       setSubmitting(true);
 
-      const { supabase } = await import("@/lib/supabaseClient");
-
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
+      const { session } = await getWorkspaceSession();
 
       if (!session?.access_token) {
+        toast.error("Not authenticated");
+        return;
+      }
+
+      const trimmedName = form_data.name.trim();
+      if (!trimmedName) {
+        toast.error("Contact name is required.");
         return;
       }
 
@@ -449,6 +464,8 @@ export default function ContactsCreative() {
             c.id === editing_contact.id ? toFormContact(contact) : c,
           ),
         );
+
+        toast.success(`"${trimmedName}" updated successfully.`);
       } else {
         const res = await fetch("/api/contacts", {
           method: "POST",
@@ -483,6 +500,8 @@ export default function ContactsCreative() {
         const { contact } = await res.json();
 
         setContacts((prev) => [toFormContact(contact), ...prev]);
+
+        toast.success(`"${trimmedName}" added successfully.`);
       }
 
       set_show_modal(false);
@@ -507,8 +526,8 @@ export default function ContactsCreative() {
         notes: "",
       });
     } catch (e) {
-      set_alert_message(
-        e instanceof Error ? e.message : "Something went wrong",
+      toast.error(
+        e instanceof Error ? e.message : "Something went wrong"
       );
     } finally {
       setSubmitting(false);
@@ -560,26 +579,21 @@ export default function ContactsCreative() {
   };
 
   return (
-    <div className="min-h-screen text-slate-900">
+    <div className="relative text-slate-900">
       <div className="mx-auto space-y-6">
-        <div className="overflow-hidden rounded-3xl border border-indigo-100 bg-white shadow-sm">
-          <div className="relative p-6 sm:p-8">
-            <div className="absolute right-0 top-0 h-48 w-48 rounded-full bg-indigo-100/70 blur-3xl" />
-
-            <div className="absolute bottom-0 right-36 h-40 w-40 rounded-full bg-cyan-100/70 blur-3xl" />
-
+        <div className="relative space-y-6">
             <div className="relative flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
               <div>
-                <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-indigo-100 bg-indigo-50 px-3 py-1 text-sm font-semibold text-indigo-700">
+                {/* <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-indigo-100 bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-700">
                   <Icon name="sparkles" className="h-4 w-4" /> Contact
                   Management
-                </div>
+                </div> */}
 
-                <h1 className="text-3xl font-bold tracking-tight text-slate-950 sm:text-4xl">
+                <h1 className="text-2xl font-bold tracking-tight text-slate-900 md:text-3xl">
                   Contacts
                 </h1>
 
-                <p className="mt-2 max-w-2xl text-base text-slate-500">
+                <p className="max-w-2xl text-sm text-slate-500">
                   Manage customers, leads, and booking contacts from one clean
                   workspace.
                 </p>
@@ -589,17 +603,17 @@ export default function ContactsCreative() {
                 <button
                   type="button"
                   onClick={() =>
-                    set_alert_message("Import CSV is coming soon.")
+                    toast.info("Import CSV is coming soon.")
                   }
-                  className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-indigo-200 hover:text-indigo-700"
+                  className="inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-600 shadow-sm transition hover:bg-emerald-700 hover:text-white"
                 >
                   <Icon name="upload" className="h-4 w-4" /> Import CSV
                 </button>
 
                 <button
                   type="button"
-                  onClick={() => set_alert_message("Export is coming soon.")}
-                  className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-indigo-200 hover:text-indigo-700"
+                  onClick={() => toast.info("Export is coming soon.")}
+                  className="inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
                 >
                   <Icon name="download" className="h-4 w-4" /> Export
                 </button>
@@ -607,247 +621,328 @@ export default function ContactsCreative() {
                 <button
                   type="button"
                   onClick={handle_add_contact}
-                  className="inline-flex items-center gap-2 rounded-2xl bg-indigo-600 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-indigo-200 transition hover:bg-indigo-700"
+                  className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700"
                 >
                   <Icon name="plus" className="h-4 w-4" /> Add Contact
                 </button>
               </div>
             </div>
+            
+            <ScreenGate minWidth={1024}>
+              <div className="relative grid gap-4 md:grid-cols-3">
+                <StatCard
+                  icon={<Icon name="users" className="h-5 w-5" />}
+                  label="Total Contacts"
+                  value={stats.total}
+                />
 
-            <div className="relative mt-8 grid gap-4 md:grid-cols-3">
-              <StatCard
-                icon={<Icon name="users" className="h-5 w-5" />}
-                label="Total Contacts"
-                value={stats.total}
-              />
+                <StatCard
+                  icon={<Icon name="user-check" className="h-5 w-5" />}
+                  label="Active Contacts"
+                  value={stats.active}
+                />
 
-              <StatCard
-                icon={<Icon name="user-check" className="h-5 w-5" />}
-                label="Active Contacts"
-                value={stats.active}
-              />
-
-              <StatCard
-                icon={<Icon name="calendar-check" className="h-5 w-5" />}
-                label="Booking Contacts"
-                value={stats.booking}
-              />
-            </div>
-          </div>
-        </div>
-
-        <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-            <div className="relative w-full lg:max-w-xl">
-              <Icon
-                name="search"
-                className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400"
-              />
-
-              <input
-                type="search"
-                value={search_query}
-                onChange={(e) => set_search_query(e.target.value)}
-                placeholder="Search by name, email, phone or city"
-                className="h-14 w-full rounded-2xl border border-slate-200 bg-slate-50 pl-12 pr-4 text-sm font-medium text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-indigo-300 focus:bg-white focus:ring-4 focus:ring-indigo-100"
-              />
-            </div>
-
-            <div className="flex flex-wrap items-center gap-3">
-              <button
-                type="button"
-                onClick={() => set_show_filters(!show_filters)}
-                className="inline-flex h-12 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:border-indigo-200 hover:text-indigo-700"
-              >
-                <Icon name="filter" className="h-4 w-4" /> Smart Filters
-              </button>
-
-              <button
-                type="button"
-                onClick={reset_filters}
-                className="inline-flex h-12 items-center rounded-2xl bg-slate-100 px-4 text-sm font-semibold text-slate-600 transition hover:bg-slate-200"
-              >
-                Reset
-              </button>
-            </div>
-          </div>
-
-          {show_filters && (
-            <div className="mt-4 grid gap-4 rounded-2xl border border-slate-100 bg-slate-50 p-4 md:grid-cols-2">
-              <SelectBox
-                label="Status"
-                value={status_filter}
-                onChange={(value) =>
-                  set_status_filter(value as "all" | contact_status)
-                }
-                options={["all", "active", "inactive"]}
-              />
-
-              <SelectBox
-                label="Source"
-                value={source_filter}
-                onChange={(value) =>
-                  set_source_filter(value as "all" | contact_source)
-                }
-                options={["all", "Manual", "Booking", "Website"]}
-              />
-            </div>
-          )}
-        </div>
-
-        <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
-          <div className="flex flex-col gap-2 border-b border-slate-100 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h2 className="text-lg font-bold text-slate-950">
-                Contact Directory
-              </h2>
-
-              <p className="text-sm text-slate-500">
-                {loading
-                  ? "Loading contacts…"
-                  : `${filtered_contacts.length} contact${filtered_contacts.length === 1 ? "" : "s"} found`}
-              </p>
-            </div>
-
-            <div className="inline-flex items-center gap-2 rounded-full bg-indigo-50 px-3 py-1 text-xs font-bold uppercase tracking-wide text-indigo-700">
-              <span
-                className="h-1.5 w-1.5 rounded-full bg-indigo-600"
-                aria-hidden
-              />
-              Live List
-            </div>
-          </div>
-
-          {loading ? (
-            <div className="overflow-x-auto">
-              <ContactTableSkeleton />
-            </div>
-          ) : error ? (
-            <div className="px-6 py-12 text-center text-red-600">{error}</div>
-          ) : filtered_contacts.length === 0 ? (
-            <div className="flex flex-col items-center justify-center px-6 py-16 text-center">
-              <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-3xl bg-indigo-50 text-indigo-600">
-                <Icon name="users" className="h-8 w-8" />
+                <StatCard
+                  icon={<Icon name="calendar-check" className="h-5 w-5" />}
+                  label="Booking Contacts"
+                  value={stats.booking}
+                />
               </div>
+            </ScreenGate>
+        </div>
 
-              <h3 className="text-xl font-bold text-slate-950">
-                No contacts found
-              </h3>
+        <div className="rounded-2xl bg-white p-4 shadow-sm sm:p-5 space-y-4">
+          <div className="bg-white">
+            {/* Filter */}
+            <div className="mb-4">
+              <div className="w-full">
+                <div className="flex w-full flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                  <div className="basis-1/3">
+                    <h2 className="text-lg font-bold text-slate-950">Contact Directory</h2>
+                    <div className="flex items-center gap-2">  
+                      <p className="text-sm text-slate-500">
+                        {loading
+                          ? "Loading contacts…"
+                          : `${filtered_contacts.length} contact${filtered_contacts.length === 1 ? "" : "s"} found`}
+                      </p>
+                      <p className="flex items-center gap-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-600 px-3 py-1 text-xs">
+                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-600" aria-hidden />Live List
+                      </p>
+                    </div>
+                  </div>
+                  
+                  <div className="basis-2/3 flex w-full min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:gap-3 lg:max-w-3xl lg:flex-1 lg:justify-end">
+                    <div className="relative min-h-12 w-full min-w-0 sm:w-1/2 sm:flex-none">
+                      <Icon
+                        name="search"
+                        className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400"
+                      />
 
-              <p className="mt-2 max-w-md text-sm text-slate-500">
-                {contacts.length === 0
-                  ? "Your contacts will appear here as customers book appointments or when you add them manually."
-                  : "Try adjusting search or Smart Filters."}
-              </p>
+                      <input
+                        type="search"
+                        value={search_query}
+                        onChange={(e) => set_search_query(e.target.value)}
+                        placeholder="Search by name, email, phone or city"
+                        className="box-border h-12 w-full min-w-0 rounded-xl border border-slate-200 bg-slate-50 px-4 pl-11 pr-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-indigo-400 focus:bg-white focus:ring-2 focus:ring-indigo-200"
+                      />
+                    </div>
 
-              {contacts.length === 0 ? (
-                <button
-                  type="button"
-                  onClick={handle_add_contact}
-                  className="mt-5 inline-flex items-center gap-2 rounded-2xl bg-indigo-600 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-indigo-200 transition hover:bg-indigo-700"
-                >
-                  <Icon name="plus" className="h-4 w-4" /> Add First Contact
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={reset_filters}
-                  className="mt-5 inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-                >
-                  Reset filters
-                </button>
-              )}
+                    <div className="flex w-full min-w-0 shrink-0 items-center justify-start gap-2 sm:w-auto sm:justify-end">
+                      <button
+                        type="button"
+                        onClick={() => set_show_filters(!show_filters)}
+                        className="inline-flex h-12 flex-1 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 text-sm font-medium text-slate-800 shadow-sm transition hover:bg-slate-50 sm:flex-initial sm:px-4"
+                      >
+                        <Icon name="filter" className="h-4 w-4" /> Smart Filters
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={reset_filters}
+                        className="inline-flex h-12 flex-1 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 sm:flex-initial sm:px-4"
+                      >
+                        <LuRefreshCw className="h-4 w-4 shrink-0" aria-hidden />
+                        Reset
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {show_filters && (
+                  <div className="mt-4 grid gap-4 rounded-2xl border border-slate-100 bg-slate-50 p-4 grid-cols-2">
+                    <SelectBox
+                      label="Status"
+                      value={status_filter}
+                      onChange={(value) =>
+                        set_status_filter(value as "all" | contact_status)
+                      }
+                      options={["all", "active", "inactive"]}
+                    />
+
+                    <SelectBox
+                      label="Source"
+                      value={source_filter}
+                      onChange={(value) =>
+                        set_source_filter(value as "all" | contact_source)
+                      }
+                      options={["all", "Manual", "Booking", "Website"]}
+                    />
+                  </div>
+                )}
+              </div>
             </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[1050px] text-left">
-                <thead className="bg-slate-50 text-sm font-bold text-slate-500">
-                  <tr>
-                    <th className="px-5 py-4">Contact</th>
 
-                    <th className="px-5 py-4">Email</th>
+            {loading ? (
+              <div className="overflow-x-auto">
+                <ContactTableSkeleton />
+              </div>
+            ) : error ? (
+              <div className="px-6 py-12 text-center text-red-600">{error}</div>
+            ) : filtered_contacts.length === 0 ? (
+              <div className="flex flex-col items-center justify-center px-6 py-16 text-center">
+                <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-3xl bg-indigo-50 text-indigo-600">
+                  <Icon name="users" className="h-8 w-8" />
+                </div>
 
-                    <th className="px-5 py-4">Phone</th>
+                <h3 className="text-xl font-bold text-slate-950">
+                  No contacts found
+                </h3>
 
-                    <th className="px-5 py-4">Location</th>
+                <p className="mt-2 max-w-md text-sm text-slate-500">
+                  {contacts.length === 0
+                    ? "Your contacts will appear here as customers book appointments or when you add them manually."
+                    : "Try adjusting search or Smart Filters."}
+                </p>
 
-                    <th className="px-5 py-4">Source</th>
+                {contacts.length === 0 ? (
+                  <button
+                    type="button"
+                    onClick={handle_add_contact}
+                    className="mt-5 inline-flex items-center gap-2 rounded-2xl bg-indigo-600 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-indigo-200 transition hover:bg-indigo-700"
+                  >
+                    <Icon name="plus" className="h-4 w-4" /> Add First Contact
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={reset_filters}
+                    className="mt-5 inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                  >
+                    Reset filters
+                  </button>
+                )}
+              </div>
+            ) : (
+              <>
+                <ScreenGate maxWidth={1023}>
+                {/* Mobile view */}
+                <div className="block space-y-3">
+                  {filtered_contacts.map((contact) => {
+                    const status = get_contact_status(contact);
 
-                    <th className="px-5 py-4">Last Booking</th>
-
-                    <th className="px-5 py-4">Status</th>
-
-                    <th className="px-5 py-4 text-right">Actions</th>
-                  </tr>
-                </thead>
-
-                <tbody className="divide-y divide-slate-100">
-                  {filtered_contacts.map((contact) => (
-                    <tr
-                      key={contact.id}
-                      className="group transition hover:bg-slate-50/80"
-                    >
-                      <td className="px-5 py-5">
-                        <div className="flex items-center gap-3">
-                          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-100 to-cyan-100 text-sm font-black text-indigo-700">
-                            {get_initials(contact.name ?? "")}
-                          </div>
-
-                          <div>
-                            <div className="font-bold text-slate-950">
-                              {contact.name || "—"}
+                    return (
+                      <div key={contact.id} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition hover:shadow-md">
+                        {/* Header */}
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex min-w-0 items-start gap-3">
+                            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-indigo-500 text-sm font-black text-white">
+                              {get_initials(contact.name ?? "")}
                             </div>
 
-                            <div className="mt-1 inline-flex rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-500">
-                              Customer / Lead
+                            <div className="flex flex-col gap-1 min-w-0">
+                              <div className="truncate text-sm font-bold text-slate-950">
+                                {contact.name || "—"}
+                              </div>
+
+                              <span className="min-w-0 truncate text-sm text-slate-400">
+                                {contact.email || "—"}
+                              </span>
+
+                              <div className="w-fit inline-flex rounded-full border border-slate-200 bg-slate-100 px-3 py-1 text-xs font-bold text-slate-500">
+                                Customer / Lead
+                              </div>
+
                             </div>
                           </div>
+
+                          <ScreenGate minWidth={500}>
+                            <div className="flex flex-col items-center justify-between gap-2">
+                              <span className="text-sm font-semibold text-slate-600">
+                                Source
+                              </span>
+
+                              <span className="rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-xs font-bold text-indigo-600">
+                                {get_contact_source(contact)}
+                              </span>
+                            </div>
+                          </ScreenGate>
+
+                          <div className="flex flex-col justify-end items-end gap-1">
+                            {/* Status */}
+                            <span
+                              className={`shrink-0 rounded-xl px-3 py-1 text-xs font-bold capitalize border ${
+                                status === "active"
+                                  ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                                  : "bg-red-50 text-red-700 border-red-200"
+                              }`}
+                            >
+                              {status}
+                            </span>
+
+                            {/* Actions */}
+                            <div className="relative">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setOpenActionsId(
+                                    openActionsId === contact.id
+                                      ? null
+                                      : contact.id
+                                  )
+                                }
+                                className="inline-flex h-8 w-8 sm:h-10 sm:w-10 items-center justify-center rounded-lg sm:rounded-xl border border-slate-200 bg-white text-slate-700 transition hover:bg-slate-50"
+                                aria-label="More actions"
+                                aria-expanded={openActionsId === contact.id}
+                              >
+                                <LuEllipsis className="h-4 w-4" aria-hidden />
+                              </button>
+                              {openActionsId === contact.id && (
+                                <div className="absolute right-0 top-full z-50 w-56 rounded-xl border border-slate-200 bg-white p-2 shadow-xl" role="menu">
+                                  <IconButton
+                                    label="View"
+                                    onClick={() => {
+                                      set_view_contact(contact);
+                                    }}
+                                    icon={<Icon name="eye" className="h-4 w-4" />}
+                                    colorClass="w-full text-emerald-600 hover:bg-emerald-50"
+                                    title="View"
+                                  />
+
+                                  <IconButton
+                                    label="Edit"
+                                    onClick={() => handle_edit_contact(contact)}
+                                    icon={<Icon name="pencil" className="h-4 w-4" />}
+                                    colorClass="w-full text-indigo-600 hover:bg-indigo-50"
+                                    title="Edit"
+                                  />
+                                  
+                                  <IconButton
+                                    label="Delete"
+                                    onClick={() => handle_delete_click(contact.id)}
+                                    icon={<Icon name="trash" className="h-4 w-4" />}
+                                    colorClass="w-full text-red-600 hover:bg-red-50"
+                                    title="Delete"
+                                  />
+
+                                </div>
+                              )}
+                            </div>
+                          </div>
+
                         </div>
-                      </td>
 
-                      <td className="px-5 py-5 text-sm font-medium text-slate-600">
-                        {contact.email || "—"}
-                      </td>
+                        {/* Contact Details */}
+                        {/* <div className="mt-4 space-y-3 border-t border-slate-100 pt-4">
 
-                      <td className="px-5 py-5 text-sm font-medium text-slate-600">
-                        {contact.phone || "—"}
-                      </td>
+                          <div className="flex items-center justify-between gap-4">
+                            <span className="text-xs font-semibold text-slate-400">
+                              Email
+                            </span>
 
-                      <td className="px-5 py-5 text-sm font-medium text-slate-600">
-                        <div className="flex items-center gap-2">
-                          <Icon
-                            name="map-pin"
-                            className="h-4 w-4 shrink-0 text-slate-400"
-                          />
+                            <span className="min-w-0 truncate text-right text-sm font-medium text-slate-700">
+                              {contact.email || "—"}
+                            </span>
+                          </div>
 
-                          {location_label(contact)}
-                        </div>
-                      </td>
+                          <div className="flex items-center justify-between gap-4">
+                            <span className="text-xs font-semibold text-slate-400">
+                              Phone
+                            </span>
 
-                      <td className="px-5 py-5">
-                        <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-bold text-blue-700">
-                          {get_contact_source(contact)}
-                        </span>
-                      </td>
+                            <span className="text-right text-sm font-medium text-slate-700">
+                              {contact.phone || "—"}
+                            </span>
+                          </div>
 
-                      <td className="px-5 py-5 text-sm font-medium text-slate-600">
-                        {get_last_booking_label(contact)}
-                      </td>
+                          <div className="flex items-center justify-between gap-4">
+                            <span className="text-xs font-semibold text-slate-400">
+                              Location
+                            </span>
 
-                      <td className="px-5 py-5">
-                        <span
-                          className={`rounded-full px-3 py-1 text-xs font-bold capitalize ${
-                            get_contact_status(contact) === "active"
-                              ? "bg-emerald-50 text-emerald-700"
-                              : "bg-rose-50 text-rose-700"
-                          }`}
-                        >
-                          {get_contact_status(contact)}
-                        </span>
-                      </td>
+                            <div className="flex min-w-0 items-center gap-1.5 text-right text-sm font-medium text-slate-700">
+                              <Icon
+                                name="map-pin"
+                                className="h-4 w-4 shrink-0 text-slate-400"
+                              />
 
-                      <td className="px-5 py-5">
-                        <div className="flex items-center justify-end gap-2">
+                              <span className="truncate">
+                                {location_label(contact)}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center justify-between gap-4">
+                            <span className="text-xs font-semibold text-slate-400">
+                              Source
+                            </span>
+
+                            <span className="rounded-full bg-indigo-50 px-2.5 py-1 text-[11px] font-bold text-indigo-700">
+                              {get_contact_source(contact)}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center justify-between gap-4">
+                            <span className="text-xs font-semibold text-slate-400">
+                              Last Booking
+                            </span>
+
+                            <span className="text-right text-sm font-medium text-slate-700">
+                              {get_last_booking_label(contact)}
+                            </span>
+                          </div>
+                        </div> */}
+
+                        {/* <div className="mt-4 flex items-center justify-end gap-2 border-t border-slate-100 pt-4">
                           <IconButton
                             label="View"
                             onClick={() => {
@@ -867,23 +962,152 @@ export default function ContactsCreative() {
                             onClick={() => handle_delete_click(contact.id)}
                             className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-rose-100 bg-rose-50 text-rose-600 transition hover:bg-rose-100"
                             title="Delete"
+                            aria-label="Delete contact"
                           >
                             <Icon name="trash" className="h-4 w-4" />
                           </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+                        </div> */}
+                      </div>
+                    );
+                  })}
+                </div>
+                </ScreenGate>
+                
+                <ScreenGate minWidth={1024}>
+                {/* desktop view */}
+                <div className="overflow-hidden overflow-x-auto">
+                  <table className="w-full border-collapse">
+                    <thead className="bg-slate-100">
+                      <tr className="text-left text-sm text-slate-900">
+                        <th className="px-6 py-4 font-semibold">Contact</th>
+
+                        <th className="px-6 py-4 font-semibold">Email</th>
+
+                        <th className="px-6 py-4 font-semibold">Phone</th>
+
+                        <th className="px-6 py-4 font-semibold">Location</th>
+
+                        <th className="px-6 py-4 font-semibold">Source</th>
+
+                        <th className="px-6 py-4 font-semibold">Last Booking</th>
+
+                        <th className="px-6 py-4 font-semibold">Status</th>
+
+                        <th className="px-6 py-4 font-semibold text-right">Actions</th>
+                      </tr>
+                    </thead>
+
+                    <tbody className="divide-y divide-slate-100">
+                      {filtered_contacts.map((contact) => (
+                        <tr
+                          key={contact.id}
+                          className="cursor-pointer transition hover:bg-slate-50 border border-slate-100 last:border-b-0  border-b border-slate-100"
+                        >
+                          <td className="text-sm px-6 py-5 align-middle border-b border-slate-100" data-label="Contact">
+                            <div className="flex items-start max-[1301px]:justify-end gap-2.5">
+                              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-indigo-500 font-black text-white">
+                                {get_initials(contact.name ?? "")}
+                              </div>
+
+                              <div>
+                                <div className="font-bold text-slate-950">
+                                  {contact.name || "—"}
+                                </div>
+
+                                <div className="mt-1 inline-flex rounded-full border border-slate-200 bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-500">
+                                  Customer / Lead
+                                </div>
+                              </div>
+                            </div>
+                          </td>
+
+                          <td className="text-sm px-6 py-5 align-middle border-b border-slate-100" data-label="Email">
+                            {contact.email || "—"}
+                          </td>
+
+                          <td className="text-sm px-6 py-5 align-middle border-b border-slate-100" data-label="Phone">
+                            {contact.phone || "—"}
+                          </td>
+
+                          <td className="text-sm px-6 py-5 align-middle border-b border-slate-100" data-label="Location">
+                            <div className="flex items-center max-[1301px]:justify-end gap-2.5">
+                              <Icon
+                                name="map-pin"
+                                className="h-4 w-4 shrink-0 text-slate-600"
+                              />
+
+                              {location_label(contact)}
+                            </div>
+                          </td>
+
+                          <td className="text-sm px-6 py-5 align-middle border-b border-slate-100" data-label="Source">
+                            <span className="rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-xs font-bold text-indigo-600">
+                              {get_contact_source(contact)}
+                            </span>
+                          </td>
+
+                          <td className="text-sm px-6 py-5 align-middle border-b border-slate-100" data-label="Last Booking">
+                            {get_last_booking_label(contact)}
+                          </td>
+
+                          <td className="text-sm px-6 py-5 align-middle border-b border-slate-100" data-label="Status">
+                            <span
+                              className={`rounded-full px-3 py-1 text-xs border font-bold capitalize ${
+                                get_contact_status(contact) === "active"
+                                  ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                                  : "bg-red-50 text-red-700 border-red-200"
+                              }`}
+                            >
+                              {get_contact_status(contact)}
+                            </span>
+                          </td>
+
+                          <td className="text-sm px-6 py-5 align-middle border-b border-slate-100" data-label="Actions">
+                            <div className="flex items-center justify-end gap-2">
+                              <IconButton
+                                label="View"
+                                onClick={() => {
+                                  set_view_contact(contact);
+                                }}
+                                icon={<Icon name="eye" className="h-4 w-4" />}
+                                title=""
+                                colorClass="border border-emerald-200 bg-emerald-50 text-emerald-600 transition hover:bg-emerald-100 hover:text-emerald-700 py-3"
+                              />
+
+                              <IconButton
+                                label="Edit"
+                                onClick={() => handle_edit_contact(contact)}
+                                icon={<Icon name="pencil" className="h-4 w-4" />}
+                                title=""
+                                colorClass="border border-indigo-200 bg-indigo-50 text-indigo-600 transition hover:bg-indigo-100 hover:text-indigo-700 py-3"
+                              />
+
+                              <button
+                                type="button"
+                                onClick={() => handle_delete_click(contact.id)}
+                                className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-red-100 bg-red-50 text-red-600 transition hover:bg-red-100"
+                                title="Delete"
+                              >
+                                <Icon name="trash" className="h-4 w-4" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                </ScreenGate>
+              </>           
+            )}
+          </div>
         </div>
-      </div>
+
+      </div>     
 
       {show_modal && (
         <div
-          className="fixed inset-0 z-[100001] flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm"
+          className="fixed inset-0 z-[100001] flex items-center justify-center bg-slate-900/40 backdrop-blur-[2px]"
           role="presentation"
           onClick={(e) => {
             if (e.target === e.currentTarget) {
@@ -892,12 +1116,12 @@ export default function ContactsCreative() {
           }}
         >
           <div
-            className="flex max-h-[min(90vh,880px)] w-full max-w-2xl flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-2xl"
+            className="flex max-h-[min(90vh,880px)] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl"
             role="dialog"
             aria-modal="true"
             aria-labelledby="contact-form-title"
           >
-            <div className="shrink-0 border-b border-slate-100 px-6 pb-5 pt-6 sm:px-8">
+            <div className="shrink-0 border-b border-slate-100 px-4 pb-5 pt-6">
               <div className="flex items-start justify-between gap-4">
                 <div>
                   <h3
@@ -927,7 +1151,7 @@ export default function ContactsCreative() {
               onSubmit={handle_submit}
               className="flex min-h-0 flex-1 flex-col"
             >
-              <div className="flex-1 overflow-y-auto px-6 py-6 sm:px-8">
+              <div className="flex-1 overflow-y-auto px-4 py-6">
                 <div className="grid gap-5 md:grid-cols-2">
                   <div>
                     <label
@@ -1112,7 +1336,7 @@ export default function ContactsCreative() {
                 </div>
               </div>
 
-              <div className="flex shrink-0 flex-wrap items-center justify-end gap-3 border-t border-slate-100 px-6 py-4 sm:px-8">
+              <div className="flex shrink-0 flex-wrap items-center justify-end gap-3 border-t border-slate-100 px-4 py-4">
                 <button
                   type="button"
                   onClick={handle_close_modal}
@@ -1124,7 +1348,7 @@ export default function ContactsCreative() {
                 <button
                   type="submit"
                   disabled={submitting}
-                  className="rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-indigo-200 transition hover:from-indigo-700 hover:to-violet-700 disabled:opacity-60"
+                  className="rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-lg transition disabled:opacity-60"
                 >
                   {submitting
                     ? "Saving..."
@@ -1140,7 +1364,7 @@ export default function ContactsCreative() {
 
       {view_contact && (
         <div
-          className="fixed inset-0 z-[100000] flex items-center justify-center bg-slate-950/40 p-4 backdrop-blur-sm"
+          className="fixed inset-0 z-1000001 flex items-center justify-center bg-slate-900/40 backdrop-blur-[2px]"
           role="presentation"
           onClick={(e) => {
             if (e.target === e.currentTarget) {
@@ -1149,12 +1373,12 @@ export default function ContactsCreative() {
           }}
         >
           <div
-            className="w-full max-w-2xl overflow-hidden rounded-[28px] border border-slate-200/80 bg-white shadow-2xl"
+            className="max-h-[min(90vh,880px)] w-full max-w-2xl flex flex-col overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-2xl"
             role="dialog"
             aria-modal="true"
             aria-labelledby="contact-view-title"
           >
-            <div className="border-b border-slate-100 px-6 pb-5 pt-6 sm:px-8">
+            <div className="border-b border-slate-100 pb-5 pt-6 px-4">
               <div className="flex items-start justify-between gap-4">
                 <div>
                   <h3
@@ -1180,9 +1404,9 @@ export default function ContactsCreative() {
               </div>
             </div>
 
-            <div className="max-h-[min(70vh,640px)] space-y-6 overflow-y-auto px-6 py-6 sm:px-8">
-              <div className="flex items-center gap-4 rounded-2xl border border-sky-100/80 bg-gradient-to-br from-sky-50 to-slate-50 p-5">
-                <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-full bg-sky-100 text-2xl font-black text-sky-800">
+            <div className="max-h-[min(70vh,640px)] space-y-6 overflow-y-auto px-4 py-6">
+              <div className="flex items-center gap-4 rounded-2xl border border-indigo-100 bg-indigo-50 p-5">
+                <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-full bg-indigo-100 text-2xl font-black text-indigo-800">
                   {get_initials(view_contact.name ?? "")}
                 </div>
 
@@ -1257,7 +1481,7 @@ export default function ContactsCreative() {
               </div>
             </div>
 
-            <div className="flex flex-wrap items-center justify-end gap-3 border-t border-slate-100 px-6 py-4 sm:px-8">
+            <div className="flex flex-wrap items-center justify-end gap-3 border-t border-slate-100 px-4 py-4">
               <button
                 type="button"
                 onClick={() => set_view_contact(null)}
@@ -1275,7 +1499,7 @@ export default function ContactsCreative() {
 
                   handle_edit_contact(c);
                 }}
-                className="rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-indigo-200 transition hover:from-indigo-700 hover:to-violet-700"
+                className="rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-lg transition"
               >
                 Edit
               </button>
@@ -1295,12 +1519,6 @@ export default function ContactsCreative() {
         />
       )}
 
-      {alert_message && (
-        <AlertModal
-          message={alert_message}
-          onClose={() => set_alert_message(null)}
-        />
-      )}
     </div>
   );
 }
@@ -1319,17 +1537,13 @@ function StatCard({
   value: number;
 }) {
   return (
-    <div className="rounded-3xl border border-slate-100 bg-white p-5 shadow-sm">
-      <div className="flex items-center justify-between gap-4">
-        <div className="flex min-w-0 flex-1 items-center gap-4">
-          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-violet-50 text-indigo-600">
-            {icon}
-          </div>
-          <span className="truncate text-sm font-semibold text-slate-500">{label}</span>
-        </div>
-        <span className="shrink-0 text-3xl font-black tracking-tight text-slate-950 tabular-nums">
-          {value}
-        </span>
+    <div className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="flex h-10 w-10 xl:h-14 xl:w-14 shrink-0 items-center justify-center rounded-xl bg-sky-50 text-sky-600">
+        {icon}
+      </div>
+      <div className="min-w-0">
+        <p className="text-sm font-medium leading-snug text-slate-500">{label}</p>
+        <p className="text-2xl font-bold text-slate-900">{value}</p>
       </div>
     </div>
   );
@@ -1340,11 +1554,19 @@ function IconButton({
 
   label,
 
+  title,
+
+  colorClass = "text-slate-700 hover:bg-slate-50",
+
   onClick,
 }: {
   icon: ReactNode;
 
   label: string;
+
+  title: string;
+
+  colorClass?: string;
 
   onClick: () => void;
 }) {
@@ -1352,10 +1574,11 @@ function IconButton({
     <button
       type="button"
       onClick={onClick}
-      className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 transition hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700"
+      className={`flex items-center gap-2 rounded-xl px-3 py-2 text-sm disabled:opacity-60 ${colorClass}`}
       title={label}
     >
       {icon}
+      {title}
     </button>
   );
 }

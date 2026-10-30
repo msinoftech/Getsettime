@@ -1,15 +1,14 @@
 "use client";
+import { useState } from "react";
+import { LuMonitor, LuUser, LuUsers } from "react-icons/lu";
+import { parse_event_type_format } from "@/src/features/event-types/event_type_format";
+import type { event_type_format, event_type_status } from "@/src/types/event_types";
+import { EventTypeAssignedProviders } from "@/src/features/event-types/EventTypeAssignedProviders";
+import { useServiceProviders } from "@/src/hooks/useBookingLookups";
+import ScreenGate from "@/src/components/ScreenGate";
+import type { event_type_assignment_fields } from "@/src/utils/bookingFormUtils";
 
-import {  LuCalendarDays,
-  LuClock,
-  LuPencil,
-  LuUsers,
-} from "react-icons/lu";
-import { EventTypeActionsMenu } from "@/src/features/event-types/EventTypeActionsMenu";
-import { EventTypeLocationCell } from "@/src/features/event-types/EventTypeLocationDisplay";
-import type { event_type_status } from "@/src/types/event_types";
-
-export type event_type_list_item = {
+export type event_type_list_item = event_type_assignment_fields & {
   id: number;
   title: string;
   slug: string;
@@ -17,192 +16,152 @@ export type event_type_list_item = {
   location_type: string | null;
   settings: unknown;
   status?: string | null;
-  owner_id?: string | null;
+  event_type_format?: string | null;
 };
 
-type EventTypeListMobileCardProps = {
-  item: event_type_list_item;
-  status: event_type_status;
-  status_label: string;
-  provider_label: string;
-  card_gradient: string;
-  duration_label: string;
-  short_description: string;
-  menu_open: boolean;
-  loading_slug: boolean;
-  copy_copied: boolean;
-  on_edit: () => void;
-  on_toggle_menu: () => void;
-  on_copy_link: () => void;
-  on_duplicate: () => void;
-  on_delete: () => void;
+type EventTypeListMobileCardsProps = {
+  items: event_type_list_item[];
+  format_duration_label: (minutes: number | null) => string;
+  get_status: (status: unknown) => event_type_status;
+  get_status_label: (status: event_type_status) => string;
+  owner_names_by_id?: Record<string, string>;
+  show_owner_labels?: boolean;
+  on_row_click: (item: event_type_list_item) => void;
 };
 
 function cn(...classes: (string | false | null | undefined)[]) {
   return classes.filter(Boolean).join(" ");
 }
 
-function MetaDivider() {
-  return <span className="text-slate-300" aria-hidden>|</span>;
+function format_short_label(format: event_type_format): string {
+  if (format === "group_class") return "Group";
+  if (format === "recurring") return "Recurring";
+  return "One-on-one";
 }
 
-function EventTypeListMobileCard({
-  item,
-  status,
-  status_label,
-  provider_label,
-  card_gradient,
-  duration_label,
-  short_description,
-  menu_open,
-  loading_slug,
-  copy_copied,
-  on_edit,
-  on_toggle_menu,
-  on_copy_link,
-  on_duplicate,
-  on_delete,
-}: EventTypeListMobileCardProps) {
-  return (
-    <article className="overflow-visible border-b border-slate-100 p-4 last:border-b-0">
-      <div className="flex items-start gap-3">
-        <div
-          className={cn(
-            "flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br text-white",
-            card_gradient
-          )}
-        >
-          <LuCalendarDays className="h-4 w-4" aria-hidden />
-        </div>
-
-        <div className="min-w-0 flex-1">
-          <div className="flex items-start justify-between gap-2">
-            <h3 className="text-sm font-semibold text-slate-900">{item.title}</h3>
-            <span
-              className={cn(
-                "shrink-0 rounded-full px-2.5 py-0.5 text-xs font-semibold",
-                status === "active"
-                  ? "bg-emerald-50 text-emerald-700"
-                  : "bg-amber-50 text-amber-700"
-              )}
-            >
-              {status_label}
-            </span>
-          </div>
-
-          {short_description ? (
-            <p className="mt-1 line-clamp-2 text-sm text-slate-500">{short_description}</p>
-          ) : null}
-        </div>
-      </div>
-
-      <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-600">
-        <span className="inline-flex items-center gap-1">
-          <LuClock className="h-3.5 w-3.5 shrink-0 text-slate-400" aria-hidden />
-          {duration_label}
-        </span>
-        <MetaDivider />
-        <div className="min-w-0 [&_span]:text-xs">
-          <EventTypeLocationCell location_type={item.location_type} />
-        </div>
-        <MetaDivider />
-        <span className="inline-flex min-w-0 items-center gap-1">
-          <LuUsers className="h-3.5 w-3.5 shrink-0 text-slate-400" aria-hidden />
-          <span className="truncate">{provider_label}</span>
-        </span>
-      </div>
-
-      <div className="mt-3 flex items-center justify-between gap-3">
-        {item.slug ? (
-          <span className="truncate text-sm font-medium text-violet-600">/{item.slug}</span>
-        ) : (
-          <span className="text-sm text-slate-400">—</span>
-        )}
-
-        <div className="flex shrink-0 items-center gap-2">
-          <button
-            type="button"
-            onClick={on_edit}
-            className="inline-flex cursor-pointer items-center rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
-          >
-            <LuPencil className="mr-1.5 h-3.5 w-3.5" aria-hidden />
-            Edit
-          </button>
-          <EventTypeActionsMenu
-            open={menu_open}
-            copy_disabled={loading_slug || !item.slug}
-            copy_copied={copy_copied}
-            on_toggle={on_toggle_menu}
-            on_copy_link={on_copy_link}
-            on_duplicate={on_duplicate}
-            on_delete={on_delete}
-          />
-        </div>
-      </div>
-    </article>
-  );
+function format_icon_wrap_class(
+  format: event_type_format,
+  status: event_type_status
+): string {
+  if (status === "draft" && format === "group_class") {
+    return "bg-orange-50 text-orange-600";
+  }
+  if (format === "group_class") return "bg-sky-50 text-sky-600";
+  if (format === "recurring") return "bg-emerald-50 text-emerald-600";
+  return "bg-indigo-50 text-indigo-600";
 }
 
-type EventTypeListMobileCardsProps = {
-  items: event_type_list_item[];
-  open_menu_id: number | null;
-  copied_id: number | null;
-  loading_slug: boolean;
-  get_card_gradient: (id: number) => string;
-  format_duration_label: (minutes: number | null) => string;
-  get_provider_label: (owner_id?: string | null) => string;
-  get_short_description: (settings: unknown) => string;
-  get_status: (status: unknown) => event_type_status;
-  get_status_label: (status: event_type_status) => string;
-  on_edit: (item: event_type_list_item) => void;
-  on_toggle_menu: (id: number) => void;
-  on_copy_link: (item: event_type_list_item) => void;
-  on_duplicate: (item: event_type_list_item) => void;
-  on_delete: (id: number) => void;
-};
+function FormatIcon({ format }: { format: event_type_format }) {
+  if (format === "group_class") {
+    return <LuUsers className="h-5 w-5" aria-hidden />;
+  }
+  if (format === "recurring") {
+    return <LuMonitor className="h-5 w-5" aria-hidden />;
+  }
+  return <LuUser className="h-5 w-5" aria-hidden />;
+}
 
 export function EventTypeListMobileCards({
   items,
-  open_menu_id,
-  copied_id,
-  loading_slug,
-  get_card_gradient,
   format_duration_label,
-  get_provider_label,
-  get_short_description,
   get_status,
   get_status_label,
-  on_edit,
-  on_toggle_menu,
-  on_copy_link,
-  on_duplicate,
-  on_delete,
+  owner_names_by_id,
+  show_owner_labels = false,
+  on_row_click,
 }: EventTypeListMobileCardsProps) {
+  const { data: serviceProviders } = useServiceProviders();
+
+  const provider_row = (item: event_type_list_item) => (
+    <EventTypeAssignedProviders
+      eventType={item}
+      serviceProviders={serviceProviders}
+      owner_names_by_id={owner_names_by_id}
+      show_owner_labels={show_owner_labels}
+      size="sm"
+      compact
+    />
+  );
+
   return (
-    <div className="overflow-visible min-[1211px]:hidden">
-      {items.map((item) => {
-        const status = get_status(item);
-        return (
-          <EventTypeListMobileCard
-            key={item.id}
-            item={item}
-            status={status}
-            status_label={get_status_label(status)}
-            provider_label={get_provider_label(item.owner_id)}
-            card_gradient={get_card_gradient(item.id)}
-            duration_label={format_duration_label(item.duration_minutes)}
-            short_description={get_short_description(item.settings)}
-            menu_open={open_menu_id === item.id}
-            loading_slug={loading_slug}
-            copy_copied={copied_id === item.id && open_menu_id === item.id}
-            on_edit={() => on_edit(item)}
-            on_toggle_menu={() => on_toggle_menu(item.id)}
-            on_copy_link={() => on_copy_link(item)}
-            on_duplicate={() => on_duplicate(item)}
-            on_delete={() => on_delete(item.id)}
-          />
-        );
-      })}
-    </div>
+    <>
+    <div className="space-y-3 ">
+        {items.map((item) => {
+          const status = get_status(item.status);
+          const status_label = get_status_label(status);
+          const format = parse_event_type_format(item.event_type_format);
+          const duration_label = format_duration_label(item.duration_minutes);
+
+          return (
+            <div
+              key={item.id}
+              onClick={() => on_row_click(item)}
+              className="w-full space-y-2 rounded-2xl border border-slate-200 bg-white px-2 py-3 text-left shadow-sm transition active:bg-slate-50"
+            >
+              <div className="flex items-start justify-between gap-3">
+                  <div className="space-y-1">
+                    <div className="flex gap-2">
+                      <div
+                        className={cn(
+                          "flex h-11 w-11 shrink-0 items-center justify-center rounded-xl",
+                          format_icon_wrap_class(format, status)
+                        )}
+                      >
+                        <FormatIcon format={format} />
+                      </div>
+                      <div>
+                        <p className="truncate text-sm font-semibold text-slate-900">
+                          {item.title}
+                        </p>
+                        <p className="mt-0.5 flex flex-wrap items-center gap-1 text-sm text-slate-600">
+                          <span className="flex items-center gap-1">
+                            <svg className="h-3.5 w-3.5 text-indigo-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+                            {duration_label}
+                          </span>
+                        </p>
+                      </div>
+                    </div>                
+                  </div>
+                  
+                  <ScreenGate minWidth={576}>
+                  <div className="flex flex-col gap-1">
+                    <div className="flex">
+                      <span className="text-xs text-indigo-600 border border-indigo-200 bg-indigo-100 px-3 py-1 rounded-full">
+                        {format_short_label(format)}
+                      </span>
+                    </div>
+                    <p>{provider_row(item)}</p>
+                  </div>
+                  </ScreenGate>
+
+                  <div>
+                    <span
+                      className={cn(
+                        "shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold border",
+                        status === "active"
+                          ? "bg-emerald-50 text-emerald-600 border-emerald-200"
+                          : "bg-amber-50 text-amber-700 border-amber-200"
+                      )}
+                    >
+                      {status_label}
+                    </span>
+                  </div>
+              </div>
+
+              <ScreenGate maxWidth={575}>
+                <div className="flex flex-row gap-1">
+                  <div className="flex">
+                    <span className="text-xs text-indigo-600 border border-indigo-200 bg-indigo-100 px-3 py-1 rounded-full">
+                      {format_short_label(format)}
+                    </span>
+                  </div>
+                  <p>{provider_row(item)}</p>
+                </div>
+              </ScreenGate> 
+            </div>
+          );
+        })}
+      </div>
+    </>
   );
 }

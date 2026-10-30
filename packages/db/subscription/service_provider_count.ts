@@ -26,8 +26,17 @@ function userActsAsServiceProvider(u: Pick<User, 'user_metadata'>): boolean {
   return false;
 }
 
-/** Paginated auth.admin.listUsers; counts active service providers in workspace. */
-export async function countWorkspaceServiceProviders(
+function isMissingRpcError(message: string | undefined): boolean {
+  if (!message) return false;
+  const lower = message.toLowerCase();
+  return (
+    lower.includes('count_workspace_service_providers') ||
+    lower.includes('could not find the function') ||
+    lower.includes('schema cache')
+  );
+}
+
+async function countWorkspaceServiceProvidersViaListUsers(
   supabaseAdmin: SupabaseClient,
   workspaceId: number
 ): Promise<number> {
@@ -51,4 +60,28 @@ export async function countWorkspaceServiceProviders(
   }
 
   return count;
+}
+
+/** Indexed workspace SP count via RPC; falls back to listUsers when migration is not applied. */
+export async function countWorkspaceServiceProviders(
+  supabaseAdmin: SupabaseClient,
+  workspaceId: number
+): Promise<number> {
+  const { data, error } = await supabaseAdmin.rpc('count_workspace_service_providers', {
+    p_workspace_id: workspaceId,
+  });
+
+  if (!error) {
+    const n = typeof data === 'number' ? data : Number(data);
+    return Number.isFinite(n) ? n : 0;
+  }
+
+  if (!isMissingRpcError(error.message)) {
+    throw new Error(error.message);
+  }
+
+  console.warn(
+    'countWorkspaceServiceProviders: RPC missing, falling back to listUsers (apply create_count_workspace_service_providers_rpc migration)'
+  );
+  return countWorkspaceServiceProvidersViaListUsers(supabaseAdmin, workspaceId);
 }

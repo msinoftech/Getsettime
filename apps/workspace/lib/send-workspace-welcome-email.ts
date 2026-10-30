@@ -40,6 +40,7 @@ export async function sendWorkspaceWelcomeEmail(params: {
     upgradeUrl: `${origin}/billings`,
     planName: snapshot.plan.name,
     bookingLimit: snapshot.plan.booking_limit,
+    bookingLimitPeriod: snapshot.plan.booking_limit_period,
     adminLimit: snapshot.plan.admin_limit,
     serviceProviderLimit: snapshot.plan.service_provider_limit,
   });

@@ -35,7 +35,7 @@ export function BookingPhoneInput({
   if (loadingCountry) {
     return (
       <div
-        className="w-full rounded-xl border-2 border-gray-200 bg-white px-4 py-4 text-sm text-gray-500"
+        className="w-full rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm text-gray-500"
         aria-hidden
       >
         Detecting your country…
@@ -44,7 +44,7 @@ export function BookingPhoneInput({
   }
 
   return (
-    <div className="booking-phone-input group w-full rounded-xl border-2 border-gray-200 bg-white transition-all focus-within:border-indigo-500 hover:border-gray-300">
+    <div className="booking-phone-input group w-full rounded-xl border border-gray-200 bg-white transition-all focus-within:border-indigo-500 hover:border-gray-300">
       <PhoneInput
         key={defaultCountryLower}
         defaultCountry={defaultCountryLower}
@@ -59,7 +59,7 @@ export function BookingPhoneInput({
         forceDialCode
         disableDialCodeAndPrefix
         showDisabledDialCodeAndPrefix
-        className="booking-phone-input__root"
+        className="booking-phone-input__root h-12"
         style={
           {
             '--react-international-phone-border-color': 'transparent',

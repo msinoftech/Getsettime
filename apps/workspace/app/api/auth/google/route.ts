@@ -7,6 +7,7 @@ type BuildAuthUrlInput = {
   isSignup: boolean;
   returnTo?: string;
   loginHint?: string;
+  claimCode?: string;
 };
 
 function buildGoogleAuthUrl({
@@ -15,6 +16,7 @@ function buildGoogleAuthUrl({
   isSignup,
   returnTo,
   loginHint,
+  claimCode,
 }: BuildAuthUrlInput): string {
   if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
     throw new Error(
@@ -42,6 +44,7 @@ function buildGoogleAuthUrl({
     isSignup,
     timestamp: Date.now(),
     ...(returnTo ? { returnTo } : {}),
+    ...(claimCode ? { claimCode } : {}),
   });
 
   const authOptions: Parameters<typeof oauth2Client.generateAuthUrl>[0] = {
@@ -69,6 +72,7 @@ export async function GET(req: Request) {
     const enableCalendarSync = url.searchParams.get("calendar") === "1";
     const returnTo = url.searchParams.get("returnTo") ?? undefined;
     const loginHint = url.searchParams.get("loginHint") ?? undefined;
+    const claimCode = url.searchParams.get("claim_code") ?? undefined;
 
     const authUrl = buildGoogleAuthUrl({
       reqUrl: req.url,
@@ -76,6 +80,7 @@ export async function GET(req: Request) {
       isSignup,
       returnTo,
       loginHint,
+      claimCode,
     });
 
     return NextResponse.redirect(authUrl);
@@ -89,7 +94,9 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { enableCalendarSync, isSignup, returnTo, loginHint } = body;
+    const { enableCalendarSync, isSignup, returnTo, loginHint, claim_code: claimCodeBody } = body;
+    const claimCode =
+      typeof claimCodeBody === 'string' && claimCodeBody.trim() ? claimCodeBody.trim() : undefined;
 
     // Validate environment variables
     if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
@@ -123,6 +130,7 @@ export async function POST(req: Request) {
       isSignup: isSignup === true,
       timestamp: Date.now(),
       ...(typeof returnTo === 'string' && returnTo ? { returnTo } : {}),
+      ...(claimCode ? { claimCode } : {}),
     });
 
     const authOptions: Parameters<typeof oauth2Client.generateAuthUrl>[0] = {

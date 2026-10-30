@@ -123,10 +123,10 @@ export function CreateBookingModalHost() {
         role="dialog"
         aria-modal="true"
         aria-labelledby="admin-create-booking-dialog-title"
-        className="relative flex min-h-0 w-full max-w-7xl flex-1 flex-col"
+        className="relative flex min-h-0 w-full max-w-7xl flex-1 flex-col pb-[65px] lg:pb-0"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="mb-4 flex shrink-0 items-start justify-between gap-3 rounded-[20px] border border-slate-200/80 bg-white/95 px-4 py-4 shadow-lg backdrop-blur-sm sm:items-center sm:px-5">
+        <div className="mb-4 flex shrink-0 items-start justify-between gap-3 py-3 sm:items-center">
           <div className="min-w-0">
             <h2
               id="admin-create-booking-dialog-title"
@@ -141,12 +141,13 @@ export function CreateBookingModalHost() {
           <button
             type="button"
             onClick={close}
-            className="shrink-0 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50"
+            className="cursor-pointer shrink-0 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-red-50 hover:text-red-600 hover:border-red-600"
             aria-label="Close create booking"
           >
             Close
           </button>
         </div>
+
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
           <MultiStepBookingForm
             variant="embedded"

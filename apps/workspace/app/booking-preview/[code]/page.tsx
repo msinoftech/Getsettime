@@ -828,12 +828,12 @@ ${booking_preview_supplement_css()}
                     </span>
                   </div>
 
-                  <p className="mt-2 max-w-2xl text-sm leading-6 text-blue-100">
+                  <p className="mt-2 max-w-2xl text-sm leading-6 text-indigo-100">
                     Keep this page for your records. You can print your appointment slip, call the
                     clinic, get directions, or share these details anytime.
                   </p>
 
-                  <div className="bp-print-meta-row mt-4 flex flex-wrap items-center gap-4 text-sm text-blue-50">
+                  <div className="bp-print-meta-row mt-4 flex flex-wrap items-center gap-4 text-sm text-indigo-50">
                     <span className="inline-flex items-center gap-2">
                       <PreviewIcon name="building" className="h-4 w-4" />
                       {capitalize_booking_display_label(workspaceTitle)}
@@ -876,7 +876,7 @@ ${booking_preview_supplement_css()}
               </button>
               <button
                 onClick={handleAddToCalendar}
-                className="inline-flex items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-4 py-2.5 text-sm font-medium text-blue-700 shadow-sm transition hover:bg-blue-100"
+                className="inline-flex items-center gap-2 rounded-xl border border-blue-200 bg-indigo-50 px-4 py-2.5 text-sm font-medium text-indigo-700 shadow-sm transition hover:bg-indigo-100"
                 type="button"
               >
                 <PreviewIcon name="calendar" className="h-4 w-4" />
@@ -1096,7 +1096,7 @@ ${booking_preview_supplement_css()}
                       </span>
                     </div>
                     {workspaceBusinessAddress ? (
-                      <p className="mt-2 text-sm font-medium text-blue-700">
+                      <p className="mt-2 text-sm font-medium text-indigo-700">
                         {workspaceBusinessAddress}
                       </p>
                     ) : null}
@@ -1285,7 +1285,7 @@ function InfoCard({
 }) {
   const accentClasses: Record<'slate' | 'indigo' | 'violet', string> = {
     slate: 'border-slate-200 bg-slate-50',
-    indigo: 'border-blue-200 bg-blue-50/70',
+    indigo: 'border-blue-200 bg-indigo-50/70',
     violet: 'border-violet-200 bg-violet-50/70',
   };
 
@@ -1336,7 +1336,7 @@ function ActionButton({
 }) {
   const toneClasses: Record<'default' | 'primary' | 'success' | 'warning' | 'danger', string> = {
     default: 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50',
-    primary: 'border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100',
+    primary: 'border-blue-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100',
     success: 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100',
     warning: 'border-yellow-200 bg-yellow-50 text-yellow-700 hover:bg-yellow-100',
     danger: 'border-red-200 bg-red-50 text-red-700 hover:bg-red-100',

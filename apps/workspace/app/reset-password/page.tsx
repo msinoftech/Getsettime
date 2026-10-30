@@ -1,4 +1,5 @@
 "use client";
+import { getWorkspaceSession } from '@/src/lib/auth_session';
 import { useState, useEffect } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { useRouter } from "next/navigation";
@@ -19,7 +20,7 @@ export default function ResetPasswordPage() {
   useEffect(() => {
     // Check if we have a valid session (user clicked the reset link)
     const checkSession = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
+      const { session } = await getWorkspaceSession();
       if (session) {
         setIsValidSession(true);
       } else {

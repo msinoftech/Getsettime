@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createSupabaseServerClient } from '@app/db';
+import { BOOKING_EVENT_TYPE_PUBLIC_SELECT } from '@/src/features/booking-flow';
+import {
+  filterEventTypesForServiceProvider,
+  isProviderAssignedToEventType,
+} from '@/src/utils/bookingFormUtils';
 
 export async function GET(req: NextRequest) {
   try {
@@ -54,7 +59,7 @@ export async function GET(req: NextRequest) {
     if (slug) {
       const { data: row, error: slugError } = await supabase
         .from('event_types')
-        .select('id, title, slug, duration_minutes, owner_id, is_public, location_type, status')
+        .select(BOOKING_EVENT_TYPE_PUBLIC_SELECT)
         .eq('workspace_id', workspaceIdResolved)
         .eq('slug', slug)
         .eq('status', 'active')
@@ -77,8 +82,7 @@ export async function GET(req: NextRequest) {
 
       if (
         serviceProviderId &&
-        row.owner_id &&
-        row.owner_id !== serviceProviderId
+        !isProviderAssignedToEventType(serviceProviderId, row)
       ) {
         return NextResponse.json(
           { error: 'Event type not found' },
@@ -89,18 +93,13 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ data: [row] });
     }
 
-    let query = supabase
+    const { data, error } = await supabase
       .from('event_types')
-      .select('id, title, slug, duration_minutes, owner_id, is_public, location_type, status')
+      .select(BOOKING_EVENT_TYPE_PUBLIC_SELECT)
       .eq('workspace_id', workspaceIdResolved)
       .eq('is_public', true)
-      .eq('status', 'active');
-
-    if (serviceProviderId) {
-      query = query.eq('owner_id', serviceProviderId);
-    }
-
-    const { data, error } = await query.order('created_at', { ascending: false });
+      .eq('status', 'active')
+      .order('created_at', { ascending: false });
 
     if (error) {
       console.error('Error fetching event types:', error);
@@ -110,7 +109,9 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    return NextResponse.json({ data: data || [] });
+    return NextResponse.json({
+      data: filterEventTypesForServiceProvider(data || [], serviceProviderId),
+    });
   } catch (err: unknown) {
     const error = err as Error;
     console.error('Error:', error);

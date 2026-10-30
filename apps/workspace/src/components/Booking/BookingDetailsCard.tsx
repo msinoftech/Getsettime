@@ -1,5 +1,6 @@
 'use client';
 
+import { getWorkspaceSession } from '@/src/lib/auth_session';
 import React, {
   useCallback,
   useEffect,
@@ -83,6 +84,20 @@ function normalize_booking_status_for_edit(
   const t = (status || '').trim().toLowerCase();
   if (BOOKING_STATUS_EDIT_OPTIONS.some((o) => o.value === t)) return t;
   return 'pending';
+}
+
+/** True when the booking’s calendar day is before today (local time). */
+function is_booking_date_past(
+  start_at: string | null | undefined
+): boolean {
+  if (!start_at) return false;
+  const start = new Date(start_at);
+  if (Number.isNaN(start.getTime())) return false;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const booking_day = new Date(start);
+  booking_day.setHours(0, 0, 0, 0);
+  return booking_day.getTime() < today.getTime();
 }
 
 export type BookingInviteeSavePayload = {
@@ -307,7 +322,14 @@ export function BookingDetailsCard({
 
   const start_all_inline_edits_ref = useRef<() => void>(() => {});
   start_all_inline_edits_ref.current = () => {
-    if ((booking.status || '').trim().toLowerCase() === 'cancelled') return;
+    const status_norm = (booking.status || '').trim().toLowerCase();
+    if (
+      status_norm === 'cancelled' ||
+      status_norm === 'completed' ||
+      is_booking_date_past(booking.start_at)
+    ) {
+      return;
+    }
     if (invitee_inline_edit) start_invitee_edit();
     if (booking_inline_edit) start_booking_info_edit();
   };
@@ -456,10 +478,7 @@ export function BookingDetailsCard({
     }
     let cancelled = false;
     (async () => {
-      const { supabase } = await import('@/lib/supabaseClient');
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
+      const { session } = await getWorkspaceSession();
       if (!session?.access_token) return;
       const res = await fetch(
         `/api/user-services?user_id=${encodeURIComponent(booking_edit_effective_provider_id)}`,
@@ -586,10 +605,7 @@ export function BookingDetailsCard({
     set_google_meet_sync_error(null);
     set_google_meet_syncing(true);
     try {
-      const { supabase } = await import('@/lib/supabaseClient');
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
+      const { session } = await getWorkspaceSession();
       if (!session?.access_token) {
         set_google_meet_sync_error('Not signed in.');
         return;
@@ -700,8 +716,12 @@ export function BookingDetailsCard({
   const booking_status_label = booking.status || 'Pending';
   const booking_status_normalized = (booking.status || '').trim().toLowerCase();
   const is_booking_cancelled = booking_status_normalized === 'cancelled';
-  const hide_booking_change_actions =
-    is_booking_cancelled || booking_status_normalized === 'completed';
+  const is_booking_completed = booking_status_normalized === 'completed';
+  const is_booking_past = is_booking_date_past(booking.start_at);
+  /** Past / completed / cancelled: fields & status locked; follow-up still allowed. */
+  const is_booking_read_only =
+    is_booking_cancelled || is_booking_completed || is_booking_past;
+  const hide_booking_change_actions = is_booking_read_only;
   const status_edit_options = is_booking_cancelled
     ? CANCELLED_STATUS_EDIT_OPTIONS
     : BOOKING_STATUS_EDIT_OPTIONS;
@@ -822,12 +842,12 @@ export function BookingDetailsCard({
     <>
     <div
       data-print-root="booking-details"
-      className={`relative mx-auto w-full overflow-hidden rounded-3xl border border-slate-200 bg-white ${
+      className={`relative mx-auto w-full overflow-hidden rounded-2xl border border-slate-200 bg-white ${
         variant === 'page' ? 'shadow-sm' : 'max-w-5xl shadow-2xl'
       }`}
     >
-      <div className="sticky top-0 z-10 border-b border-slate-200 bg-gradient-to-r from-slate-50 via-white to-slate-50 px-6 py-5 md:px-8">
-        <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+      <div className="sticky top-0 z-10 border-b border-slate-200 bg-gradient-to-r from-slate-50 via-white to-slate-50 px-4 py-5 md:px-8">
+        <div className="flex flex-col gap-4 lg:flex-row md:items-start md:justify-between">
           <div>
             <div className="flex flex-wrap items-center gap-3">
               <h1 className="text-2xl font-bold tracking-tight text-slate-900 md:text-3xl">
@@ -886,7 +906,7 @@ export function BookingDetailsCard({
                   ? 'Reminders cannot be sent for cancelled bookings'
                   : undefined
               }
-              className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-medium text-blue-700 shadow-sm transition hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-blue-50"
+              className="rounded-xl border border-blue-200 bg-indigo-50 px-4 py-2 text-sm font-medium text-indigo-700 shadow-sm transition hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-indigo-50"
             >
               Send Reminder
             </button>
@@ -929,15 +949,15 @@ export function BookingDetailsCard({
         </div>
       </div>
 
-      <div className="grid gap-6 bg-slate-50/40 p-6 md:grid-cols-3 md:p-8">
-        <div className="space-y-6 md:col-span-2">
+      <div className="grid gap-6 bg-slate-50/40 p-6 xl:grid-cols-3 px-4 py-5 md:px-8">
+        <div className="space-y-6 w-full xl:col-span-2">
           <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-              <h2 className="text-sm font-bold uppercase tracking-[0.18em] text-slate-500">
+              <h2 className="text-sm font-bold uppercase tracking-wider text-slate-500">
                 Customer Information
               </h2>
               {(invitee_inline_edit || onEditInvitee) &&
-                (!is_booking_cancelled ||
+                (!is_booking_read_only ||
                   (invitee_editing && invitee_inline_edit)) && (
                 <div className="flex shrink-0 items-center gap-2 print:hidden">
                   {invitee_editing && invitee_inline_edit ? (
@@ -1027,11 +1047,11 @@ export function BookingDetailsCard({
 
           <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-              <h2 className="text-sm font-bold uppercase tracking-[0.18em] text-slate-500">
+              <h2 className="text-sm font-bold uppercase tracking-wider text-slate-500">
                 Booking Information
               </h2>
               {(booking_inline_edit || onEditBooking) &&
-                (!is_booking_cancelled ||
+                (!is_booking_read_only ||
                   (booking_info_editing && booking_inline_edit)) && (
                 <div className="flex shrink-0 items-center gap-2 print:hidden">
                   {booking_info_editing && booking_inline_edit ? (
@@ -1289,7 +1309,7 @@ export function BookingDetailsCard({
 
           <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <div className="mb-4 flex items-center justify-between">
-              <h2 className="text-sm font-bold uppercase tracking-[0.18em] text-slate-500">
+              <h2 className="text-sm font-bold uppercase tracking-wider text-slate-500">
                 Date &amp; Time
               </h2>
               {!hide_booking_change_actions && (
@@ -1326,7 +1346,7 @@ export function BookingDetailsCard({
 
           {fieldsToShow.length > 0 && (
             <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-              <h2 className="mb-4 text-sm font-bold uppercase tracking-[0.18em] text-slate-500">
+              <h2 className="mb-4 text-sm font-bold uppercase tracking-wider text-slate-500">
                 Custom Fields
               </h2>
               <div className="grid gap-4 sm:grid-cols-2">
@@ -1352,7 +1372,7 @@ export function BookingDetailsCard({
 
           {fileUploadUrls.length > 0 && (
             <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-              <h2 className="mb-4 text-sm font-bold uppercase tracking-[0.18em] text-slate-500">
+              <h2 className="mb-4 text-sm font-bold uppercase tracking-wider text-slate-500">
                 {fileUploadUrls.length === 1 ? 'Uploaded File' : 'Uploaded Files'}
               </h2>
               <div className="flex flex-col gap-2">
@@ -1404,7 +1424,7 @@ export function BookingDetailsCard({
 
           {showAdditionalInfo && (
             <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm print:hidden">
-              <h2 className="mb-4 text-sm font-bold uppercase tracking-[0.18em] text-slate-500">
+              <h2 className="mb-4 text-sm font-bold uppercase tracking-wider text-slate-500">
                 Notes &amp; Additional Information
               </h2>
               <div className="whitespace-pre-line rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm leading-7 text-slate-700">
@@ -1414,10 +1434,10 @@ export function BookingDetailsCard({
           )}
         </div>
 
-        <div className="space-y-6">
+        <div className="w-full space-y-6">
           <section className="rounded-2xl border border-amber-200 bg-amber-50 p-5 shadow-sm print:hidden">
             <div className="mb-3 flex items-center justify-between gap-3">
-              <h2 className="text-sm font-bold uppercase tracking-[0.18em] text-amber-800">
+              <h2 className="text-sm font-bold uppercase tracking-wider text-amber-800">
                 Admin Notice
               </h2>
               <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-700">
@@ -1452,7 +1472,7 @@ export function BookingDetailsCard({
           </section>
 
           <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm print:hidden">
-            <h2 className="mb-4 text-sm font-bold uppercase tracking-[0.18em] text-slate-500">
+            <h2 className="mb-4 text-sm font-bold uppercase tracking-wider text-slate-500">
               Quick Actions
             </h2>
 
@@ -1471,85 +1491,87 @@ export function BookingDetailsCard({
               >
                 Copy Booking Link
               </button>
-              <button
-                type="button"
-                onClick={onMarkCompleted}
-                disabled={quickActionFeedback?.phase === 'loading'}
-                aria-busy={
-                  quickActionFeedback?.action === 'completed' &&
-                  quickActionFeedback.phase === 'loading'
-                }
-                className="flex min-h-[48px] items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-left text-sm font-medium text-emerald-700 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                <span>Mark as Completed</span>
-                {quickActionFeedback?.action === 'completed' &&
-                  quickActionFeedback.phase === 'loading' && (
-                    <LoaderIcon
-                      aria-hidden
-                      className="h-5 w-5 shrink-0 animate-spin text-emerald-600"
-                    />
-                  )}
-                {quickActionFeedback?.action === 'completed' &&
-                  quickActionFeedback.phase === 'success' && (
-                    <CircleCheck
-                      aria-hidden
-                      className="h-5 w-5 shrink-0 text-emerald-600"
-                    />
-                  )}
-              </button>
-              <button
-                type="button"
-                onClick={onMarkNoShow}
-                disabled={quickActionFeedback?.phase === 'loading'}
-                aria-busy={
-                  quickActionFeedback?.action === 'no-show' &&
-                  quickActionFeedback.phase === 'loading'
-                }
-                className="flex min-h-[48px] items-center justify-between gap-3 rounded-xl border border-yellow-200 bg-yellow-50 px-4 py-3 text-left text-sm font-medium text-yellow-700 transition hover:bg-yellow-100 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                <span>Mark as No-show</span>
-                {quickActionFeedback?.action === 'no-show' &&
-                  quickActionFeedback.phase === 'loading' && (
-                    <LoaderIcon
-                      aria-hidden
-                      className="h-5 w-5 shrink-0 animate-spin text-amber-600"
-                    />
-                  )}
-                {quickActionFeedback?.action === 'no-show' &&
-                  quickActionFeedback.phase === 'success' && (
-                    <CircleCheck
-                      aria-hidden
-                      className="h-5 w-5 shrink-0 text-emerald-600"
-                    />
-                  )}
-              </button>
               {!hide_booking_change_actions && (
-                <button
-                  type="button"
-                  onClick={onCancelBooking}
-                  disabled={quickActionFeedback?.phase === 'loading'}
-                  aria-busy={
-                    quickActionFeedback?.action === 'cancelled' &&
-                    quickActionFeedback.phase === 'loading'
-                  }
-                  className="flex min-h-[48px] items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-left text-sm font-medium text-red-700 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  <span>Cancel Booking</span>
-                  {quickActionFeedback?.action === 'cancelled' &&
-                    quickActionFeedback.phase === 'loading' && (
-                      <LoaderIcon
-                        aria-hidden
-                        className="h-5 w-5 shrink-0 animate-spin text-red-600"
-                      />
-                    )}
-                  {quickActionFeedback?.action === 'cancelled' &&
-                    quickActionFeedback.phase === 'success' && (
-                      <CircleCheck
-                        aria-hidden
-                        className="h-5 w-5 shrink-0 text-emerald-600"
-                      />
-                    )}
-                </button>
+                <>
+                  <button
+                    type="button"
+                    onClick={onMarkCompleted}
+                    disabled={quickActionFeedback?.phase === 'loading'}
+                    aria-busy={
+                      quickActionFeedback?.action === 'completed' &&
+                      quickActionFeedback.phase === 'loading'
+                    }
+                    className="flex min-h-[48px] items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-left text-sm font-medium text-emerald-700 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    <span>Mark as Completed</span>
+                    {quickActionFeedback?.action === 'completed' &&
+                      quickActionFeedback.phase === 'loading' && (
+                        <LoaderIcon
+                          aria-hidden
+                          className="h-5 w-5 shrink-0 animate-spin text-emerald-600"
+                        />
+                      )}
+                    {quickActionFeedback?.action === 'completed' &&
+                      quickActionFeedback.phase === 'success' && (
+                        <CircleCheck
+                          aria-hidden
+                          className="h-5 w-5 shrink-0 text-emerald-600"
+                        />
+                      )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onMarkNoShow}
+                    disabled={quickActionFeedback?.phase === 'loading'}
+                    aria-busy={
+                      quickActionFeedback?.action === 'no-show' &&
+                      quickActionFeedback.phase === 'loading'
+                    }
+                    className="flex min-h-[48px] items-center justify-between gap-3 rounded-xl border border-yellow-200 bg-yellow-50 px-4 py-3 text-left text-sm font-medium text-yellow-700 transition hover:bg-yellow-100 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    <span>Mark as No-show</span>
+                    {quickActionFeedback?.action === 'no-show' &&
+                      quickActionFeedback.phase === 'loading' && (
+                        <LoaderIcon
+                          aria-hidden
+                          className="h-5 w-5 shrink-0 animate-spin text-amber-600"
+                        />
+                      )}
+                    {quickActionFeedback?.action === 'no-show' &&
+                      quickActionFeedback.phase === 'success' && (
+                        <CircleCheck
+                          aria-hidden
+                          className="h-5 w-5 shrink-0 text-emerald-600"
+                        />
+                      )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onCancelBooking}
+                    disabled={quickActionFeedback?.phase === 'loading'}
+                    aria-busy={
+                      quickActionFeedback?.action === 'cancelled' &&
+                      quickActionFeedback.phase === 'loading'
+                    }
+                    className="flex min-h-[48px] items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-left text-sm font-medium text-red-700 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    <span>Cancel Booking</span>
+                    {quickActionFeedback?.action === 'cancelled' &&
+                      quickActionFeedback.phase === 'loading' && (
+                        <LoaderIcon
+                          aria-hidden
+                          className="h-5 w-5 shrink-0 animate-spin text-red-600"
+                        />
+                      )}
+                    {quickActionFeedback?.action === 'cancelled' &&
+                      quickActionFeedback.phase === 'success' && (
+                        <CircleCheck
+                          aria-hidden
+                          className="h-5 w-5 shrink-0 text-emerald-600"
+                        />
+                      )}
+                  </button>
+                </>
               )}
               <button
                 type="button"
@@ -1562,7 +1584,7 @@ export function BookingDetailsCard({
           </section>
 
           <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm print:hidden">
-            <h2 className="mb-4 text-sm font-bold uppercase tracking-[0.18em] text-slate-500">
+            <h2 className="mb-4 text-sm font-bold uppercase tracking-wider text-slate-500">
               Booking Summary
             </h2>
             <div className="space-y-3 text-sm text-slate-600">
@@ -1629,7 +1651,7 @@ export function BookingDetailsCard({
 
     {copy_booking_links_modal_open && (
       <div
-        className="fixed inset-0 z-[65] flex items-center justify-center overflow-y-auto bg-black/40 p-4 print:hidden"
+        className="fixed inset-0 z-10001 flex items-center justify-center overflow-y-auto bg-slate-900/40 backdrop-blur-[2px] p-4 print:hidden"
         role="dialog"
         aria-modal
         aria-labelledby="copy-booking-links-title"

@@ -6,6 +6,7 @@ import {
   ROLE_SERVICE_PROVIDER,
   ROLE_STAFF,
 } from '@/src/constants/roles';
+import { resolve_booking_step_order } from '@/src/features/booking-flow/resolve_booking_step_order';
 
 async function get_or_create_workspace_profession_id(
   supabase: SupabaseClient,
@@ -166,6 +167,11 @@ export async function GET(req: NextRequest) {
       professions: { name?: string; admin_professions_id?: number | null } | null;
     };
 
+    const booking_step_order = await resolve_booking_step_order({
+      supabase,
+      admin_professions_id: row.professions?.admin_professions_id ?? null,
+    });
+
     return NextResponse.json({
       workspace: {
         id: row.id,
@@ -176,6 +182,7 @@ export async function GET(req: NextRequest) {
         profession_id: row.profession_id,
         profession_name: row.professions?.name ?? null,
         admin_professions_id: row.professions?.admin_professions_id ?? null,
+        booking_step_order,
       },
     });
   } catch (err: unknown) {

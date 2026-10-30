@@ -1,9 +1,11 @@
 "use client";
 
+import { getWorkspaceSession } from '@/src/lib/auth_session';
 import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import {
   LuClock as Clock,
   LuPencil as Pencil,
+  LuSquarePen as SquarePen,
   LuPlus as Plus,
   LuTrash2 as Trash2,
   LuX as X,
@@ -13,6 +15,8 @@ import { AvailabilityGeneralSkeleton } from '@/src/components/ui/AvailabilityGen
 import { convertWallClockHHmm } from '@/src/utils/timezone';
 import { sync_settings_response } from '@/src/lib/workspace_shell_sync';
 import type { WorkspaceSettings } from '@/src/types/workspace';
+import ScreenGate from "@/src/components/ScreenGate";
+import { toast } from "@/src/components/ui/toast";
 
 type DayName = "Mon" | "Tue" | "Wed" | "Thu" | "Fri" | "Sat" | "Sun";
 
@@ -265,7 +269,6 @@ const AvailabilityTimesheet = forwardRef<
   const [isLoading, setIsLoading] = useState(!hasInitialData);
   const [isSaving, setIsSaving] = useState(false);
   const [savingDay, setSavingDay] = useState<DayName | null>(null);
-  const [saveMessage, setSaveMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [daySaveFeedback, setDaySaveFeedback] = useState<
     Partial<Record<DayName, { type: 'success' | 'error'; text: string }>>
   >({});
@@ -416,10 +419,7 @@ const AvailabilityTimesheet = forwardRef<
   };
 
   const persistTimesheet = async (timesheet: Record<DayName, DaySchedule>) => {
-    const { supabase } = await import('@/lib/supabaseClient');
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
+    const { session } = await getWorkspaceSession();
     const token = session?.access_token;
     const userId = session?.user?.id;
 
@@ -572,9 +572,10 @@ const AvailabilityTimesheet = forwardRef<
         setTimeout(() => onSaveFeedback(null), clearAfterMs);
       }
     } else {
-      setSaveMessage(payload);
-      if (clearAfterMs !== undefined && clearAfterMs > 0) {
-        setTimeout(() => setSaveMessage(null), clearAfterMs);
+      if (payload.type === 'success') {
+        toast.success(payload.text);
+      } else {
+        toast.error(payload.text);
       }
     }
   };
@@ -609,8 +610,7 @@ const AvailabilityTimesheet = forwardRef<
       if (workspaceSettings) {
         availability = workspaceSettings.availability as availability_blob | undefined;
       } else {
-        const { supabase } = await import('@/lib/supabaseClient');
-        const { data: { session } } = await supabase.auth.getSession();
+        const { session } = await getWorkspaceSession();
         const token = session?.access_token;
 
         const response = await fetch('/api/settings', {
@@ -682,7 +682,6 @@ const AvailabilityTimesheet = forwardRef<
 
   const handleSave = async (): Promise<boolean> => {
     setIsSaving(true);
-    setSaveMessage(null);
     onSaveFeedback?.(null);
 
     try {
@@ -716,14 +715,35 @@ const AvailabilityTimesheet = forwardRef<
     }
   };
 
-  const handleSaveDay = async (day: DayName): Promise<boolean> => {
+  const handleSaveDay = async (
+    day: DayName,
+    scheduleOverride?: DaySchedule,
+    options?: { usePageFeedback?: boolean; persistPanelFeedback?: boolean }
+  ): Promise<boolean> => {
     setSavingDay(day);
     pushDaySaveFeedback(day, null);
     onSaveFeedback?.(null);
 
+    const pushSaveDayResult = (
+      payload: { type: 'success' | 'error'; text: string },
+      clearAfterMs?: number
+    ) => {
+      const autoClearMs =
+        options?.persistPanelFeedback && payload.type === 'success'
+          ? undefined
+          : clearAfterMs;
+
+      if (options?.usePageFeedback) {
+        pushSaveFeedback(payload, autoClearMs);
+      } else {
+        pushDaySaveFeedback(day, payload, autoClearMs);
+      }
+    };
+
     try {
-      const clampedDay = clampBreaksForDay(schedules[day]);
-      if (dayScheduleSignature(clampedDay) !== dayScheduleSignature(schedules[day])) {
+      const sourceDay = scheduleOverride ?? schedules[day];
+      const clampedDay = clampBreaksForDay(sourceDay);
+      if (dayScheduleSignature(clampedDay) !== dayScheduleSignature(sourceDay)) {
         setSchedules((prev) => ({ ...prev, [day]: cloneDaySchedule(clampedDay) }));
       }
 
@@ -743,8 +763,7 @@ const AvailabilityTimesheet = forwardRef<
           ...prev,
           [day]: cloneDaySchedule(merged[day]),
         }));
-        pushDaySaveFeedback(
-          day,
+        pushSaveDayResult(
           { type: 'success', text: `${DAY_NAMES[day]} availability saved successfully!` },
           3000
         );
@@ -761,8 +780,7 @@ const AvailabilityTimesheet = forwardRef<
         ...prev,
         [day]: cloneDaySchedule(merged[day]),
       }));
-      pushDaySaveFeedback(
-        day,
+      pushSaveDayResult(
         { type: 'success', text: `${DAY_NAMES[day]} availability saved successfully!` },
         3000
       );
@@ -777,7 +795,7 @@ const AvailabilityTimesheet = forwardRef<
         error instanceof Error
           ? error.message
           : 'Failed to save availability timesheet. Please try again.';
-      pushDaySaveFeedback(day, { type: 'error', text: errText }, 5000);
+      pushSaveDayResult({ type: 'error', text: errText }, 5000);
       return false;
     } finally {
       setSavingDay(null);
@@ -879,6 +897,26 @@ const AvailabilityTimesheet = forwardRef<
         [day]: newSchedule,
       };
     });
+  };
+
+  const handleToggleDayEnabled = (day: DayName, enabled: boolean) => {
+    updateDaySchedule(day, { enabled: !enabled });
+  };
+
+  const handleMobileToggleDayEnabled = async (day: DayName, enabled: boolean) => {
+    if (readOnly || isSaving || savingDay !== null) return;
+
+    const nextEnabled = !enabled;
+    const toggledSchedule: DaySchedule = {
+      ...schedules[day],
+      enabled: nextEnabled,
+    };
+
+    updateDaySchedule(day, { enabled: nextEnabled });
+    const ok = await handleSaveDay(day, toggledSchedule, { usePageFeedback: true });
+    if (!ok) {
+      updateDaySchedule(day, { enabled });
+    }
   };
 
   const addBreak = (day: DayName) => {
@@ -1176,6 +1214,9 @@ const AvailabilityTimesheet = forwardRef<
   };
 
   const closeDayPanel = (revert: boolean) => {
+    if (editingDay) {
+      pushDaySaveFeedback(editingDay, null);
+    }
     if (revert) {
       if (preCopySnapshot) {
         setSchedules(cloneSchedules(preCopySnapshot));
@@ -1194,12 +1235,13 @@ const AvailabilityTimesheet = forwardRef<
     if (!editingDay) return;
     if (preCopySnapshot) {
       await handleSavePendingCopyAllDays();
-      closeDayPanel(false);
       return;
     }
-    const ok = await handleSaveDay(editingDay);
+    const ok = await handleSaveDay(editingDay, undefined, {
+      persistPanelFeedback: true,
+    });
     if (ok) {
-      closeDayPanel(false);
+      setPanelSnapshot(cloneDaySchedule(schedulesRef.current[editingDay]));
     }
   };
 
@@ -1223,146 +1265,288 @@ const AvailabilityTimesheet = forwardRef<
 
   return (
     <>
-      <div className="space-y-5">
+      <div className="space-y-4">
         <p className="text-sm text-slate-500">
           {readOnly
             ? "View regular weekly availability, working hours, and breaks."
             : "Set your regular weekly availability. Click on a day to edit its hours and breaks."}
         </p>
 
-        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white p-4 min-[1301px]:p-0">
           <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-slate-200 text-left text-sm">
-              <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                <tr>
-                  <th className="px-4 py-3 font-semibold">Day</th>
-                  <th className="px-4 py-3 font-semibold">Status</th>
-                  <th className="px-4 py-3 font-semibold">Working Hours</th>
-                  <th className="px-4 py-3 font-semibold">Breaks</th>
-                  {!readOnly ? (
-                    <th className="px-4 py-3 font-semibold text-right">Action</th>
-                  ) : null}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {DAYS.map((day) => {
-                  const schedule = schedules[day];
-                  const isEditing = editingDay === day;
-                  return (
-                    <tr
-                      key={day}
-                      className={classNames(
-                        "transition-colors",
-                        isEditing ? "bg-indigo-50/40" : "hover:bg-slate-50/80"
-                      )}
-                    >
-                      <td className="px-4 py-3.5">
-                        {readOnly ? (
-                          <span className="text-sm font-semibold text-slate-900">
-                            {DAY_NAMES[day]}
-                          </span>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => openDayPanel(day)}
-                            className="text-left text-sm font-semibold text-slate-900 hover:text-indigo-600"
-                          >
-                            {DAY_NAMES[day]}
-                          </button>
-                        )}
-                      </td>
-                      <td className="px-4 py-3.5">
-                        <span
+            {/* Mobile view */}
+            <ScreenGate maxWidth={1023}>
+              <div className="relative">
+                <div className="space-y-3">
+                  {DAYS.map((day) => {
+                    const schedule = schedules[day];
+
+                    return (
+                      <div
+                        key={day}
+                        className="grid grid-cols-[38px_38px_minmax(0,1fr)_30px] items-center gap-2"
+                      >
+                        {/* Day */}
+                        <span className="text-sm font-semibold text-slate-700">
+                          {DAY_NAMES[day].slice(0, 3)}
+                        </span>
+
+                        {/* Toggle */}
+                        <button
+                          type="button"
+                          aria-label={`Toggle ${DAY_NAMES[day]}`}
+                          aria-pressed={schedule.enabled}
+                          disabled={readOnly || isSaving || savingDay !== null}
+                          onClick={() => void handleMobileToggleDayEnabled(day, schedule.enabled)}
                           className={classNames(
-                            "inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold",
+                            "relative h-[20px] w-[32px] rounded-full transition-colors duration-200",
                             schedule.enabled
-                              ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200"
-                              : "bg-slate-100 text-slate-500 ring-1 ring-slate-200"
+                              ? "bg-indigo-600"
+                              : "bg-slate-300",
+                            (readOnly || isSaving || savingDay !== null) &&
+                              "cursor-not-allowed opacity-50"
                           )}
                         >
-                          {schedule.enabled ? "On" : "Off"}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3.5 text-slate-700">
-                        {schedule.enabled
-                          ? `${formatTimeForDisplayInZones(schedule.startTime, sourceTimezone, displayTimezone)} – ${formatTimeForDisplayInZones(schedule.endTime, sourceTimezone, displayTimezone)}`
-                          : "—"}
-                      </td>
-                      <td className="px-4 py-3.5">
-                        {schedule.enabled && schedule.breaks.length > 0 ? (
-                          <div className="flex flex-wrap items-center gap-1.5">
-                            {schedule.breaks.map((b) => (
-                              <span
-                                key={b.id}
-                                className="inline-flex rounded-md bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600"
-                              >
-                                {formatBreakRangeInZones(
-                                  b.start,
-                                  b.end,
-                                  sourceTimezone,
-                                  displayTimezone
-                                )}
-                              </span>
-                            ))}
-                            {!readOnly ? (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  openDayPanel(day);
-                                  addBreak(day);
-                                }}
-                                className="inline-flex h-6 w-6 items-center justify-center rounded-md border border-slate-200 text-slate-500 transition hover:bg-white hover:text-indigo-600"
-                                aria-label={`Add break on ${DAY_NAMES[day]}`}
-                              >
-                                <Plus className="h-3.5 w-3.5" />
-                              </button>
-                            ) : null}
-                          </div>
-                        ) : (
-                          <div className="flex items-center gap-2">
-                            <span className="text-sm text-slate-400">
-                              {schedule.enabled ? "No breaks" : "—"}
+                          <span
+                            className={classNames(
+                              "absolute top-[2px] right-0 h-4 w-4 rounded-full bg-white shadow-sm transition-transform duration-200 transition",
+                              schedule.enabled
+                                ? "left-[15px]"
+                                : "left-0.5"
+                            )}
+                          />
+                        </button>
+
+                        {/* Working hours */}
+                        <button
+                          type="button"
+                          disabled={readOnly}
+                          onClick={() => {
+                            if (!readOnly) {
+                              openDayPanel(day);
+                            }
+                          }}
+                          className={classNames(
+                            "flex h-[42px] min-w-0 items-center justify-center rounded-lg border bg-white px-2",
+                            "border-slate-200 text-center shadow-[0_1px_2px_rgba(15,23,42,0.03)]",
+                            !readOnly &&
+                              "transition hover:border-indigo-200 hover:bg-indigo-50/30"
+                          )}
+                        >
+                          {schedule.enabled ? (
+                            <span className="truncate text-[13px] font-medium text-slate-700">
+                              {formatTimeForDisplayInZones(
+                                schedule.startTime,
+                                sourceTimezone,
+                                displayTimezone
+                              )}
+
+                              <span className="mx-2 text-slate-400">–</span>
+
+                              {formatTimeForDisplayInZones(
+                                schedule.endTime,
+                                sourceTimezone,
+                                displayTimezone
+                              )}
                             </span>
-                            {schedule.enabled && !readOnly ? (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  openDayPanel(day);
-                                  addBreak(day);
-                                }}
-                                className="inline-flex h-6 w-6 items-center justify-center rounded-md border border-slate-200 text-slate-500 transition hover:bg-white hover:text-indigo-600"
-                                aria-label={`Add break on ${DAY_NAMES[day]}`}
-                              >
-                                <Plus className="h-3.5 w-3.5" />
-                              </button>
-                            ) : null}
-                          </div>
-                        )}
-                      </td>
-                      {!readOnly ? (
-                        <td className="px-4 py-3.5 text-right">
+                          ) : (
+                            <span className="text-[13px] font-medium text-slate-400">
+                              Unavailable
+                            </span>
+                          )}
+                        </button>
+
+                        {/* Plus */}
+                        {!readOnly ? (
                           <button
                             type="button"
-                            onClick={() => openDayPanel(day)}
-                            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50"
+                            onClick={() => {
+                              openDayPanel(day);
+                            }}
+                            aria-label={`Edit ${DAY_NAMES[day]}`}
+                            className="flex h-[34px] w-[30px] items-center justify-center rounded-md text-indigo-600 transition hover:bg-indigo-50"
                           >
-                            <Pencil className="h-3.5 w-3.5 text-slate-500" />
-                            Edit
+                            <Plus
+                              strokeWidth={2.5}
+                              className="h-[16px] w-[16px]"
+                            />
                           </button>
+                        ) : (
+                          <div className="w-[30px]" />
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Timezone */}
+                {/* <button
+                  type="button"
+                  className="
+                    mt-5 flex w-full items-center gap-3
+                    rounded-xl border border-indigo-200
+                    bg-indigo-50/20
+                    px-3 py-3.5 text-left
+                    transition hover:bg-indigo-50/50
+                  "
+                >
+                  <span className="flex h-7 w-7 shrink-0 items-center justify-center">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-clock"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+                  </span>
+
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-[12px] font-medium text-slate-600">
+                      Timezone
+                    </span>
+
+                    <span className="mt-0.5 block text-sm font-semibold text-slate-700">
+                      {displayTimezone}
+                    </span>
+                  </span>
+
+                  <ChevronRight
+                    strokeWidth={2.5}
+                    className="h-[17px] w-[17px] shrink-0 text-slate-600"
+                  />
+                </button> */}
+              </div>
+            </ScreenGate>
+
+            {/* Desktop view */}
+            <ScreenGate minWidth={1024}>
+              <table className="min-w-full divide-y divide-slate-200 text-left text-sm">
+                <thead className="bg-slate-100 text-xs font-semibold tracking-wide text-slate-500">
+                  <tr className="text-left text-sm text-slate-900">
+                    <th className="px-6 py-4 font-semibold">Day</th>
+                    <th className="px-6 py-4 font-semibold">Status</th>
+                    <th className="px-6 py-4 font-semibold">Working Hours</th>
+                    <th className="px-6 py-4 font-semibold">Breaks</th>
+                    {!readOnly ? (
+                      <th className="px-6 py-4 font-semibold text-right">Action</th>
+                    ) : null}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {DAYS.map((day) => {
+                    const schedule = schedules[day];
+                    const isEditing = editingDay === day;
+                    return (
+                      <tr
+                        key={day}
+                        className={classNames(
+                          "transition-colors",
+                          isEditing ? "bg-indigo-50/40" : "hover:bg-slate-50"
+                        )}
+                      >
+                        <td className="px-6 py-4" data-label="Day">
+                          {readOnly ? (
+                            <span className="text-sm font-semibold text-slate-900">
+                              {DAY_NAMES[day]}
+                            </span>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => openDayPanel(day)}
+                              className="text-left text-sm font-semibold text-slate-900 hover:text-indigo-600"
+                            >
+                              {DAY_NAMES[day]}
+                            </button>
+                          )}
                         </td>
-                      ) : null}
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                        <td className="px-6 py-4" data-label="Status">
+                          <span
+                            className={classNames(
+                              "inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold",
+                              schedule.enabled
+                                ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200"
+                                : "bg-slate-100 text-slate-500 ring-1 ring-slate-200"
+                            )}
+                          >
+                            {schedule.enabled ? "On" : "Off"}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4" data-label="Working Hours">
+                          {schedule.enabled
+                            ? `${formatTimeForDisplayInZones(schedule.startTime, sourceTimezone, displayTimezone)} – ${formatTimeForDisplayInZones(schedule.endTime, sourceTimezone, displayTimezone)}`
+                            : "—"}
+                        </td>
+                        <td className="px-6 py-4" data-label="Breaks">
+                          {schedule.enabled && schedule.breaks.length > 0 ? (
+                            <div className="flex items-center max-[1301px]:justify-end gap-2.5">
+                              {schedule.breaks.map((b) => (
+                                <span
+                                  key={b.id}
+                                  className="inline-flex rounded-md bg-slate-100 text-slate-500 border border-slate-200 px-2 py-0.5 text-xs font-medium text-slate-600"
+                                >
+                                  {formatBreakRangeInZones(
+                                    b.start,
+                                    b.end,
+                                    sourceTimezone,
+                                    displayTimezone
+                                  )}
+                                </span>
+                              ))}
+                              {!readOnly ? (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    openDayPanel(day);
+                                    addBreak(day);
+                                  }}
+                                  className="inline-flex h-6 w-6 items-center justify-center rounded-md border border-slate-200 text-slate-500 transition hover:bg-white hover:text-indigo-600"
+                                  aria-label={`Add break on ${DAY_NAMES[day]}`}
+                                >
+                                  <Plus className="h-3.5 w-3.5" />
+                                </button>
+                              ) : null}
+                            </div>
+                          ) : (
+                            <div className="flex items-center max-[1301px]:justify-end gap-2.5">
+                              <span className="text-sm text-slate-400">
+                                {schedule.enabled ? "No breaks" : "—"}
+                              </span>
+                              {schedule.enabled && !readOnly ? (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    openDayPanel(day);
+                                    addBreak(day);
+                                  }}
+                                  className="inline-flex h-6 w-6 items-center justify-center rounded-md border border-slate-200 text-slate-500 transition hover:bg-white hover:text-indigo-600"
+                                  aria-label={`Add break on ${DAY_NAMES[day]}`}
+                                >
+                                  <Plus className="h-3.5 w-3.5" />
+                                </button>
+                              ) : null}
+                            </div>
+                          )}
+                        </td>
+                        {!readOnly ? (
+                          <td className="px-6 py-4 text-right" data-label="Action">
+                            <button
+                              type="button"
+                              onClick={() => openDayPanel(day)}
+                              className="inline-flex items-center gap-1.5 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-medium text-indigo-700 transition hover:bg-indigo-100 cursor-pointer"
+                            >
+                              <SquarePen className="h-4 w-4" />
+                              Edit
+                            </button>
+                          </td>
+                        ) : null}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </ScreenGate>
+
           </div>
         </div>
       </div>
 
       <aside
         className={classNames(
-          "fixed top-16 right-0 bottom-0 z-30 flex w-full flex-col overflow-hidden border-l border-slate-200 bg-white shadow-2xl lg:w-[28rem]",
+          "fixed inset-0 z-100001 h-full flex",
           "transform transition-transform duration-300 ease-in-out will-change-transform",
           panelAnimatedOpen
             ? "translate-x-0"
@@ -1370,155 +1554,115 @@ const AvailabilityTimesheet = forwardRef<
         )}
         aria-hidden={!editPanelVisible}
       >
+        <button
+            type="button"
+            aria-label="Close settings"
+            onClick={() => closeDayPanel(true)}
+            className="absolute inset-0 cursor-default bg-slate-900/40 backdrop-blur-[2px]"
+          />
         {editPanelVisible && editingDay && editingSchedule ? (
           <>
-            <div className="flex shrink-0 items-center justify-between border-b border-slate-200 px-5 py-4">
-              <h2 className="text-lg font-bold text-slate-900">
-                Edit {DAY_NAMES[editingDay]} Availability
-              </h2>
-              <button
-                type="button"
-                onClick={() => closeDayPanel(true)}
-                className="cursor-pointer rounded-lg border border-slate-200 p-2 text-slate-500 transition hover:bg-slate-50 hover:text-slate-700"
-                aria-label="Close panel"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
+            <div className='relative ml-auto flex w-full max-w-xl flex-col border-l border-slate-200 bg-white shadow-2xl pb-[60px] lg:pb-0'>
+              <div className="flex shrink-0 items-center justify-between border-b border-slate-200 px-5 py-4">
+                <h2 className="text-lg font-bold text-slate-900">
+                  Edit {DAY_NAMES[editingDay]} Availability
+                </h2>
+                <button
+                  type="button"
+                  onClick={() => closeDayPanel(true)}
+                  className="cursor-pointer rounded-lg border border-slate-200 p-2 text-slate-500 transition hover:bg-slate-50 hover:text-slate-700"
+                  aria-label="Close panel"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
 
-            <div className="flex min-h-0 flex-1 flex-col overflow-hidden overscroll-contain">
-              <div className="flex-1 overflow-y-auto px-5 py-5">
-                <div className="space-y-6">
-                  <div className="flex items-center justify-between gap-3 border-b border-slate-200 pb-5">
-                    <span className="text-sm font-medium text-slate-700">Available</span>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        updateDaySchedule(editingDay, {
-                          enabled: !editingSchedule.enabled,
-                        })
-                      }
-                      className={classNames(
-                        "relative h-6 w-11 rounded-full transition",
-                        editingSchedule.enabled ? "bg-indigo-600" : "bg-slate-300"
-                      )}
-                      aria-pressed={editingSchedule.enabled}
-                      aria-label="Toggle available"
-                    >
-                      <span
+              <div className="flex min-h-0 flex-1 flex-col overflow-hidden overscroll-contain pb-[60px] lg:pb-0">
+                <div className="flex-1 overflow-y-auto px-5 py-5">
+                  <div className="space-y-6">
+                    <div className="flex items-center justify-between gap-3 border-b border-slate-200 pb-5">
+                      <span className="text-sm font-medium text-slate-700">Available</span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleToggleDayEnabled(editingDay, editingSchedule.enabled)
+                        }
                         className={classNames(
-                          "absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition",
-                          editingSchedule.enabled ? "left-[22px]" : "left-0.5"
+                          "relative h-6 w-11 rounded-full transition",
+                          editingSchedule.enabled ? "bg-indigo-600" : "bg-slate-300"
                         )}
-                      />
-                    </button>
-                  </div>
-
-                  <div
-                    className={classNames(
-                      "border-b border-slate-200 pb-5",
-                      !editingSchedule.enabled && "opacity-50"
-                    )}
-                  >
-                    <p className="mb-3 text-sm font-semibold text-slate-800">Working Hours</p>
-                    <div className="grid grid-cols-2 gap-3">
-                      <label className="block">
-                        <span className="mb-1.5 block text-xs font-medium text-slate-500">
-                          Start Time
-                        </span>
-                        <div className="relative">
-                          <Clock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                          <select
-                            value={editingSchedule.startTime}
-                            onChange={(e) =>
-                              updateDaySchedule(editingDay, { startTime: e.target.value })
-                            }
-                            disabled={!editingSchedule.enabled}
-                            className={panelFieldClass}
-                          >
-                            {timeOptions.map((option) => (
-                              <option key={option.value} value={option.value}>
-                                {option.label}
-                              </option>
-                            ))}
-                          </select>
-                          <svg
-                            className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
-                            fill="none"
-                            stroke="currentColor"
-                            viewBox="0 0 24 24"
-                          >
-                            <path
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              strokeWidth={2}
-                              d="M19 9l-7 7-7-7"
-                            />
-                          </svg>
-                        </div>
-                      </label>
-                      <label className="block">
-                        <span className="mb-1.5 block text-xs font-medium text-slate-500">
-                          End Time
-                        </span>
-                        <div className="relative">
-                          <Clock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                          <select
-                            value={editingSchedule.endTime}
-                            onChange={(e) =>
-                              updateDaySchedule(editingDay, { endTime: e.target.value })
-                            }
-                            disabled={!editingSchedule.enabled}
-                            className={panelFieldClass}
-                          >
-                            {getFilteredTimeOptions(
-                              editingSchedule.startTime,
-                              undefined,
-                              true
-                            ).map((option) => (
-                              <option key={option.value} value={option.value}>
-                                {option.label}
-                              </option>
-                            ))}
-                          </select>
-                          <svg
-                            className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
-                            fill="none"
-                            stroke="currentColor"
-                            viewBox="0 0 24 24"
-                          >
-                            <path
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              strokeWidth={2}
-                              d="M19 9l-7 7-7-7"
-                            />
-                          </svg>
-                        </div>
-                      </label>
+                        aria-pressed={editingSchedule.enabled}
+                        aria-label="Toggle available"
+                      >
+                        <span
+                          className={classNames(
+                            "absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition",
+                            editingSchedule.enabled ? "left-[22px]" : "left-0.5"
+                          )}
+                        />
+                      </button>
                     </div>
-                  </div>
 
-                  <div className={classNames(!editingSchedule.enabled && "opacity-50")}>
-                    <p className="mb-3 text-sm font-semibold text-slate-800">Breaks</p>
-                    <div className="space-y-3">
-                      {editingSchedule.breaks.map((breakTime) => (
-                        <div
-                          key={breakTime.id}
-                          className="flex items-end gap-2"
-                        >
-                          <div className="relative min-w-0 flex-1">
+                    <div
+                      className={classNames(
+                        "border-b border-slate-200 pb-5",
+                        !editingSchedule.enabled && "opacity-50"
+                      )}
+                    >
+                      <p className="mb-3 text-sm font-semibold text-slate-800">Working Hours</p>
+                      <div className="grid grid-cols-2 gap-3">
+                        <label className="block">
+                          <span className="mb-1.5 block text-xs font-medium text-slate-500">
+                            Start Time
+                          </span>
+                          <div className="relative">
+                            <Clock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                             <select
-                              value={breakTime.start}
+                              value={editingSchedule.startTime}
                               onChange={(e) =>
-                                updateBreak(editingDay, breakTime.id, "start", e.target.value)
+                                updateDaySchedule(editingDay, { startTime: e.target.value })
                               }
                               disabled={!editingSchedule.enabled}
-                              className="w-full appearance-none rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-indigo-400 disabled:cursor-not-allowed disabled:bg-slate-50"
+                              className={panelFieldClass}
+                            >
+                              {timeOptions.map((option) => (
+                                <option key={option.value} value={option.value}>
+                                  {option.label}
+                                </option>
+                              ))}
+                            </select>
+                            <svg
+                              className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
+                              fill="none"
+                              stroke="currentColor"
+                              viewBox="0 0 24 24"
+                            >
+                              <path
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                strokeWidth={2}
+                                d="M19 9l-7 7-7-7"
+                              />
+                            </svg>
+                          </div>
+                        </label>
+                        <label className="block">
+                          <span className="mb-1.5 block text-xs font-medium text-slate-500">
+                            End Time
+                          </span>
+                          <div className="relative">
+                            <Clock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                            <select
+                              value={editingSchedule.endTime}
+                              onChange={(e) =>
+                                updateDaySchedule(editingDay, { endTime: e.target.value })
+                              }
+                              disabled={!editingSchedule.enabled}
+                              className={panelFieldClass}
                             >
                               {getFilteredTimeOptions(
                                 editingSchedule.startTime,
-                                editingSchedule.endTime,
+                                undefined,
                                 true
                               ).map((option) => (
                                 <option key={option.value} value={option.value}>
@@ -1526,135 +1670,195 @@ const AvailabilityTimesheet = forwardRef<
                                 </option>
                               ))}
                             </select>
-                          </div>
-                          <span className="mb-2.5 shrink-0 text-slate-400">–</span>
-                          <div className="relative min-w-0 flex-1">
-                            <select
-                              value={breakTime.end}
-                              onChange={(e) =>
-                                updateBreak(editingDay, breakTime.id, "end", e.target.value)
-                              }
-                              disabled={!editingSchedule.enabled}
-                              className="w-full appearance-none rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-indigo-400 disabled:cursor-not-allowed disabled:bg-slate-50"
+                            <svg
+                              className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
+                              fill="none"
+                              stroke="currentColor"
+                              viewBox="0 0 24 24"
                             >
-                              {getFilteredTimeOptions(
-                                breakTime.start,
-                                editingSchedule.endTime,
-                                true
-                              ).map((option) => (
-                                <option key={option.value} value={option.value}>
-                                  {option.label}
-                                </option>
-                              ))}
-                            </select>
+                              <path
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                strokeWidth={2}
+                                d="M19 9l-7 7-7-7"
+                              />
+                            </svg>
                           </div>
-                          <button
-                            type="button"
-                            onClick={() => removeBreak(editingDay, breakTime.id)}
-                            disabled={!editingSchedule.enabled}
-                            className="mb-0.5 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-red-500 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40"
-                            aria-label="Remove break"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={handlePanelQuickAddBreak}
-                      disabled={!editingSchedule.enabled}
-                      className="mt-3 inline-flex items-center gap-1.5 text-sm font-semibold text-indigo-600 transition hover:text-indigo-700 disabled:cursor-not-allowed disabled:opacity-40"
-                    >
-                      <Plus className="h-4 w-4" />
-                      Add Break
-                    </button>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => handlePanelCopyToOtherDays(editingDay)}
-                    disabled={
-                      !editingSchedule.enabled ||
-                      savingDay !== null ||
-                      isSaving
-                    }
-                    className="flex w-full items-center justify-between gap-3 rounded-xl border border-indigo-100 bg-indigo-50 px-4 py-3 text-left transition hover:bg-indigo-100/70 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    <span>
-                      <span className="block text-sm font-semibold text-indigo-900">
-                        Copy to other days
-                      </span>
-                      <span className="mt-0.5 block text-xs text-indigo-700/80">
-                        Apply these hours and breaks to other days of the week.
-                      </span>
-                    </span>
-                    <ChevronRight className="h-4 w-4 shrink-0 text-indigo-500" />
-                  </button>
-
-                  {preCopySnapshot ? (
-                    <div className="space-y-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3">
-                      <p className="text-xs text-slate-600">
-                        Hours and breaks were copied to all other days. Save to
-                        keep these changes, or cancel to undo the copy.
-                      </p>
-                      <div className="flex flex-col gap-2 sm:flex-row">
-                        <button
-                          type="button"
-                          onClick={handleCancelPendingCopy}
-                          disabled={isSaving || savingDay !== null}
-                          className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          Cancel
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => void handleSavePendingCopyAllDays()}
-                          disabled={isSaving || savingDay !== null}
-                          className="rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          {isSaving ? "Saving..." : "Save changes for all days"}
-                        </button>
+                        </label>
                       </div>
                     </div>
-                  ) : null}
 
-                  {daySaveFeedback[editingDay] ? (
-                    <div
-                      className={classNames(
-                        "rounded-lg border px-3 py-2 text-sm font-medium",
-                        daySaveFeedback[editingDay]?.type === "success"
-                          ? "border-green-200 bg-green-50 text-green-700"
-                          : "border-red-200 bg-red-50 text-red-700"
-                      )}
-                    >
-                      {daySaveFeedback[editingDay]?.text}
+                    <div className={classNames(!editingSchedule.enabled && "opacity-50")}>
+                      <p className="mb-3 text-sm font-semibold text-slate-800">Breaks</p>
+                      <div className="space-y-3">
+                        {editingSchedule.breaks.map((breakTime) => (
+                          <div
+                            key={breakTime.id}
+                            className="flex items-end gap-2"
+                          >
+                            <div className="relative min-w-0 flex-1">
+                              <select
+                                value={breakTime.start}
+                                onChange={(e) =>
+                                  updateBreak(editingDay, breakTime.id, "start", e.target.value)
+                                }
+                                disabled={!editingSchedule.enabled}
+                                className="w-full appearance-none rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-indigo-400 disabled:cursor-not-allowed disabled:bg-slate-50"
+                              >
+                                {getFilteredTimeOptions(
+                                  editingSchedule.startTime,
+                                  editingSchedule.endTime,
+                                  true
+                                ).map((option) => (
+                                  <option key={option.value} value={option.value}>
+                                    {option.label}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                            <span className="mb-2.5 shrink-0 text-slate-400">–</span>
+                            <div className="relative min-w-0 flex-1">
+                              <select
+                                value={breakTime.end}
+                                onChange={(e) =>
+                                  updateBreak(editingDay, breakTime.id, "end", e.target.value)
+                                }
+                                disabled={!editingSchedule.enabled}
+                                className="w-full appearance-none rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-indigo-400 disabled:cursor-not-allowed disabled:bg-slate-50"
+                              >
+                                {getFilteredTimeOptions(
+                                  breakTime.start,
+                                  editingSchedule.endTime,
+                                  true
+                                ).map((option) => (
+                                  <option key={option.value} value={option.value}>
+                                    {option.label}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => removeBreak(editingDay, breakTime.id)}
+                              disabled={!editingSchedule.enabled}
+                              className="mb-0.5 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-red-500 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40"
+                              aria-label="Remove break"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handlePanelQuickAddBreak}
+                        disabled={!editingSchedule.enabled}
+                        className="mt-3 inline-flex items-center gap-1.5 text-sm font-semibold text-indigo-600 transition hover:text-indigo-700 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        <Plus className="h-4 w-4" />
+                        Add Break
+                      </button>
                     </div>
-                  ) : null}
-                </div>
-              </div>
 
-              <div className="shrink-0 border-t border-slate-200 bg-white px-5 py-4">
-                <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
-                  <button
-                    type="button"
-                    onClick={() => closeDayPanel(true)}
-                    className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void handlePanelSave()}
-                    disabled={
-                      savingDay === editingDay ||
-                      isSaving ||
-                      (!editingDayDirty && !preCopySnapshot)
-                    }
-                    className="rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    {savingDay === editingDay ? "Saving..." : "Save"}
-                  </button>
+                    <button
+                      type="button"
+                      onClick={() => handlePanelCopyToOtherDays(editingDay)}
+                      disabled={
+                        !editingSchedule.enabled ||
+                        savingDay !== null ||
+                        isSaving
+                      }
+                      className="flex w-full items-center justify-between gap-3 rounded-xl border border-indigo-100 bg-indigo-50 px-4 py-3 text-left transition hover:bg-indigo-100/70 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <span>
+                        <span className="block text-sm font-semibold text-indigo-900">
+                          Copy to other days
+                        </span>
+                        <span className="mt-0.5 block text-xs text-indigo-700/80">
+                          Apply these hours and breaks to other days of the week.
+                        </span>
+                      </span>
+                      <ChevronRight className="h-4 w-4 shrink-0 text-indigo-500" />
+                    </button>
+
+                    {preCopySnapshot ? (
+                      <div className="space-y-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3">
+                        <p className="text-xs text-slate-600">
+                          Hours and breaks were copied to all other days. Save to
+                          keep these changes, or cancel to undo the copy.
+                        </p>
+                        <div className="flex flex-col gap-2 sm:flex-row">
+                          <button
+                            type="button"
+                            onClick={handleCancelPendingCopy}
+                            disabled={isSaving || savingDay !== null}
+                            className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void handleSavePendingCopyAllDays()}
+                            disabled={isSaving || savingDay !== null}
+                            className="rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            {isSaving ? "Saving..." : "Save changes for all days"}
+                          </button>
+                        </div>
+                      </div>
+                    ) : null}
+
+                    {daySaveFeedback[editingDay] ? (
+                      <div
+                        className={classNames(
+                          "flex items-start justify-between gap-3 rounded-lg border px-3 py-2 text-sm font-medium",
+                          daySaveFeedback[editingDay]?.type === "success"
+                            ? "border-green-200 bg-green-50 text-green-700"
+                            : "border-red-200 bg-red-50 text-red-700"
+                        )}
+                        role="status"
+                      >
+                        <span>{daySaveFeedback[editingDay]?.text}</span>
+                        <button
+                          type="button"
+                          onClick={() => pushDaySaveFeedback(editingDay, null)}
+                          className={classNames(
+                            "shrink-0 rounded-md p-0.5 transition hover:bg-black/5",
+                            daySaveFeedback[editingDay]?.type === "success"
+                              ? "text-green-700"
+                              : "text-red-700"
+                          )}
+                          aria-label="Dismiss message"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+
+                <div className="shrink-0 border-t border-slate-200 bg-white px-5 py-4">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+                    <button
+                      type="button"
+                      onClick={() => closeDayPanel(true)}
+                      className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handlePanelSave()}
+                      disabled={
+                        savingDay === editingDay ||
+                        isSaving ||
+                        (!editingDayDirty && !preCopySnapshot)
+                      }
+                      className="rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {savingDay === editingDay ? "Saving..." : "Save"}
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -1662,17 +1866,6 @@ const AvailabilityTimesheet = forwardRef<
         ) : null}
       </aside>
 
-      {saveMessage && !onSaveFeedback && (
-        <div
-          className={`mt-6 p-4 rounded-lg text-sm font-medium ${
-            saveMessage.type === 'success'
-              ? 'bg-green-50 text-green-700 border border-green-200'
-              : 'bg-red-50 text-red-700 border border-red-200'
-          }`}
-        >
-          {saveMessage.text}
-        </div>
-      )}
     </>
   );
 });

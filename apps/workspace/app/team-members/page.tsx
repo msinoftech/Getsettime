@@ -1,5 +1,6 @@
 "use client";
-import { useState, useEffect, useMemo } from "react";
+import { getWorkspaceSession } from '@/src/lib/auth_session';
+import { useState, useEffect, useMemo, useCallback } from "react";
 import {
   LuBadgeCheck,
   LuBriefcase,
@@ -30,13 +31,18 @@ import { supabase } from "@/lib/supabaseClient";
 import { useAuth } from "@/src/providers/AuthProvider";
 import { useWorkspaceSettings } from "@/src/hooks/useWorkspaceSettings";
 import { ConfirmModal } from "@/src/components/ui/ConfirmModal";
+import { toast } from "@/src/components/ui/toast";
 import { UpgradePlanModal } from "@/src/components/Subscription/UpgradePlanModal";
 import {
   useSubscription,
   type SubscriptionApiResponse,
 } from "@/src/hooks/useSubscription";
-import { TeamMemberSkeleton } from "@/src/components/ui/TeamMemberSkeleton";
 import {
+  StatValueSkeleton,
+  TeamMemberCardsSkeleton,
+} from "@/src/components/ui/TeamMemberSkeleton";
+import {
+  ROLE_MANAGER,
   ROLE_SERVICE_PROVIDER,
   ROLE_WORKSPACE_ADMIN,
   SERVICE_PROVIDER_ASSIGNABLE_ADDITIONAL_ROLES,
@@ -44,6 +50,9 @@ import {
 } from "@/src/constants/roles";
 import { splitDepartmentSelectionByName } from "@/lib/invite_department_assignment";
 import { userActsAsServiceProviderFromMetadata } from "@/lib/service_provider_role";
+import ScreenGate from "@/src/components/ScreenGate";
+import { useWorkspaceUsers } from "@/src/providers/WorkspaceUsersProvider";
+import { WorkspaceUserAvatar } from "@/src/components/User/WorkspaceUserAvatar";
 
 interface Department {
   id: number;
@@ -106,6 +115,36 @@ function getServiceProviderLimitUpgradeMessage(
 ): string {
   const { service_provider_limit, service_provider_count } = subscription.usage;
   return `Your ${subscription.plan.name} plan allows up to ${service_provider_limit} service providers, and you already have ${service_provider_count}. Upgrade your plan or contact your administrator to add more.`;
+}
+
+function isAdminPlanLimitReached(
+  subscription: SubscriptionApiResponse | null
+): boolean {
+  if (!subscription) return false;
+  return subscription.usage.admin_count >= subscription.usage.admin_limit;
+}
+
+function getAdminLimitUpgradeMessage(
+  subscription: SubscriptionApiResponse
+): string {
+  const { admin_limit, admin_count } = subscription.usage;
+  return `Your ${subscription.plan.name} plan allows up to ${admin_limit} workspace admin${admin_limit === 1 ? "" : "s"}, and you already have ${admin_count} assigned or pending. Upgrade your plan to add more.`;
+}
+
+function teamMemberHasWorkspaceAdminAccess(member: TeamMember): boolean {
+  if (member.deactivated) return false;
+  if (member.role === ROLE_WORKSPACE_ADMIN) return true;
+  return (member.additional_roles ?? []).includes(ROLE_WORKSPACE_ADMIN);
+}
+
+function memberWouldGainWorkspaceAdminAccess(
+  member: TeamMember,
+  formRole: string,
+  formAdditionalRoles: string[]
+): boolean {
+  if (teamMemberHasWorkspaceAdminAccess(member)) return false;
+  if (formRole === ROLE_WORKSPACE_ADMIN) return true;
+  return formAdditionalRoles.includes(ROLE_WORKSPACE_ADMIN);
 }
 
 function getSortedDepartmentIdsForDisplay(
@@ -232,7 +271,12 @@ export default function TeamMembersPage() {
     "Upgrade your plan to add more service providers."
   );
 
-  const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
+  const {
+    members: workspaceMembers,
+    loading: workspaceMembersLoading,
+    refresh: refreshWorkspaceMembers,
+  } = useWorkspaceUsers();
+  const teamMembers = workspaceMembers as TeamMember[];
   const [departments, setDepartments] = useState<Department[]>([]);
   const [showMemberForm, setShowMemberForm] = useState(false);
   const [showInviteForm, setShowInviteForm] = useState(false);
@@ -250,7 +294,7 @@ export default function TeamMembersPage() {
     name: "",
     email: "",
     phone: "",
-    role: ROLE_WORKSPACE_ADMIN,
+    role: ROLE_MANAGER,
     departments: [] as number[],
   });
   const [inviteUrl, setInviteUrl] = useState<string | null>(null);
@@ -258,11 +302,7 @@ export default function TeamMembersPage() {
   const [providerSelectedDepartmentNames, setProviderSelectedDepartmentNames] = useState<string[]>([]);
   const [providerInviteUrl, setProviderInviteUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [initialLoading, setInitialLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [modalError, setModalError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<string | null>(null);
-  const [modalSuccess, setModalSuccess] = useState<string | null>(null);
+  const initialLoading = workspaceMembersLoading;
   const [confirmModal, setConfirmModal] = useState<{
     action: "deactivate" | "activate";
     memberId: string;
@@ -323,7 +363,6 @@ export default function TeamMembersPage() {
   }, [teamMembers, departments, search, statusFilter]);
 
   useEffect(() => {
-    fetchTeamMembers();
     fetchDepartments();
   }, []);
 
@@ -331,35 +370,71 @@ export default function TeamMembersPage() {
     setOpenActionsId(null);
   }, [search, statusFilter, teamMembers]);
 
-  const fetchTeamMembers = async () => {
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) return;
+  const showProviderLimitUpgrade = useCallback((): boolean => {
+    if (!isServiceProviderPlanLimitReached(subscription)) return false;
+    setUpgradeModalMessage(
+      subscription
+        ? getServiceProviderLimitUpgradeMessage(subscription)
+        : "Upgrade your plan to add more service providers."
+    );
+    setUpgradeModalOpen(true);
+    return true;
+  }, [subscription]);
 
-      const response = await fetch('/api/team-members', {
-        headers: {
-          'Authorization': `Bearer ${session.access_token}`,
-        },
-      });
+  const showAdminLimitUpgrade = useCallback((): boolean => {
+    if (!isAdminPlanLimitReached(subscription)) return false;
+    setUpgradeModalMessage(
+      subscription
+        ? getAdminLimitUpgradeMessage(subscription)
+        : "Upgrade your plan to add more workspace admins."
+    );
+    setUpgradeModalOpen(true);
+    return true;
+  }, [subscription]);
 
-      if (response.ok) {
-        const data = await response.json();
-        setTeamMembers(data.teamMembers || []);
-      } else {
-        const errorData = await response.json();
-        setError(errorData.error || 'Failed to fetch team members');
+  const handleInviteFormChange = useCallback(
+    (data: typeof inviteFormData) => {
+      if (
+        data.role === ROLE_WORKSPACE_ADMIN &&
+        inviteFormData.role !== ROLE_WORKSPACE_ADMIN &&
+        showAdminLimitUpgrade()
+      ) {
+        return;
       }
-    } catch (error) {
-      console.error('Error fetching team members:', error);
-      setError('An error occurred while fetching team members');
-    } finally {
-      setInitialLoading(false);
-    }
-  };
+      setInviteFormData(data);
+    },
+    [inviteFormData.role, showAdminLimitUpgrade]
+  );
+
+  const handleMemberFormChange = useCallback(
+    (data: typeof memberFormData) => {
+      const target = roleModalMember ?? editingMember;
+      if (
+        target &&
+        data.role === ROLE_WORKSPACE_ADMIN &&
+        memberFormData.role !== ROLE_WORKSPACE_ADMIN &&
+        memberWouldGainWorkspaceAdminAccess(
+          target,
+          data.role,
+          data.additional_roles
+        ) &&
+        showAdminLimitUpgrade()
+      ) {
+        return;
+      }
+      setMemberFormData(data);
+    },
+    [
+      roleModalMember,
+      editingMember,
+      memberFormData.role,
+      showAdminLimitUpgrade,
+    ]
+  );
 
   const fetchDepartments = async () => {
     try {
-      const { data: { session } } = await supabase.auth.getSession();
+      const { session } = await getWorkspaceSession();
       if (!session) return;
 
       const response = await fetch('/api/departments', {
@@ -379,7 +454,7 @@ export default function TeamMembersPage() {
 
   const loadProviderCatalogDepartments = async () => {
     try {
-      const { data: { session } } = await supabase.auth.getSession();
+      const { session } = await getWorkspaceSession();
       if (!session) return;
 
       const headers = { Authorization: `Bearer ${session.access_token}` };
@@ -405,6 +480,8 @@ export default function TeamMembersPage() {
   };
 
   const handleNewMember = () => {
+    if (showProviderLimitUpgrade()) return;
+
     setRoleModalMember(null);
     setEditingMember(null);
     setMemberFormData({
@@ -418,10 +495,6 @@ export default function TeamMembersPage() {
     });
     setProviderSelectedDepartmentNames([]);
     setProviderInviteUrl(null);
-    setError(null);
-    setModalError(null);
-    setSuccess(null);
-    setModalSuccess(null);
     setShowInviteForm(false);
     setShowMemberForm(true);
     void loadProviderCatalogDepartments();
@@ -433,14 +506,10 @@ export default function TeamMembersPage() {
       name: "",
       email: "",
       phone: "",
-      role: ROLE_WORKSPACE_ADMIN,
+      role: ROLE_MANAGER,
       departments: [],
     });
     setInviteUrl(null);
-    setError(null);
-    setModalError(null);
-    setSuccess(null);
-    setModalSuccess(null);
     setShowMemberForm(false);
     setShowInviteForm(true);
   };
@@ -458,9 +527,6 @@ export default function TeamMembersPage() {
       additional_roles: member.additional_roles ?? [],
       departments: [...new Set(member.departments ?? [])],
     });
-    setError(null);
-    setSuccess(null);
-    setModalSuccess(null);
   };
 
   const handleRoleModalCancel = () => {
@@ -474,9 +540,6 @@ export default function TeamMembersPage() {
       additional_roles: [],
       departments: [],
     });
-    setError(null);
-    setSuccess(null);
-    setModalSuccess(null);
   };
 
   const handleEditMember = (member: TeamMember) => {
@@ -491,9 +554,6 @@ export default function TeamMembersPage() {
       additional_roles: member.additional_roles ?? [],
       departments: [...new Set(member.departments ?? [])],
     });
-    setError(null);
-    setSuccess(null);
-    setModalSuccess(null);
     setShowMemberForm(true);
   };
 
@@ -512,10 +572,6 @@ export default function TeamMembersPage() {
     });
     setProviderSelectedDepartmentNames([]);
     setProviderInviteUrl(null);
-    setError(null);
-    setModalError(null);
-    setSuccess(null);
-    setModalSuccess(null);
   };
 
   const toggleProviderDepartmentName = (name: string) => {
@@ -527,13 +583,11 @@ export default function TeamMembersPage() {
   const handleProviderInviteSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    setModalError(null);
-    setSuccess(null);
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
+      const { session } = await getWorkspaceSession();
       if (!session) {
-        setModalError("Not authenticated");
+        toast.error("Not authenticated");
         setLoading(false);
         return;
       }
@@ -544,20 +598,12 @@ export default function TeamMembersPage() {
       );
 
       if (departmentIds.length === 0 && departmentNames.length === 0) {
-        setModalError("Select at least one department");
+        toast.error("Select at least one department");
         setLoading(false);
         return;
       }
 
-      if (
-        subscription &&
-        subscription.usage.service_provider_count >=
-          subscription.usage.service_provider_limit
-      ) {
-        setUpgradeModalMessage(
-          `You have reached the limit of ${subscription.usage.service_provider_limit} service providers on your ${subscription.plan.name} plan.`
-        );
-        setUpgradeModalOpen(true);
+      if (showProviderLimitUpgrade()) {
         setLoading(false);
         return;
       }
@@ -580,9 +626,9 @@ export default function TeamMembersPage() {
 
       if (response.ok) {
         const data = await response.json();
-        setSuccess("Provider invite sent successfully!");
+        toast.success("Provider invite sent successfully.");
         setProviderInviteUrl(data.inviteUrl);
-        await fetchTeamMembers();
+        await refreshWorkspaceMembers();
       } else {
         const errorData = (await response.json()) as {
           error?: string;
@@ -594,12 +640,12 @@ export default function TeamMembersPage() {
           );
           setUpgradeModalOpen(true);
         } else {
-          setModalError(errorData.error || "Failed to send provider invite");
+          toast.error(errorData.error || "Failed to send provider invite");
         }
       }
     } catch (err) {
       console.error("Error sending provider invite:", err);
-      setModalError("An error occurred while sending the provider invite");
+      toast.error("An error occurred while sending the provider invite");
     } finally {
       setLoading(false);
     }
@@ -612,13 +658,10 @@ export default function TeamMembersPage() {
       name: "",
       email: "",
       phone: "",
-      role: ROLE_WORKSPACE_ADMIN,
+      role: ROLE_MANAGER,
       departments: [],
     });
     setInviteUrl(null);
-    setError(null);
-    setModalError(null);
-    setSuccess(null);
   };
 
   const toggleDepartment = (departmentId: number) => {
@@ -663,6 +706,16 @@ export default function TeamMembersPage() {
       return;
     }
 
+    if (
+      isAdding &&
+      role === ROLE_WORKSPACE_ADMIN &&
+      !teamMemberHasWorkspaceAdminAccess(formTarget) &&
+      isAdminPlanLimitReached(subscription)
+    ) {
+      showAdminLimitUpgrade();
+      return;
+    }
+
     setMemberFormData((prev) => {
       const additional_roles = prev.additional_roles.includes(role)
         ? prev.additional_roles.filter((r) => r !== role)
@@ -686,14 +739,11 @@ export default function TeamMembersPage() {
   const handleMemberFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    setError(null);
-    setSuccess(null);
-    setModalSuccess(null);
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
+      const { session } = await getWorkspaceSession();
       if (!session) {
-        setError('Not authenticated');
+        toast.error("Not authenticated");
         setLoading(false);
         return;
       }
@@ -748,6 +798,18 @@ export default function TeamMembersPage() {
         return;
       }
 
+      if (
+        memberWouldGainWorkspaceAdminAccess(
+          targetMember,
+          memberFormData.role,
+          memberFormData.additional_roles
+        ) &&
+        showAdminLimitUpgrade()
+      ) {
+        setLoading(false);
+        return;
+      }
+
       const body = {
         id: targetMember.id,
         name: memberFormData.name,
@@ -772,12 +834,10 @@ export default function TeamMembersPage() {
       });
 
       if (response.ok) {
-        setModalSuccess('Team member updated successfully');
-        await fetchTeamMembers();
-        setTimeout(() => {
-          if (fromRoleModal) handleRoleModalCancel();
-          else handleMemberFormCancel();
-        }, 1500);
+        toast.success("Team member updated successfully.");
+        await refreshWorkspaceMembers();
+        if (fromRoleModal) handleRoleModalCancel();
+        else handleMemberFormCancel();
       } else {
         const errorData = (await response.json()) as {
           error?: string;
@@ -789,12 +849,12 @@ export default function TeamMembersPage() {
           );
           setUpgradeModalOpen(true);
         } else {
-          setError(errorData.error || "Failed to update team member");
+          toast.error(errorData.error || "Failed to update team member");
         }
       }
     } catch (error) {
       console.error('Error saving team member:', error);
-      setError('An error occurred while saving the team member');
+      toast.error("An error occurred while saving the team member");
     } finally {
       setLoading(false);
     }
@@ -810,19 +870,20 @@ export default function TeamMembersPage() {
     if (!confirmModal) return;
 
     setLoading(true);
-    setError(null);
-    setSuccess(null);
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
+      const { session } = await getWorkspaceSession();
       if (!session) {
-        setError('Not authenticated');
+        toast.error("Not authenticated");
         setConfirmModal(null);
         setLoading(false);
         return;
       }
 
       const isDeactivate = confirmModal.action === "deactivate";
+      const deactivatedMember = teamMembers.find(
+        (m) => m.id === confirmModal.memberId
+      );
       const response = await fetch(`/api/team-members?id=${confirmModal.memberId}`, {
         method: isDeactivate ? 'DELETE' : 'PATCH',
         headers: {
@@ -831,28 +892,32 @@ export default function TeamMembersPage() {
       });
 
       if (response.ok) {
-        setSuccess(
+        toast.success(
           isDeactivate
-            ? 'Team member deactivated successfully'
-            : 'Team member activated successfully'
+            ? deactivatedMember
+              ? `"${deactivatedMember.name}" deactivated successfully.`
+              : "Team member deactivated successfully."
+            : deactivatedMember
+              ? `"${deactivatedMember.name}" activated successfully.`
+              : "Team member activated successfully."
         );
-        await fetchTeamMembers();
+        await refreshWorkspaceMembers();
         setConfirmModal(null);
       } else {
         const errorData = await response.json();
-        setError(
+        toast.error(
           errorData.error ||
-            (isDeactivate ? 'Failed to deactivate team member' : 'Failed to activate team member')
+            (isDeactivate ? "Failed to deactivate team member" : "Failed to activate team member")
         );
         setConfirmModal(null);
       }
     } catch (err) {
       const isDeactivate = confirmModal.action === "deactivate";
       console.error(isDeactivate ? 'Error deactivating team member:' : 'Error activating team member:', err);
-      setError(
+      toast.error(
         confirmModal.action === "deactivate"
-          ? 'An error occurred while deactivating the team member'
-          : 'An error occurred while activating the team member'
+          ? "An error occurred while deactivating the team member"
+          : "An error occurred while activating the team member"
       );
       setConfirmModal(null);
     } finally {
@@ -863,13 +928,19 @@ export default function TeamMembersPage() {
   const handleInviteFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    setModalError(null);
-    setSuccess(null);
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
+      const { session } = await getWorkspaceSession();
       if (!session) {
-        setModalError('Not authenticated');
+        toast.error("Not authenticated");
+        setLoading(false);
+        return;
+      }
+
+      if (
+        inviteFormData.role === ROLE_WORKSPACE_ADMIN &&
+        showAdminLimitUpgrade()
+      ) {
         setLoading(false);
         return;
       }
@@ -891,15 +962,25 @@ export default function TeamMembersPage() {
 
       if (response.ok) {
         const data = await response.json();
-        setSuccess('Invite created successfully!');
+        toast.success("Invite created successfully.");
         setInviteUrl(data.inviteUrl);
       } else {
-        const errorData = await response.json();
-        setModalError(errorData.error || 'Failed to create invite');
+        const errorData = (await response.json()) as {
+          error?: string;
+          upgradeRequired?: boolean;
+        };
+        if (errorData.upgradeRequired) {
+          setUpgradeModalMessage(
+            errorData.error || "Upgrade your plan to add more workspace admins."
+          );
+          setUpgradeModalOpen(true);
+        } else {
+          toast.error(errorData.error || "Failed to create invite");
+        }
       }
     } catch (error) {
       console.error('Error creating invite:', error);
-      setModalError('An error occurred while creating the invite');
+      toast.error("An error occurred while creating the invite");
     } finally {
       setLoading(false);
     }
@@ -907,55 +988,30 @@ export default function TeamMembersPage() {
 
   return (
     <div className="w-full space-y-6">
-      {error && (
-        <div className="rounded-lg border border-red-200 bg-red-50 p-4">
-          <div className="flex items-center gap-2">
-            <svg className="h-5 w-5 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-            <p className="text-sm text-red-800">{error}</p>
-          </div>
-        </div>
-      )}
-
-      {success && (
-        <div className="rounded-lg border border-green-200 bg-green-50 p-4">
-          <div className="flex items-center gap-2">
-            <svg className="h-5 w-5 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-            <p className="text-sm text-green-800">{success}</p>
-          </div>
-        </div>
-      )}
-
-      {initialLoading ? (
-        <TeamMemberSkeleton />
-      ) : (
         <div className="mx-auto">
-          <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_20px_60px_-30px_rgba(15,23,42,0.25)]">
-            <div className="border-b border-slate-100 bg-gradient-to-r from-sky-50 via-white to-indigo-50 px-5 py-5 md:px-7 md:py-6">
+          <section className="relative space-y-4">
+            <div className="rounded-2xl overflow-hidden shadow-lg bg-gradient-to-r from-sky-50 via-white to-indigo-50 p-4 md:p-6">
               <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
                 <div className="space-y-3">
-                  <div className="inline-flex items-center gap-2 rounded-full border border-sky-100 bg-white/80 px-3 py-1 text-xs font-semibold text-sky-700 shadow-sm backdrop-blur">
+                  {/* <div className="inline-flex items-center gap-2 rounded-full border border-sky-100 bg-white/80 px-3 py-1 text-xs font-semibold text-sky-700 shadow-sm backdrop-blur">
                     <LuUsers className="h-4 w-4" aria-hidden />
                     Team Access Management
-                  </div>
+                  </div> */}
                   <div>
-                    <h1 className="text-2xl font-semibold tracking-tight text-slate-900 md:text-3xl">
+                    <h1 className="text-2xl font-bold tracking-tight text-slate-900 md:text-3xl">
                       Team Members
                     </h1>
-                    <p className="mt-1 max-w-2xl text-sm text-slate-600 md:text-base">
+                    <p className="max-w-2xl text-sm text-slate-600">
                       Manage team access, invite staff, onboard providers, and control roles with full action history.
                     </p>
                   </div>
                 </div>
                 {canManageMembers && (
-                  <div className="flex flex-col gap-3 sm:flex-row">
+                  <div className="flex gap-3 lg:justify-end flex-row flex-wrap">
                     <button
                       type="button"
                       onClick={handleInviteMember}
-                      className="inline-flex h-11 items-center justify-center rounded-xl border border-emerald-200 bg-emerald-50 px-5 text-sm font-medium text-emerald-700 shadow-none transition hover:bg-emerald-100"
+                      className="inline-flex items-center justify-center rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-medium text-emerald-600 shadow-none transition hover:bg-emerald-100"
                     >
                       <LuMail className="mr-2 h-4 w-4" aria-hidden />
                       Invite Staff / Manager
@@ -963,7 +1019,7 @@ export default function TeamMembersPage() {
                     <button
                       type="button"
                       onClick={handleNewMember}
-                      className="inline-flex h-11 items-center justify-center rounded-xl bg-slate-900 px-5 text-sm font-medium text-white transition hover:bg-slate-800"
+                      className="inline-flex items-center justify-center rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-indigo-700"
                     >
                       <LuUserPlus className="mr-2 h-4 w-4" aria-hidden />
                       Add Service Provider
@@ -971,50 +1027,40 @@ export default function TeamMembersPage() {
                   </div>
                 )}
               </div>
-
-              <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+              
+              <ScreenGate minWidth={1024}>
+              <div className="mt-6 grid gap-4 md:grid-cols-3 xl:grid-cols-5">
                 {(
                   [
-                    ["Total Members", teamStats.total, LuUsers, "bg-slate-100 text-slate-700"],
-                    ["Active Members", teamStats.active, LuBadgeCheck, "bg-emerald-50 text-emerald-700"],
-                    ["Pending Invites", teamStats.invited, LuStar, "bg-violet-50 text-violet-700"],
-                    [
-                      "Provider Onboarding",
-                      teamStats.onboarding,
-                      LuStethoscope,
-                      "bg-amber-50 text-amber-700",
-                    ],
-                    [
-                      "Service Providers",
-                      teamStats.providers,
-                      LuBriefcase,
-                      "bg-sky-50 text-sky-700",
-                    ],
+                    ["Total Members", teamStats.total, LuUsers, "bg-indigo-50 text-indigo-600"],
+                    ["Active Members", teamStats.active, LuBadgeCheck, "bg-emerald-50 text-emerald-600"],
+                    ["Pending Invites", teamStats.invited, LuStar, "bg-violet-50 text-violet-600"],
+                    ["Provider Onboarding", teamStats.onboarding, LuStethoscope, "bg-amber-50 text-amber-600"],
+                    ["Service Providers", teamStats.providers, LuBriefcase, "bg-sky-50 text-sky-600"],
                   ] as const
                 ).map(([label, value, StatIcon, iconClass]) => (
-                  <div
-                    key={String(label)}
-                    className="rounded-2xl border border-slate-200 bg-white shadow-sm"
-                  >
-                    <div className="flex items-center justify-between p-5">
+                  <div key={String(label)} className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                      <div className={`flex h-10 w-10 xl:h-14 xl:w-14 shrink-0 items-center justify-center rounded-xl ${iconClass}`}>
+                        <StatIcon className="h-4 w-4 md:h-5 md:w-5" aria-hidden />
+                      </div>
                       <div>
-                        <p className="text-sm text-slate-500">{label}</p>
-                        <p className="mt-1 text-2xl font-semibold text-slate-900">{value}</p>
+                        <p className="text-sm font-medium leading-snug text-slate-500">{label}</p>
+                        <p className="text-2xl font-bold text-slate-900">
+                          {initialLoading ? <StatValueSkeleton /> : value}
+                        </p>
                       </div>
-                      <div className={`rounded-2xl p-3 ${iconClass}`}>
-                        <StatIcon className="h-5 w-5" aria-hidden />
-                      </div>
-                    </div>
                   </div>
                 ))}
               </div>
+              </ScreenGate>
+
             </div>
 
-            <div className="p-5 md:p-7">
-              <div className="mb-5 flex w-full min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:gap-3">
-                <div className="relative min-h-12 w-full min-w-0 sm:min-w-[12rem] sm:flex-1">
+            <div className="bg-white rounded-2xl shadow-lg p-4 md:p-6">
+              <div className="mb-5 flex w-full min-w-0 flex-col gap-3 min-[900px]:flex-row lg:flex-col xl:flex-row min-[900px]:items-center lg:items-start sm:gap-3">
+                <div className="relative w-full">
                   <div
-                    className="pointer-events-none absolute inset-y-0 left-0 flex w-12 items-center justify-center text-slate-400"
+                    className="pointer-events-none absolute inset-y-0 left-0 flex w-10 items-center justify-center text-slate-400"
                     aria-hidden
                   >
                     <LuSearch className="h-4 w-4 shrink-0" />
@@ -1024,10 +1070,10 @@ export default function TeamMembersPage() {
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
                     placeholder="Search by member name, email, role, department, or status..."
-                    className="box-border h-12 w-full min-w-0 rounded-xl border border-slate-200 bg-white pl-12 pr-3 text-sm font-normal leading-normal text-slate-900 shadow-none outline-none focus:ring-2 focus:ring-sky-200"
+                    className="box-border w-full h-12 rounded-xl border border-slate-200 bg-white pl-10 pr-3 text-sm font-normal leading-normal text-slate-900 shadow-none outline-none focus:ring-2 focus:ring-indigo-200"
                   />
                 </div>
-                <div className="flex w-full min-w-0 shrink-0 flex-nowrap justify-start gap-2 overflow-x-auto overflow-y-hidden pb-1 pt-0.5 [scrollbar-gutter:stable] sm:w-auto sm:pb-0 sm:pt-0">
+                <div className="flex w-full shrink-0 max-[592px]:pb-3 flex-nowrap justify-start gap-2 overflow-x-auto overflow-y-hidden [scrollbar-gutter:stable] sm:w-auto sm:pb-0">
                   {STATUS_FILTER_CHIPS.map((chip) => {
                     const isActive = statusFilter === chip.id;
                     return (
@@ -1035,9 +1081,9 @@ export default function TeamMembersPage() {
                         key={chip.id}
                         type="button"
                         onClick={() => setStatusFilter(chip.id)}
-                        className={`inline-flex h-10 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl px-3.5 text-sm font-medium transition sm:h-11 sm:px-4 ${
+                        className={`inline-flex h-12 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl px-4 text-sm font-medium transition ${
                           isActive
-                            ? "bg-slate-900 text-white shadow-sm"
+                            ? "bg-indigo-600 text-white shadow-sm"
                             : "border border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:text-slate-900"
                         }`}
                       >
@@ -1053,7 +1099,9 @@ export default function TeamMembersPage() {
                 </div>
               </div>
 
-              {teamMembers.length === 0 ? (
+              {initialLoading ? (
+                <TeamMemberCardsSkeleton showActions={canManageMembers} />
+              ) : teamMembers.length === 0 ? (
                 <div className="rounded-[24px] border border-dashed border-slate-300 bg-slate-50 px-6 py-14 text-center">
                   <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-white shadow-sm">
                     <LuUsers className="h-6 w-6 text-slate-400" aria-hidden />
@@ -1110,16 +1158,21 @@ export default function TeamMembersPage() {
                     return (
                       <div
                         key={member.id}
-                        className={`group rounded-[24px] border border-slate-200 bg-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-[0_18px_40px_-28px_rgba(15,23,42,0.45)] ${
+                        className={`group rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-[0_18px_40px_-28px_rgba(15,23,42,0.45)] ${
                           member.deactivated ? "opacity-70" : ""
                         }`}
                       >
-                        <div className="p-5 md:p-6">
-                          <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
-                            <div className="flex min-w-0 flex-1 gap-4">
-                              <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-500 text-lg font-semibold text-white shadow-sm">
-                                {member.name.charAt(0).toUpperCase()}
-                              </div>
+                        <div className="p-4 md:p-6">
+                          <div className="flex gap-5 flex-row xl:items-start xl:justify-between">
+                            <div className="flex flex-1 gap-3">
+                              <WorkspaceUserAvatar
+                                userId={member.id}
+                                name={member.name}
+                                email={member.email}
+                                size="lg"
+                                shape="rounded"
+                                className="h-8 w-8 sm:h-11 sm:w-11 bg-indigo-500 text-white shadow-sm"
+                              />
                               <div className="min-w-0 flex-1">
                                 <div className="flex flex-wrap items-center gap-2">
                                   <h3 className="text-lg font-semibold text-slate-900">
@@ -1132,7 +1185,7 @@ export default function TeamMembersPage() {
                                     </span>
                                   )}
                                   {isRecentlyJoined(member.created_at, member.deactivated) && (
-                                    <span className="rounded-full bg-violet-50 px-2.5 py-1 text-xs font-semibold text-violet-700 ring-1 ring-violet-200">
+                                    <span className="rounded-full bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700 ring-1 ring-indigo-200">
                                       New
                                     </span>
                                   )}
@@ -1152,18 +1205,23 @@ export default function TeamMembersPage() {
                                     <LuPhone className="h-4 w-4 shrink-0 text-slate-400" aria-hidden />
                                     <span>{member.phone?.trim() ? member.phone : "—"}</span>
                                   </div>
-                                  <div className="flex min-w-0 items-center gap-2">
-                                    <LuCalendar className="h-4 w-4 shrink-0 text-slate-400" aria-hidden />
-                                    <span>
-                                      {!member.email_confirmed_at
-                                        ? "Pending acceptance"
-                                        : `Added ${formatMemberAddedDate(member.created_at)}`}
-                                    </span>
-                                  </div>
-                                  <div className="flex min-w-0 items-center gap-2">
-                                    <LuClock className="h-4 w-4 shrink-0 text-slate-400" aria-hidden />
-                                    <span>{formatWeeklyBookingsLabel(member.bookings_this_week ?? 0)}</span>
-                                  </div>
+
+                                  <ScreenGate minWidth={768}>
+                                    <div className="flex min-w-0 items-center gap-2">
+                                      <LuCalendar className="h-4 w-4 shrink-0 text-slate-400" aria-hidden />
+                                      <span>
+                                        {!member.email_confirmed_at
+                                          ? "Pending acceptance"
+                                          : `Added ${formatMemberAddedDate(member.created_at)}`}
+                                      </span>
+                                    </div>
+
+                                    <div className="flex min-w-0 items-center gap-2">
+                                      <LuClock className="h-4 w-4 shrink-0 text-slate-400" aria-hidden />
+                                      <span>{formatWeeklyBookingsLabel(member.bookings_this_week ?? 0)}</span>
+                                    </div>
+                                  </ScreenGate>
+                                  
                                 </div>
 
                                 <div className="mt-4 flex flex-wrap gap-2">
@@ -1196,7 +1254,8 @@ export default function TeamMembersPage() {
                                     {getStatusLabel(ui)}
                                   </span>
                                 </div>
-
+                                
+                                <ScreenGate minWidth={640}>
                                 {teamMemberActsAsServiceProvider(member) &&
                                   displayDeptIds.length > 0 && (
                                   <div className="mt-2 flex max-h-48 flex-wrap gap-2 overflow-y-auto pr-1">
@@ -1208,7 +1267,7 @@ export default function TeamMembersPage() {
                                       return (
                                         <span
                                           key={deptId}
-                                          className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-700 ring-1 ring-slate-200"
+                                          className="rounded-full bg-slate-100 border border-slate-200 px-3 py-1 text-xs font-medium text-slate-700 ring-1 ring-slate-200"
                                         >
                                           {name}
                                         </span>
@@ -1216,6 +1275,8 @@ export default function TeamMembersPage() {
                                     })}
                                   </div>
                                 )}
+                                </ScreenGate>
+
                               </div>
                             </div>
 
@@ -1228,6 +1289,7 @@ export default function TeamMembersPage() {
                                   </span>
                                 ) : (
                                   <>
+                                  <ScreenGate minWidth={1280}>
                                     <button
                                       type="button"
                                       onClick={() => {
@@ -1235,7 +1297,7 @@ export default function TeamMembersPage() {
                                         handleEditMember(member);
                                       }}
                                       disabled={loading || member.deactivated}
-                                      className="inline-flex h-10 items-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-medium text-slate-800 transition hover:bg-slate-50 disabled:opacity-50"
+                                      className="inline-flex items-center gap-1 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-medium text-indigo-700 transition hover:bg-indigo-100 cursor-pointer"
                                     >
                                       <LuPencil className="mr-2 h-4 w-4" aria-hidden />
                                       Edit
@@ -1247,7 +1309,7 @@ export default function TeamMembersPage() {
                                         handleOpenManageRole(member);
                                       }}
                                       disabled={loading || member.deactivated}
-                                      className="inline-flex h-10 items-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-medium text-slate-800 transition hover:bg-slate-50 disabled:opacity-50"
+                                      className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-700 transition hover:bg-slate-100 cursor-pointer"
                                     >
                                       <LuUserCog className="mr-2 h-4 w-4" aria-hidden />
                                       Role
@@ -1264,10 +1326,10 @@ export default function TeamMembersPage() {
                                           }
                                         }}
                                         disabled={loading}
-                                        className={`inline-flex h-10 items-center rounded-xl px-4 text-sm font-medium transition disabled:opacity-50 ${
+                                        className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-medium transition cursor-pointer ${
                                           member.deactivated
-                                            ? "bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
-                                            : "bg-rose-50 text-rose-700 hover:bg-rose-100"
+                                            ? "bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border-emerald-200"
+                                            : "bg-red-50 text-red-700 hover:bg-red-100 border-red-200"
                                         }`}
                                       >
                                         <LuPower className="mr-2 h-4 w-4" aria-hidden />
@@ -1276,6 +1338,9 @@ export default function TeamMembersPage() {
                                           : "Deactivate"}
                                       </button>
                                     )}
+                                    </ScreenGate>
+
+                                    <ScreenGate maxWidth={1279}>
                                     <div className="relative">
                                       <button
                                         type="button"
@@ -1286,7 +1351,7 @@ export default function TeamMembersPage() {
                                               : member.id
                                           )
                                         }
-                                        className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 transition hover:bg-slate-50"
+                                        className="inline-flex h-8 w-8 sm:h-10 sm:w-10 items-center justify-center rounded-lg sm:rounded-xl border border-slate-200 bg-white text-slate-700 transition hover:bg-slate-50"
                                         aria-label="More actions"
                                         aria-expanded={openActionsId === member.id}
                                       >
@@ -1294,7 +1359,7 @@ export default function TeamMembersPage() {
                                       </button>
                                       {openActionsId === member.id && (
                                         <div
-                                          className="absolute right-0 top-12 z-20 w-56 rounded-xl border border-slate-200 bg-white p-1 shadow-xl"
+                                          className="absolute right-0 top-12 z-50 w-56 rounded-xl border border-slate-200 bg-white p-1 shadow-xl"
                                           role="menu"
                                         >
                                           <button
@@ -1325,7 +1390,7 @@ export default function TeamMembersPage() {
                                             <button
                                               type="button"
                                               role="menuitem"
-                                              className="flex w-full items-center rounded-lg px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
+                                              className="flex w-full items-center rounded-lg px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50"
                                               onClick={() => {
                                                 setOpenActionsId(null);
                                                 if (member.deactivated) {
@@ -1344,6 +1409,8 @@ export default function TeamMembersPage() {
                                         </div>
                                       )}
                                     </div>
+                                    </ScreenGate>
+
                                   </>
                                 )}
                               </div>
@@ -1358,12 +1425,10 @@ export default function TeamMembersPage() {
             </div>
           </section>
         </div>
-      )}
 
       <ProviderCreateModal
         open={showMemberForm && !editingMember}
         loading={loading}
-        error={modalError}
         professionLabel={workspaceProfessionLabel ?? null}
         catalogDepartmentNames={providerCatalogNames}
         selectedDepartmentNames={providerSelectedDepartmentNames}
@@ -1378,7 +1443,6 @@ export default function TeamMembersPage() {
       <EditTeamMemberModal
         open={showMemberForm && editingMember !== null}
         loading={loading}
-        success={modalSuccess}
         editingMember={editingMember!}
         departments={departments}
         memberFormData={memberFormData}
@@ -1404,7 +1468,7 @@ export default function TeamMembersPage() {
         }
         onCancel={handleMemberFormCancel}
         onSubmit={handleMemberFormSubmit}
-        onChange={setMemberFormData}
+        onChange={handleMemberFormChange}
         onToggleDepartment={toggleDepartment}
         onToggleAdditionalRole={toggleAdditionalRole}
       />
@@ -1413,7 +1477,6 @@ export default function TeamMembersPage() {
         <ManageRoleModal
           open
           loading={loading}
-          success={modalSuccess}
           member={roleModalMember}
           departments={departments}
           memberFormData={memberFormData}
@@ -1433,7 +1496,7 @@ export default function TeamMembersPage() {
           )}
           onCancel={handleRoleModalCancel}
           onSubmit={handleMemberFormSubmit}
-          onChange={setMemberFormData}
+          onChange={handleMemberFormChange}
           onToggleDepartment={toggleDepartment}
           onToggleAdditionalRole={toggleAdditionalRole}
         />
@@ -1442,13 +1505,12 @@ export default function TeamMembersPage() {
       <StaffInviteModal
         open={showInviteForm}
         loading={loading}
-        error={modalError}
         departments={departments}
         inviteFormData={inviteFormData}
         inviteUrl={inviteUrl}
         onCancel={handleInviteFormCancel}
         onSubmit={handleInviteFormSubmit}
-        onChange={setInviteFormData}
+        onChange={handleInviteFormChange}
         onToggleDepartment={toggleInviteDepartment}
       />
 

@@ -1,5 +1,6 @@
 "use client";
 
+import { getWorkspaceSession } from '@/src/lib/auth_session';
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -72,9 +73,7 @@ export default function AllNotifications() {
   const loadActivities = async () => {
     setError(null);
     try {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
+      const { session } = await getWorkspaceSession();
 
       if (!session?.access_token) {
         setItems([]);
@@ -165,7 +164,7 @@ export default function AllNotifications() {
               <div
                 className={`mt-0.5 h-8 w-8 rounded-full grid place-items-center text-sm ${
                   item.type === "booking"
-                    ? "bg-blue-100 text-blue-700"
+                    ? "bg-indigo-100 text-indigo-700"
                     : item.type === "contact"
                     ? "bg-emerald-100 text-emerald-700"
                     : item.type === "event_type"

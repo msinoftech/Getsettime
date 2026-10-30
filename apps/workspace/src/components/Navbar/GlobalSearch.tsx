@@ -1,8 +1,9 @@
 "use client";
 
+import { authFetch } from '@/src/lib/auth_session';
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { supabase } from "@/lib/supabaseClient";
+import { useAuth } from "@/src/providers/AuthProvider";
 
 type SearchGroup = "Bookings" | "Contacts" | "Services";
 
@@ -35,16 +36,9 @@ type ServiceRow = {
   department_name?: string | null;
 };
 
-async function get_auth_header(): Promise<Record<string, string> | null> {
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
-  if (!session?.access_token) return null;
-  return { Authorization: `Bearer ${session.access_token}` };
-}
-
 export default function GlobalSearch() {
   const router = useRouter();
+  const { accessToken } = useAuth();
   const [open, set_open] = useState(false);
   const [query, set_query] = useState("");
   const [results, set_results] = useState<SearchResult[]>([]);
@@ -95,8 +89,7 @@ export default function GlobalSearch() {
 
     const timer = window.setTimeout(async () => {
       try {
-        const headers = await get_auth_header();
-        if (!headers || !alive) {
+        if (!accessToken || !alive) {
           set_results([]);
           return;
         }
@@ -104,19 +97,18 @@ export default function GlobalSearch() {
         const lower = trimmed.toLowerCase();
 
         if (contacts_cache.current === null) {
-          const res = await fetch("/api/contacts", { headers });
+          const res = await authFetch("/api/contacts");
           const body = res.ok ? ((await res.json()) as { contacts?: ContactRow[] }) : {};
           contacts_cache.current = body.contacts ?? [];
         }
         if (services_cache.current === null) {
-          const res = await fetch("/api/services", { headers });
+          const res = await authFetch("/api/services");
           const body = res.ok ? ((await res.json()) as { services?: ServiceRow[] }) : {};
           services_cache.current = body.services ?? [];
         }
 
-        const bookings_res = await fetch(
+        const bookings_res = await authFetch(
           `/api/bookings?search=${encodeURIComponent(trimmed)}&limit=5`,
-          { headers },
         );
         const bookings_body = bookings_res.ok
           ? ((await bookings_res.json()) as { data?: BookingRow[] })
@@ -175,7 +167,7 @@ export default function GlobalSearch() {
       alive = false;
       window.clearTimeout(timer);
     };
-  }, [query, open]);
+  }, [query, open, accessToken]);
 
   const navigate = useCallback(
     (result: SearchResult) => {

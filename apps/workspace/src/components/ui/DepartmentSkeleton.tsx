@@ -10,107 +10,77 @@ function SkeletonBar({ className }: { className?: string }) {
 
 const SKELETON_ROWS = 6;
 
-function StatCardSkeleton() {
+/** Pulsing placeholder for a dynamic numeric stat value. */
+export function StatValueSkeleton({ className }: { className?: string }) {
   return (
-    <div className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-      <SkeletonBar className="h-11 w-11 shrink-0 rounded-xl" />
-      <div className="min-w-0 flex-1 space-y-2">
-        <SkeletonBar className="h-6 w-10" />
-        <SkeletonBar className="h-3.5 w-28" />
-      </div>
-    </div>
+    <span
+      className={`inline-block animate-pulse rounded bg-slate-200 ${className ?? "h-6 w-10"}`}
+      aria-hidden
+    />
   );
 }
 
-function TableRowSkeleton() {
+type DepartmentTableRowsSkeletonProps = {
+  showActions?: boolean;
+  rows?: number;
+};
+
+/** Table body rows that match the departments list columns. */
+export function DepartmentTableRowsSkeleton({
+  showActions = true,
+  rows = SKELETON_ROWS,
+}: DepartmentTableRowsSkeletonProps) {
   return (
-    <div className="flex items-center gap-4 border-b border-slate-100 px-4 py-3.5 last:border-b-0">
-      <div className="flex min-w-0 flex-1 items-center gap-3">
-        <SkeletonBar className="h-9 w-9 shrink-0 rounded-xl" />
-        <div className="min-w-0 flex-1 space-y-1.5">
-          <SkeletonBar className="h-4 w-36" />
-          <SkeletonBar className="h-3 w-24" />
-        </div>
-      </div>
-      <div className="hidden min-w-[9rem] items-center gap-2 sm:flex">
-        <SkeletonBar className="h-7 w-7 rounded-full" />
-        <SkeletonBar className="h-7 w-7 rounded-full" />
-        <SkeletonBar className="h-4 w-20" />
-      </div>
-      <SkeletonBar className="hidden h-4 w-16 md:block" />
-      <SkeletonBar className="h-6 w-16 rounded-full" />
-      <div className="hidden items-center gap-1.5 lg:flex">
-        <SkeletonBar className="h-8 w-14 rounded-lg" />
+    <>
+      {Array.from({ length: rows }).map((_, i) => (
+        <tr key={i} className="border-b border-slate-100 last:border-b-0">
+          <td className="px-4 py-3.5">
+            <div className="flex items-start gap-3">
+              <SkeletonBar className="mt-0.5 h-9 w-9 shrink-0 rounded-xl" />
+              <div className="min-w-0 flex-1 space-y-1.5 pt-0.5">
+                <SkeletonBar className="h-4 w-36 max-w-full" />
+                <SkeletonBar className="h-3 w-24 max-w-full" />
+              </div>
+            </div>
+          </td>
+          <td className="px-4 py-3.5">
+            <div className="flex items-center gap-2.5">
+              <div className="flex items-center">
+                <SkeletonBar className="h-7 w-7 rounded-full" />
+                <SkeletonBar className="-ml-2 h-7 w-7 rounded-full" />
+              </div>
+              <SkeletonBar className="h-4 w-24" />
+            </div>
+          </td>
+          <td className="px-4 py-3.5">
+            <SkeletonBar className="h-4 w-16" />
+          </td>
+          <td className="px-4 py-3.5">
+            <SkeletonBar className="h-6 w-16 rounded-full" />
+          </td>
+          {showActions ? (
+            <td className="px-4 py-3.5">
+              <div className="flex items-center gap-1.5">
+                <SkeletonBar className="h-8 w-14 rounded-lg" />
+                <SkeletonBar className="h-8 w-8 rounded-lg" />
+              </div>
+            </td>
+          ) : null}
+        </tr>
+      ))}
+    </>
+  );
+}
+
+/** Pagination footer placeholder. */
+export function DepartmentPaginationSkeleton() {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <SkeletonBar className="h-4 w-32" />
+      <div className="flex gap-2">
         <SkeletonBar className="h-8 w-8 rounded-lg" />
-      </div>
-    </div>
-  );
-}
-
-export function DepartmentSkeleton() {
-  return (
-    <div className="min-h-screen">
-      <div className="mx-auto space-y-5">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-          <div className="space-y-2">
-            <SkeletonBar className="h-8 w-48 md:h-9 md:w-56" />
-            <SkeletonBar className="h-4 w-72 max-w-full sm:w-96" />
-          </div>
-          <SkeletonBar className="h-10 w-40 rounded-xl" />
-        </div>
-
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <StatCardSkeleton />
-          <StatCardSkeleton />
-          <StatCardSkeleton />
-          <div className="hidden xl:block">
-            <StatCardSkeleton />
-          </div>
-        </div>
-
-        <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:p-6">
-          <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-            <div className="space-y-2">
-              <SkeletonBar className="h-5 w-40" />
-              <SkeletonBar className="h-4 w-64 max-w-full" />
-            </div>
-            <div className="flex flex-wrap items-center gap-2.5">
-              <SkeletonBar className="h-10 w-full rounded-xl sm:w-64" />
-              <SkeletonBar className="h-10 w-24 rounded-xl" />
-            </div>
-          </div>
-
-          <div className="mb-4 flex gap-2 overflow-x-auto pb-1">
-            {Array.from({ length: 4 }).map((_, i) => (
-              <SkeletonBar key={i} className="h-8 w-20 shrink-0 rounded-full" />
-            ))}
-          </div>
-
-          <div className="overflow-hidden rounded-xl border border-slate-200">
-            <div className="border-b border-slate-200 bg-slate-50/80 px-4 py-3">
-              <div className="flex gap-4">
-                <SkeletonBar className="h-3 w-24" />
-                <SkeletonBar className="hidden h-3 w-28 sm:block" />
-                <SkeletonBar className="hidden h-3 w-16 md:block" />
-                <SkeletonBar className="h-3 w-14" />
-                <SkeletonBar className="hidden h-3 w-14 lg:block" />
-              </div>
-            </div>
-            <div>
-              {Array.from({ length: SKELETON_ROWS }).map((_, i) => (
-                <TableRowSkeleton key={i} />
-              ))}
-            </div>
-            <div className="flex items-center justify-between border-t border-slate-200 px-4 py-3">
-              <SkeletonBar className="h-4 w-32" />
-              <div className="flex gap-2">
-                <SkeletonBar className="h-8 w-8 rounded-lg" />
-                <SkeletonBar className="h-8 w-8 rounded-lg" />
-                <SkeletonBar className="h-8 w-8 rounded-lg" />
-              </div>
-            </div>
-          </div>
-        </section>
+        <SkeletonBar className="h-8 w-8 rounded-lg" />
+        <SkeletonBar className="h-8 w-8 rounded-lg" />
       </div>
     </div>
   );

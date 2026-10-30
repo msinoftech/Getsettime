@@ -41,7 +41,7 @@ type DashboardIconProps = {
 
 export default function DashboardIcon({
   name,
-  size = 18,
+  size = 14,
   className = "",
 }: DashboardIconProps) {
   const base = {

@@ -1,12 +1,45 @@
 import { NextRequest, NextResponse } from "next/server";
+import { createClient } from "@supabase/supabase-js";
 import { createSupabaseServerClient } from "@app/db";
 import { env } from "@app/config";
 
+function createAuthenticatedClient(req: NextRequest) {
+  const authHeader = req.headers.get("authorization");
+  const token = authHeader?.replace("Bearer ", "");
+  if (!token) return null;
+
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || env.supabaseUrl;
+  const supabaseAnonKey =
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || env.supabaseAnonKey;
+  if (!supabaseUrl || !supabaseAnonKey) return null;
+
+  const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+    auth: { autoRefreshToken: false, persistSession: false },
+    global: { headers: { Authorization: `Bearer ${token}` } },
+  });
+
+  return { supabase, token };
+}
+
 export async function POST(req: NextRequest) {
   try {
+    const auth = createAuthenticatedClient(req);
+    if (!auth) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const {
+      data: { user },
+      error: authError,
+    } = await auth.supabase.auth.getUser(auth.token);
+    if (authError || !user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const formData = await req.formData();
     const file = formData.get("file") as File | null;
-    const userId = (formData.get("userId") as string | null) || "user";
+    const requestedUserId = (formData.get("userId") as string | null)?.trim();
+    const userId = requestedUserId && requestedUserId === user.id ? user.id : user.id;
 
     if (!file) {
       return NextResponse.json({ error: "No file provided" }, { status: 400 });
@@ -67,9 +100,10 @@ export async function POST(req: NextRequest) {
     }
 
     return NextResponse.json({ url: publicUrlData.publicUrl, path: filePath }, { status: 200 });
-  } catch (err: any) {
+  } catch (err: unknown) {
+    const error = err as Error;
     return NextResponse.json(
-      { error: err?.message || "An unexpected error occurred during upload" },
+      { error: error?.message || "An unexpected error occurred during upload" },
       { status: 500 }
     );
   }

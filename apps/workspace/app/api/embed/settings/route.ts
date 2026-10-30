@@ -4,6 +4,7 @@ import {
   resolveNotificationsForServiceProvider,
   resolveMeetingOptionsForServiceProvider,
 } from '@/src/utils/providerSettingsResolution';
+import { resolve_booking_step_order } from '@/src/features/booking-flow/resolve_booking_step_order';
 
 export async function GET(req: NextRequest) {
   try {
@@ -63,6 +64,24 @@ export async function GET(req: NextRequest) {
 
     const settings = (data?.settings || {}) as Record<string, unknown>;
 
+    const { data: workspace_row } = await supabase
+      .from('workspaces')
+      .select('profession_id, professions(admin_professions_id)')
+      .eq('id', workspaceIdResolved)
+      .maybeSingle();
+    const profession = workspace_row?.professions as
+      | { admin_professions_id?: number | null }
+      | { admin_professions_id?: number | null }[]
+      | null
+      | undefined;
+    const admin_professions_id = Array.isArray(profession)
+      ? profession[0]?.admin_professions_id ?? null
+      : profession?.admin_professions_id ?? null;
+    const booking_step_order = await resolve_booking_step_order({
+      supabase,
+      admin_professions_id,
+    });
+
     if (serviceProviderId) {
       return NextResponse.json({
         settings: {
@@ -76,10 +95,11 @@ export async function GET(req: NextRequest) {
             serviceProviderId
           ),
         },
+        booking_step_order,
       });
     }
 
-    return NextResponse.json({ settings });
+    return NextResponse.json({ settings, booking_step_order });
   } catch (err: unknown) {
     const error = err as Error;
     console.error('Error:', error);

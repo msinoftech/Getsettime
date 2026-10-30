@@ -36,6 +36,8 @@ export type AvailabilitySettings = {
 export type GeneralSettings = {
   accountName?: string | null;
   logoUrl?: string | null;
+  /** Public booking page header image (stored as `clinic_image_url` in configurations) */
+  clinic_image_url?: string | null;
   tagline?: string | null;
   primaryColor?: string | null;
   accentColor?: string | null;
@@ -114,6 +116,7 @@ export type meeting_options_settings = {
 };
 
 import type { workspace_notifications_settings } from '@/lib/workspace-notification-flags';
+import type { booking_rules } from '@/src/types/booking_rules';
 
 export type { workspace_notifications_settings };
 
@@ -123,6 +126,7 @@ export type WorkspaceSettings = {
   intake_form?: IntakeFormSettings;
   meeting_options?: meeting_options_settings;
   notifications?: workspace_notifications_settings;
+  booking_rules?: booking_rules;
   /** Public booking link slugs keyed by service provider user id */
   links?: Record<string, { slug?: string }>;
   /** Write-once ipapi geo snapshot from workspace registration */
@@ -138,6 +142,7 @@ export type workspace_shell_patch = {
     profession_name?: string | null;
     type?: string | null;
     admin_professions_id?: number | null;
+    booking_step_order?: string[] | null;
   };
 };
 
@@ -157,6 +162,7 @@ export type WorkspaceSettingsHook = {
   serviceProviderLinkSlug?: string | null;
   /** Catalog profession id from workspace.professions.admin_professions_id */
   workspaceAdminProfessionsId?: number | null;
+  bookingStepOrder?: string[] | null;
   loading: boolean;
   error: Error | null;
   refetch: () => Promise<void>;

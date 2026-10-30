@@ -21,7 +21,20 @@ export default async function RegisterPage({ searchParams }: RegisterPageProps) 
     gSignup === "1" || (Array.isArray(gSignup) && gSignup.includes("1"));
 
   if (isGoogleSignup) {
-    redirect("/api/auth/google?signup=1&calendar=1");
+    const claimRaw = params?.claim_code;
+    const claimCode =
+      typeof claimRaw === "string"
+        ? claimRaw
+        : Array.isArray(claimRaw)
+          ? claimRaw[0]
+          : "";
+    const googleUrl = new URL("/api/auth/google", "http://local");
+    googleUrl.searchParams.set("signup", "1");
+    googleUrl.searchParams.set("calendar", "1");
+    if (claimCode?.trim()) {
+      googleUrl.searchParams.set("claim_code", claimCode.trim());
+    }
+    redirect(googleUrl.pathname + googleUrl.search);
   }
 
   return (

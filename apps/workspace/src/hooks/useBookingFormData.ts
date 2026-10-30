@@ -1,4 +1,9 @@
-import { useState, useEffect, useMemo } from 'react';
+'use client';
+
+import { authFetch } from '@/src/lib/auth_session';
+import { useState, useEffect, useMemo, useRef } from 'react';
+import { useAuth } from '@/src/providers/AuthProvider';
+import { useWorkspaceUsers } from '@/src/providers/WorkspaceUsersProvider';
 import type {
   AvailabilitySettings,
   Booking,
@@ -10,17 +15,31 @@ import type {
 import type { IntakeFormSettings, meeting_options_settings } from '@/src/types/workspace';
 import type { workspace_notifications_settings } from '@/lib/workspace-notification-flags';
 import { getAllowedServiceIds, isServicesEnabled } from '@/src/utils/intakeForm';
-import { CALENDAR_BUFFER_DAYS, CALENDAR_BUFFER_DAYS_BEFORE } from '@/src/constants/booking';
+import {
+  event_type_session_duration_minutes,
+  resolve_booking_data_fetch_range,
+} from '@/src/features/booking-flow';
 import { userActsAsServiceProviderFromMetadata } from '@/lib/service_provider_role';
 import { serviceIdsFromUserServiceAssignments } from '@/src/utils/bookingServiceAssignments';
 import {
   filterBookableDepartments,
   filterBookableEventTypes,
+  filterDepartmentsForEventType,
   filterEventTypesForServiceProvider,
+  filterProvidersForEventType,
   memberActsInDepartment,
 } from '@/src/utils/bookingFormUtils';
 import { resolveAvailabilityForServiceProvider } from '@/src/utils/availabilityResolution';
+import {
+  calendar_busy_without_booking_overlap,
+  flatten_embed_booking_row,
+} from '@/lib/booking_capacity';
+import { parse_event_type_recurrence } from '@/src/features/event-types/event_type_recurrence';
 import { useWorkspaceSettings } from '@/src/hooks/useWorkspaceSettings';
+import {
+  resolve_member_profile_highlights,
+  resolve_workspace_owner_profile_highlights,
+} from '@/src/utils/booking_host_profile';
 
 interface TeamMemberRow {
   id: string;
@@ -29,6 +48,8 @@ interface TeamMemberRow {
   education?: string | null;
   experience?: string | null;
   specialty?: string | null;
+  bio?: string | null;
+  avatar_url?: string | null;
   role?: string | null;
   additional_roles?: string[];
   departments?: number[];
@@ -39,34 +60,83 @@ interface TeamMemberRow {
 interface UseBookingFormDataParams {
   selectedDepartment: Department | null;
   selectedProvider: ServiceProvider | null;
+  /** Scopes departments and providers to the ones assigned to this event type. */
+  selectedType: EventType | null;
+  /**
+   * When set (e.g. reschedule modal), drives booking/exception fetch range without
+   * scoping department/provider lists to the event type's current assignments.
+   */
+  schedulingEventType?: EventType | null;
+  /** Keeps the event-type list stable after the user picks a type (event-type-first flows). */
+  lockEventTypeCatalog?: boolean;
   days: Date[];
   intakeForm: IntakeFormSettings | undefined;
   onAvailabilityChange?: () => void;
+  /** Locks fetch scope to this provider (e.g. reschedule / admin edit modal). */
+  fixedServiceProviderId?: string | null;
+  /** When true, event types are shown before department/provider selection. */
+  eventTypeBeforeDepartment?: boolean;
 }
 
 export function useBookingFormData({
   selectedDepartment,
   selectedProvider,
+  selectedType,
+  schedulingEventType = null,
+  lockEventTypeCatalog = false,
   days,
   intakeForm,
   onAvailabilityChange,
+  fixedServiceProviderId = null,
+  eventTypeBeforeDepartment = false,
 }: UseBookingFormDataParams) {
+  const { accessToken } = useAuth();
+  const eventTypeForFetch = schedulingEventType ?? selectedType;
   const {
     settings: workspaceSettings,
+    general,
     availability: workspaceAvailability,
     workspaceName: cachedWorkspaceName,
     workspaceLogo: cachedWorkspaceLogo,
     loading: workspaceSettingsLoading,
   } = useWorkspaceSettings();
+  const { members: workspaceUsers } = useWorkspaceUsers();
+  const workspaceMembers = useMemo<TeamMemberRow[]>(
+    () =>
+      workspaceUsers.map((m) => ({
+        id: m.id,
+        email: m.email,
+        name: m.name,
+        education: m.education,
+        experience: m.experience,
+        specialty: m.specialty,
+        bio: m.bio ?? null,
+        avatar_url: m.avatar_url ?? null,
+        role: m.role,
+        additional_roles: m.additional_roles,
+        departments: m.departments,
+        deactivated: m.deactivated,
+        is_workspace_owner: m.is_workspace_owner,
+      })),
+    [workspaceUsers]
+  );
+  const workspaceOwnerUserId = useMemo(
+    () =>
+      workspaceUsers.find((m) => m.is_workspace_owner && !m.deactivated)?.id ??
+      null,
+    [workspaceUsers]
+  );
   const [allDepartments, setDepartments] = useState<Department[]>([]);
   const [loadingDepartments, setLoadingDepartments] = useState(true);
-  const [workspaceMembers, setWorkspaceMembers] = useState<TeamMemberRow[]>([]);
 
   const departments = useMemo(
-    () => filterBookableDepartments(allDepartments, workspaceMembers),
-    [allDepartments, workspaceMembers]
+    () =>
+      filterDepartmentsForEventType(
+        filterBookableDepartments(allDepartments, workspaceMembers),
+        selectedType
+      ),
+    [allDepartments, workspaceMembers, selectedType]
   );
-  const [workspaceOwnerUserId, setWorkspaceOwnerUserId] = useState<string | null>(null);
   const [eventTypes, setEventTypes] = useState<EventType[]>([]);
   const [loadingEventTypes, setLoadingEventTypes] = useState(true);
   const [availabilitySettings, setAvailabilitySettings] = useState<AvailabilitySettings | null>(null);
@@ -90,7 +160,7 @@ export function useBookingFormData({
 
   const providersActingInDepartment = useMemo((): ServiceProvider[] => {
     if (!selectedDepartment) return [];
-    return workspaceMembers
+    const acting = workspaceMembers
       .filter(
         (m) =>
           !m.deactivated &&
@@ -108,27 +178,32 @@ export function useBookingFormData({
         education: m.education ?? null,
         experience: m.experience ?? null,
         specialty: m.specialty ?? null,
+        avatar_url: m.avatar_url ?? null,
         departments: Array.isArray(m.departments) ? m.departments : [],
         is_workspace_owner: m.is_workspace_owner,
         additional_roles: m.additional_roles,
         role: m.role ?? null,
       }));
-  }, [selectedDepartment, workspaceMembers]);
+    return filterProvidersForEventType(acting, selectedType);
+  }, [selectedDepartment, workspaceMembers, selectedType]);
 
   const showProviderPicker = useMemo(
-    () => providersActingInDepartment.length > 0,
+    () => providersActingInDepartment.length > 1,
     [providersActingInDepartment]
   );
 
   const effectiveProviderId = useMemo(() => {
+    const fixed = fixedServiceProviderId?.trim();
+    if (fixed) return fixed;
     if (!selectedDepartment) return null;
-    if (!showProviderPicker) return workspaceOwnerUserId;
     if (selectedProvider?.id) return selectedProvider.id;
     if (providersActingInDepartment.length === 1) {
       return providersActingInDepartment[0].id;
     }
+    if (!showProviderPicker) return workspaceOwnerUserId;
     return null;
   }, [
+    fixedServiceProviderId,
     selectedDepartment,
     showProviderPicker,
     workspaceOwnerUserId,
@@ -137,43 +212,54 @@ export function useBookingFormData({
   ]);
 
   const needsExplicitProvider =
-    departments.length > 0 && selectedDepartment !== null && showProviderPicker;
+    !fixedServiceProviderId?.trim() &&
+    departments.length > 0 &&
+    selectedDepartment !== null &&
+    showProviderPicker;
+
+  const resolvedAvailabilityProviderRef = useRef<string | null | undefined>(
+    undefined
+  );
 
   const bookableEventTypes = useMemo(() => {
-    if (needsExplicitProvider && !effectiveProviderId) return [];
-    return filterBookableEventTypes(
-      filterEventTypesForServiceProvider(eventTypes, effectiveProviderId)
+    if (
+      needsExplicitProvider &&
+      !effectiveProviderId &&
+      !lockEventTypeCatalog &&
+      !eventTypeBeforeDepartment
+    ) {
+      return [];
+    }
+    const provider_scope_id = lockEventTypeCatalog ? null : effectiveProviderId;
+    const filtered = filterBookableEventTypes(
+      filterEventTypesForServiceProvider(eventTypes, provider_scope_id)
     );
-  }, [eventTypes, effectiveProviderId, needsExplicitProvider]);
+    if (
+      selectedType &&
+      !filtered.some((et) => String(et.id) === String(selectedType.id))
+    ) {
+      return [selectedType, ...filtered];
+    }
+    return filtered;
+  }, [
+    eventTypes,
+    effectiveProviderId,
+    needsExplicitProvider,
+    lockEventTypeCatalog,
+    selectedType,
+    eventTypeBeforeDepartment,
+  ]);
 
   useEffect(() => {
+    if (!accessToken) return;
+
     const fetchInitial = async () => {
       try {
-        const { supabase } = await import('@/lib/supabaseClient');
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
-        if (!session?.access_token) return;
-
-        const [departmentsResponse, teamMembersResponse] = await Promise.all([
-          fetch('/api/departments', { headers: { Authorization: `Bearer ${session.access_token}` } }),
-          fetch('/api/team-members', { headers: { Authorization: `Bearer ${session.access_token}` } }),
-        ]);
+        const departmentsResponse = await authFetch('/api/departments');
 
         if (departmentsResponse.ok) {
           const departmentsResult = await departmentsResponse.json();
           setDepartments(departmentsResult.departments || []);
-        }
-
-        if (teamMembersResponse.ok) {
-          const teamMembersResult = await teamMembersResponse.json();
-          const members = (teamMembersResult.teamMembers || []) as TeamMemberRow[];
-          setWorkspaceMembers(members);
-          const owner = members.find((m) => m.is_workspace_owner && !m.deactivated);
-          setWorkspaceOwnerUserId(owner?.id ?? null);
-        } else {
-          setWorkspaceMembers([]);
-          setWorkspaceOwnerUserId(null);
         }
       } catch (e) {
         console.error('Error fetching departments:', e);
@@ -182,7 +268,7 @@ export function useBookingFormData({
       }
     };
     fetchInitial();
-  }, []);
+  }, [accessToken]);
 
   useEffect(() => {
     if (!selectedDepartment) {
@@ -192,63 +278,93 @@ export function useBookingFormData({
     }
   }, [selectedDepartment, onAvailabilityChange]);
 
+  const eventTypesCatalogLoadedRef = useRef(false);
+
   useEffect(() => {
-    if (needsExplicitProvider && !effectiveProviderId) {
-      setEventTypes([]);
+    eventTypesCatalogLoadedRef.current = false;
+  }, [accessToken]);
+
+  useEffect(() => {
+    if (!accessToken) return;
+
+    if (
+      needsExplicitProvider &&
+      !effectiveProviderId &&
+      !lockEventTypeCatalog &&
+      !eventTypeBeforeDepartment
+    ) {
+      // Keep any catalog already fetched; bookableEventTypes hides the list until
+      // a provider is chosen. Do not wipe state here — that caused empty UI after
+      // a successful /api/event-types response (see booking form HAR traces).
       setLoadingEventTypes(false);
       return;
     }
+    if (lockEventTypeCatalog && eventTypesCatalogLoadedRef.current) return;
 
+    let cancelled = false;
     const fetchEventTypes = async () => {
-      setLoadingEventTypes(true);
+      if (!cancelled) setLoadingEventTypes(true);
       try {
-        const { supabase } = await import('@/lib/supabaseClient');
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
-        if (!session?.access_token) return;
-
         const params = new URLSearchParams();
-        if (effectiveProviderId) {
+        if (effectiveProviderId && !lockEventTypeCatalog) {
           params.set('service_provider_id', effectiveProviderId);
         }
         const query = params.toString();
-        const res = await fetch(
-          query ? `/api/event-types?${query}` : '/api/event-types',
-          {
-            headers: { Authorization: `Bearer ${session.access_token}` },
-          }
+        const res = await authFetch(
+          query ? `/api/event-types?${query}` : '/api/event-types'
         );
         if (res.ok) {
           const result = await res.json();
-          setEventTypes(result.data || []);
+          if (!cancelled) setEventTypes(result.data || []);
         }
       } catch (e) {
         console.error('Error fetching event types:', e);
       } finally {
-        setLoadingEventTypes(false);
+        if (!cancelled) {
+          setLoadingEventTypes(false);
+          eventTypesCatalogLoadedRef.current = true;
+        }
       }
     };
-    fetchEventTypes();
-  }, [effectiveProviderId, needsExplicitProvider]);
+    void fetchEventTypes();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    accessToken,
+    needsExplicitProvider,
+    lockEventTypeCatalog,
+    eventTypeBeforeDepartment,
+    lockEventTypeCatalog ? undefined : effectiveProviderId,
+  ]);
 
   useEffect(() => {
     if (!effectiveProviderId && needsExplicitProvider) {
-      setAvailabilitySettings(null);
-      setExistingBookings([]);
-      setDateExceptions([]);
-      onAvailabilityChange?.();
+      if (resolvedAvailabilityProviderRef.current !== effectiveProviderId) {
+        resolvedAvailabilityProviderRef.current = effectiveProviderId;
+        setAvailabilitySettings(null);
+        setExistingBookings([]);
+        setDateExceptions([]);
+        onAvailabilityChange?.();
+      }
       setLoadingAvailability(false);
       return;
     }
-    if (loadingDepartments && departments.length === 0) return;
+    if (loadingDepartments && departments.length === 0 && !fixedServiceProviderId?.trim()) {
+      return;
+    }
     if (workspaceSettingsLoading) return;
 
+    const provider_changed =
+      resolvedAvailabilityProviderRef.current !== effectiveProviderId;
+    resolvedAvailabilityProviderRef.current = effectiveProviderId;
+
+    if (provider_changed) {
+      onAvailabilityChange?.();
+      setDateExceptions([]);
+    }
+
     setLoadingAvailability(true);
-    setAvailabilitySettings(null);
-    setExistingBookings([]);
-    setDateExceptions([]);
-    onAvailabilityChange?.();
     try {
       const availability = workspaceSettings?.availability ?? workspaceAvailability ?? {};
       setAvailabilitySettings(
@@ -267,6 +383,7 @@ export function useBookingFormData({
     departments.length,
     loadingDepartments,
     needsExplicitProvider,
+    fixedServiceProviderId,
     onAvailabilityChange,
     workspaceSettings,
     workspaceAvailability,
@@ -280,6 +397,8 @@ export function useBookingFormData({
   }, [cachedWorkspaceName, cachedWorkspaceLogo, workspaceSettingsLoading]);
 
   useEffect(() => {
+    if (!accessToken) return;
+
     const fetchProviderSettings = async () => {
       if (!effectiveProviderId) {
         setProviderMeetingOptions(undefined);
@@ -287,14 +406,8 @@ export function useBookingFormData({
         return;
       }
       try {
-        const { supabase } = await import('@/lib/supabaseClient');
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
-        if (!session?.access_token) return;
-        const res = await fetch(
-          `/api/settings?service_provider_id=${encodeURIComponent(effectiveProviderId)}`,
-          { headers: { Authorization: `Bearer ${session.access_token}` } }
+        const res = await authFetch(
+          `/api/settings?service_provider_id=${encodeURIComponent(effectiveProviderId)}`
         );
         if (!res.ok) return;
         const result = await res.json();
@@ -305,81 +418,159 @@ export function useBookingFormData({
       }
     };
     fetchProviderSettings();
-  }, [effectiveProviderId]);
+  }, [accessToken, effectiveProviderId]);
+
+  const bookingFetchRangeKey = useMemo(() => {
+    const providerTimezone = general?.timezone?.trim() || 'UTC';
+    const duration = eventTypeForFetch
+      ? event_type_session_duration_minutes(
+          eventTypeForFetch,
+          eventTypeForFetch.duration_minutes ?? 30
+        )
+      : 30;
+    const { rangeStart, rangeEnd } = resolve_booking_data_fetch_range({
+      days,
+      event_type: eventTypeForFetch,
+      provider_timezone: providerTimezone,
+      duration_minutes: duration,
+    });
+    const fmt = (d: Date) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    return `${fmt(rangeStart)}|${fmt(rangeEnd)}|${providerTimezone}|${duration}`;
+  }, [days, eventTypeForFetch, general?.timezone]);
 
   useEffect(() => {
+    if (!accessToken) return;
+
     const hasReqs = departments.length === 0 || !needsExplicitProvider || effectiveProviderId;
     if (!hasReqs) {
       setExistingBookings([]);
       return;
     }
-    const startDate = days[0] ?? new Date();
-    const endDate = days[days.length - 1] ?? new Date();
-    const rangeStart = new Date(startDate);
-    rangeStart.setDate(rangeStart.getDate() - CALENDAR_BUFFER_DAYS_BEFORE);
-    const rangeEnd = new Date(endDate);
-    rangeEnd.setDate(rangeEnd.getDate() + CALENDAR_BUFFER_DAYS);
+    const providerTimezone = general?.timezone?.trim() || 'UTC';
+    const duration = eventTypeForFetch
+      ? event_type_session_duration_minutes(
+          eventTypeForFetch,
+          eventTypeForFetch.duration_minutes ?? 30
+        )
+      : 30;
+    const { rangeStart, rangeEnd } = resolve_booking_data_fetch_range({
+      days,
+      event_type: eventTypeForFetch,
+      provider_timezone: providerTimezone,
+      duration_minutes: duration,
+    });
     const fmt = (d: Date) =>
       `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    let cancelled = false;
     const fetchBookings = async () => {
       setLoadingBookings(true);
       try {
-        const { supabase } = await import('@/lib/supabaseClient');
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
-        if (!session?.access_token) return;
         const url = effectiveProviderId
           ? `/api/bookings?start_date=${fmt(rangeStart)}&end_date=${fmt(rangeEnd)}&service_provider_id=${effectiveProviderId}`
           : `/api/bookings?start_date=${fmt(rangeStart)}&end_date=${fmt(rangeEnd)}`;
-        const res = await fetch(url, {
-          headers: { Authorization: `Bearer ${session.access_token}` },
-        });
+        const res = await authFetch(url);
+        if (cancelled) return;
         if (res.ok) {
           const result = await res.json();
-          const active = (result.data || []).filter(
-            (b: Booking & { service_provider_id?: string }) => {
-              if (b.status === 'cancelled' || b.status === 'emergency' || b.status === 'deleted') return false;
-              if (effectiveProviderId && b.service_provider_id !== effectiveProviderId) return false;
+          const active = (result.data || [])
+            .filter((b: Booking & { service_provider_id?: string }) => {
+              if (b.status === 'cancelled' || b.status === 'emergency' || b.status === 'deleted') {
+                return false;
+              }
+              if (
+                effectiveProviderId &&
+                b.service_provider_id &&
+                b.service_provider_id !== effectiveProviderId
+              ) {
+                return false;
+              }
               return true;
-            }
+            })
+            .map((b: Record<string, unknown>) => {
+              const row = flatten_embed_booking_row(b);
+              const nested = b.event_types as Record<string, unknown> | null | undefined;
+              if (!row.recurrence_audience && nested?.recurrence) {
+                row.recurrence_audience = parse_event_type_recurrence(nested.recurrence).audience;
+              }
+              return {
+                ...row,
+                invitee_email:
+                  typeof b.invitee_email === 'string' ? b.invitee_email : null,
+                invitee_phone:
+                  typeof b.invitee_phone === 'string' ? b.invitee_phone : null,
+                contact_id:
+                  typeof b.contact_id === 'number' || typeof b.contact_id === 'string'
+                    ? b.contact_id
+                    : null,
+                public_code:
+                  typeof b.public_code === 'string' ? b.public_code : null,
+              } as Booking;
+            });
+          const deduped_calendar_busy = calendar_busy_without_booking_overlap(
+            active,
+            result.calendar_busy || []
           );
-          const calendarBusy = (result.calendar_busy || []).map(
-            (b: { start_at: string; end_at: string }) => ({ ...b, status: 'confirmed' as const })
+          const calendarBusy = deduped_calendar_busy.map(
+            (b: { start_at: string; end_at: string }) => ({
+              ...b,
+              status: 'confirmed' as const,
+              occupancy_source: 'calendar' as const,
+            })
           );
           setExistingBookings([...active, ...calendarBusy]);
         }
       } catch (e) {
         console.error('Error fetching bookings:', e);
       } finally {
-        setLoadingBookings(false);
+        if (!cancelled) setLoadingBookings(false);
       }
     };
-    fetchBookings();
-  }, [effectiveProviderId, days, departments.length, needsExplicitProvider]);
+    const timer = window.setTimeout(() => {
+      void fetchBookings();
+    }, 120);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [
+    accessToken,
+    bookingFetchRangeKey,
+    effectiveProviderId,
+    departments.length,
+    needsExplicitProvider,
+    days,
+    eventTypeForFetch,
+    general?.timezone,
+  ]);
 
   useEffect(() => {
+    if (!accessToken) return;
+
     const hasReqs = departments.length === 0 || !needsExplicitProvider || effectiveProviderId;
     if (!hasReqs) {
       setDateExceptions([]);
       return;
     }
-    const startDate = days[0] ?? new Date();
-    const endDate = days[days.length - 1] ?? new Date();
-    const rangeStart = new Date(startDate);
-    rangeStart.setDate(rangeStart.getDate() - CALENDAR_BUFFER_DAYS_BEFORE);
-    const rangeEnd = new Date(endDate);
-    rangeEnd.setDate(rangeEnd.getDate() + CALENDAR_BUFFER_DAYS);
+    const providerTimezone = general?.timezone?.trim() || 'UTC';
+    const duration = eventTypeForFetch
+      ? event_type_session_duration_minutes(
+          eventTypeForFetch,
+          eventTypeForFetch.duration_minutes ?? 30
+        )
+      : 30;
+    const { rangeStart, rangeEnd } = resolve_booking_data_fetch_range({
+      days,
+      event_type: eventTypeForFetch,
+      provider_timezone: providerTimezone,
+      duration_minutes: duration,
+    });
     const fmt = (d: Date) =>
       `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
+    let cancelled = false;
     const fetchExceptions = async () => {
       try {
-        const { supabase } = await import('@/lib/supabaseClient');
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
-        if (!session?.access_token) return;
         const params = new URLSearchParams({
           from: fmt(rangeStart),
           to: fmt(rangeEnd),
@@ -389,9 +580,8 @@ export function useBookingFormData({
         if (effectiveProviderId) {
           params.set('provider_id', effectiveProviderId);
         }
-        const res = await fetch(`/api/date-exceptions?${params.toString()}`, {
-          headers: { Authorization: `Bearer ${session.access_token}` },
-        });
+        const res = await authFetch(`/api/date-exceptions?${params.toString()}`);
+        if (cancelled) return;
         if (res.ok) {
           const result = await res.json();
           setDateExceptions(
@@ -402,10 +592,27 @@ export function useBookingFormData({
         console.error('Error fetching date exceptions:', e);
       }
     };
-    void fetchExceptions();
-  }, [effectiveProviderId, days, departments.length, needsExplicitProvider]);
+    const timer = window.setTimeout(() => {
+      void fetchExceptions();
+    }, 120);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [
+    accessToken,
+    bookingFetchRangeKey,
+    effectiveProviderId,
+    departments.length,
+    needsExplicitProvider,
+    days,
+    eventTypeForFetch,
+    general?.timezone,
+  ]);
 
   useEffect(() => {
+    if (!accessToken) return;
+
     if (!isServicesEnabled(intakeForm)) {
       setServices([]);
       return;
@@ -413,14 +620,7 @@ export function useBookingFormData({
     const fetchServices = async () => {
       setLoadingServices(true);
       try {
-        const { supabase } = await import('@/lib/supabaseClient');
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
-        if (!session?.access_token) return;
-        const res = await fetch('/api/services', {
-          headers: { Authorization: `Bearer ${session.access_token}` },
-        });
+        const res = await authFetch('/api/services');
         if (res.ok) {
           const data: { services?: Service[] } = await res.json();
           const all = data.services || [];
@@ -433,9 +633,11 @@ export function useBookingFormData({
       }
     };
     fetchServices();
-  }, [intakeForm]);
+  }, [accessToken, intakeForm]);
 
   useEffect(() => {
+    if (!accessToken) return;
+
     if (!selectedDepartment || !effectiveProviderId) {
       setProviderScopedCatalogServices([]);
       setProviderScopedCatalogSettled(false);
@@ -449,18 +651,10 @@ export function useBookingFormData({
 
     const fetchScoped = async () => {
       try {
-        const { supabase } = await import('@/lib/supabaseClient');
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
-        if (!session?.access_token) return;
         const [svcRes, linkRes] = await Promise.all([
-          fetch('/api/services', {
-            headers: { Authorization: `Bearer ${session.access_token}` },
-          }),
-          fetch(
-            `/api/user-services?user_id=${encodeURIComponent(effectiveProviderId)}`,
-            { headers: { Authorization: `Bearer ${session.access_token}` } }
+          authFetch('/api/services'),
+          authFetch(
+            `/api/user-services?user_id=${encodeURIComponent(effectiveProviderId)}`
           ),
         ]);
         if (!svcRes.ok) return;
@@ -486,7 +680,19 @@ export function useBookingFormData({
       }
     };
     fetchScoped();
-  }, [selectedDepartment, effectiveProviderId]);
+  }, [accessToken, selectedDepartment, effectiveProviderId]);
+
+  const workspaceHostProfileHighlights = useMemo(
+    () => resolve_workspace_owner_profile_highlights(workspaceMembers, workspaceOwnerUserId),
+    [workspaceMembers, workspaceOwnerUserId]
+  );
+
+  const providerHostProfileHighlights = useMemo(() => {
+    const providerId = fixedServiceProviderId?.trim();
+    if (!providerId) return null;
+    if (providerId === workspaceOwnerUserId) return null;
+    return resolve_member_profile_highlights(workspaceMembers, providerId);
+  }, [workspaceMembers, fixedServiceProviderId, workspaceOwnerUserId]);
 
   return {
     departments,
@@ -517,5 +723,7 @@ export function useBookingFormData({
     effectiveProviderId,
     providerMeetingOptions,
     providerNotifications,
+    workspaceHostProfileHighlights,
+    providerHostProfileHighlights,
   };
 }

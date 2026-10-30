@@ -2,6 +2,7 @@
 
 import type { ReactNode } from "react";
 import { LuCheck as Check } from "react-icons/lu";
+import { userInitials } from "@app/ui";
 import {
   DEPARTMENT_COLORS,
   type department_color_id,
@@ -27,7 +28,7 @@ export function PanelSection({
   return (
     <section className={isLast ? "p-4" : "border-b border-slate-200 p-4"}>
       <div className="mb-4 flex items-center gap-2.5">
-        <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-violet-600 text-xs font-bold text-white">
+        <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-indigo-600 text-xs font-bold text-white">
           {number}
         </span>
         <h3 className="text-sm font-semibold text-slate-900">{title}</h3>
@@ -72,48 +73,6 @@ export function DepartmentColorPicker({
   );
 }
 
-export function ProviderAvatar({
-  name,
-  initials,
-  avatarUrl,
-  size = "md",
-}: {
-  name: string;
-  initials: string;
-  avatarUrl?: string | null;
-  size?: "sm" | "md";
-}) {
-  const sizeClass = size === "sm" ? "h-7 w-7 text-[10px]" : "h-9 w-9 text-sm";
-  if (avatarUrl) {
-    return (
-      // eslint-disable-next-line @next/next/no-img-element
-      <img
-        src={avatarUrl}
-        alt={name}
-        className={classNames(sizeClass, "shrink-0 rounded-full object-cover")}
-      />
-    );
-  }
-  return (
-    <span
-      className={classNames(
-        sizeClass,
-        "flex shrink-0 items-center justify-center rounded-full bg-blue-100 font-semibold text-blue-700"
-      )}
-    >
-      {initials}
-    </span>
-  );
-}
-
 export function provider_initials(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return "?";
-  const first = parts[0].replace(/^Dr\.?$/i, "");
-  if (parts.length === 1) return (first || parts[0]).slice(0, 2).toUpperCase();
-  const primary = first || parts[1] || "";
-  const secondary = parts[parts.length - 1] || "";
-  const a = primary.charAt(0);
-  const b = secondary.charAt(0);
-  return (a + b).toUpperCase() || parts[0].slice(0, 2).toUpperCase();
+  return userInitials(name);
 }

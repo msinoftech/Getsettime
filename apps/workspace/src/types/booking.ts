@@ -32,6 +32,7 @@ export type Booking = {
   is_viewed: boolean;
   /** False after a time change until acknowledged in the bookings UI. */
   is_reschedule_viewed?: boolean;
+  series_id?: string | null;
   created_at: string;
   updated_at: string;
   event_types?: {

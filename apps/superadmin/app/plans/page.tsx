@@ -2,9 +2,10 @@
 
 import React, { useEffect, useRef, useState } from "react";
 import { Pagination, usePagination } from "@app/ui";
-import type { plan_cta_variant, plans_with_content } from "@app/db/subscription";
+import type { booking_limit_period, plan_cta_variant, plans_with_content } from "@app/db/subscription";
 import {
   formatBookingLimitLabel,
+  formatBookingLimitShort,
   isUnlimitedBookingLimit,
   UNLIMITED_BOOKING_LIMIT,
 } from "@app/db/subscription";
@@ -15,7 +16,10 @@ type PlanFormState = {
   slug: string;
   price: string;
   booking_limit: string;
+  booking_limit_period: booking_limit_period;
   unlimited_bookings: boolean;
+  unlimited_user_limit: boolean;
+  user_limit: string;
   workspace_limit: string;
   admin_limit: string;
   service_provider_limit: string;
@@ -43,7 +47,10 @@ const EMPTY_FORM: PlanFormState = {
   slug: "",
   price: "0",
   booking_limit: "250",
+  booking_limit_period: "lifetime",
   unlimited_bookings: false,
+  unlimited_user_limit: true,
+  user_limit: "50",
   workspace_limit: "1",
   admin_limit: "1",
   service_provider_limit: "2",
@@ -75,6 +82,11 @@ function planToForm(plan: plans_with_content): PlanFormState {
       ? String(UNLIMITED_BOOKING_LIMIT)
       : String(plan.booking_limit),
     unlimited_bookings: isUnlimitedBookingLimit(plan.booking_limit),
+    booking_limit_period: plan.booking_limit_period ?? "monthly",
+    unlimited_user_limit: isUnlimitedBookingLimit(plan.user_limit ?? -1),
+    user_limit: isUnlimitedBookingLimit(plan.user_limit ?? -1)
+      ? String(UNLIMITED_BOOKING_LIMIT)
+      : String(plan.user_limit ?? 50),
     workspace_limit: String(plan.workspace_limit),
     admin_limit: String(plan.admin_limit),
     service_provider_limit: String(plan.service_provider_limit),
@@ -107,6 +119,10 @@ function formToPayload(form: PlanFormState) {
     booking_limit: form.unlimited_bookings
       ? UNLIMITED_BOOKING_LIMIT
       : Number(form.booking_limit),
+    booking_limit_period: form.unlimited_bookings ? "monthly" : form.booking_limit_period,
+    user_limit: form.unlimited_user_limit
+      ? UNLIMITED_BOOKING_LIMIT
+      : Number(form.user_limit),
     workspace_limit: Number(form.workspace_limit),
     admin_limit: Number(form.admin_limit),
     service_provider_limit: Number(form.service_provider_limit),
@@ -616,11 +632,81 @@ export default function PlansPage() {
                         />
                       ) : (
                         <p className={`${inputClass} bg-slate-50 text-slate-600`}>
-                          No monthly booking cap
+                          No booking cap
                         </p>
                       )}
                       {formErrors.booking_limit && (
                         <p className="mt-1 text-sm text-red-600">{formErrors.booking_limit}</p>
+                      )}
+                    </div>
+                    {!form.unlimited_bookings ? (
+                        <div>
+                          <label className={labelClass}>
+                            Booking Limit period
+                          </label>
+                          <select
+                            className={`${inputClass} h-10`}
+                            value={form.booking_limit_period}
+                            onChange={(e) =>
+                              setForm((p) => ({
+                                ...p,
+                                booking_limit_period: e.target.value as booking_limit_period,
+                              }))
+                            }
+                          >
+                            <option value="monthly">Monthly (Resets each month)</option>
+                            <option value="lifetime">Lifetime (Total cap)</option>
+                          </select>
+                        </div>
+                      ) : null}
+                    <div>
+                      <div className="mb-1 flex items-center justify-between gap-2">
+                        <label className="block text-sm font-medium text-slate-700">
+                          User limit
+                        </label>
+                        <label className="flex shrink-0 cursor-pointer items-center gap-1.5 text-xs font-medium text-slate-600">
+                          <input
+                            type="checkbox"
+                            checked={form.unlimited_user_limit}
+                            onChange={(e) =>
+                              setForm((p) => ({
+                                ...p,
+                                unlimited_user_limit: e.target.checked,
+                                user_limit: e.target.checked
+                                  ? String(UNLIMITED_BOOKING_LIMIT)
+                                  : p.user_limit === String(UNLIMITED_BOOKING_LIMIT)
+                                    ? "50"
+                                    : p.user_limit,
+                              }))
+                            }
+                            className="h-4 w-4 rounded border-slate-300 text-indigo-600"
+                          />
+                          Unlimited
+                        </label>
+                      </div>
+                      {!form.unlimited_user_limit ? (
+                        <input
+                          type="number"
+                          min="0"
+                          step="1"
+                          className={`${inputClass} ${formErrors.user_limit ? "border-red-500" : ""}`}
+                          value={
+                            form.user_limit === String(UNLIMITED_BOOKING_LIMIT)
+                              ? "50"
+                              : form.user_limit
+                          }
+                          onChange={(e) =>
+                            setForm((p) => ({ ...p, user_limit: e.target.value }))
+                          }
+                          placeholder="e.g. 50"
+                        />
+                      ) : (
+                        <p className={`${inputClass} bg-slate-50 text-slate-600`}>
+                          No claim signup cap
+                        </p>
+                      )}
+                      {formErrors.user_limit && (
+                        <p className="mt-1 text-sm text-red-600">{formErrors.user_limit}</p>
                       )}
                     </div>
                     <div>

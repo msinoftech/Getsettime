@@ -23,6 +23,13 @@ import {
   isSlotBlockedByException,
   resolveExceptionEffectForDate,
 } from './dateExceptionRules';
+import {
+  is_occupancy_status_active,
+  is_time_range_at_capacity_for_event,
+  remaining_seats_for_event,
+  slot_occupancy_context_from_event_type,
+  type slot_occupancy_context,
+} from '@/lib/booking_capacity';
 
 /** Parse time string (HH:mm) to minutes since midnight */
 export function parseTimeToMinutes(time: string): number {
@@ -113,7 +120,7 @@ const DEFAULT_BOOKING_FALLBACK_MINUTES = 30;
 /** Resolved booking end for overlap; handles missing/invalid end_at. */
 export function resolveBookingEnd(booking: Booking): Date {
   const start = new Date(booking.start_at);
-  const end = new Date(booking.end_at);
+  const end = new Date(booking.end_at ?? booking.start_at);
   if (Number.isNaN(end.getTime()) || end.getTime() <= start.getTime()) {
     const fallback = new Date(start);
     fallback.setMinutes(fallback.getMinutes() + DEFAULT_BOOKING_FALLBACK_MINUTES);
@@ -178,18 +185,27 @@ export function isTimeSlotBooked(
   slotStart: Date,
   slotEnd: Date,
   selectedDate: Date,
-  existingBookings: Booking[]
+  existingBookings: Booking[],
+  capacity = 1,
+  occupancyContext: slot_occupancy_context | null = null
 ): boolean {
   if (existingBookings.length === 0) return false;
   const normalizedSelectedDate = normalizeDate(selectedDate);
-
-  return existingBookings.some((booking) => {
+  const same_day_bookings = existingBookings.filter((booking) => {
+    if (!is_occupancy_status_active(booking.status)) return false;
     const bookingStart = new Date(booking.start_at);
-    const bookingEnd = resolveBookingEnd(booking);
     const bookingDate = normalizeDate(bookingStart);
-    if (bookingDate.toDateString() !== normalizedSelectedDate.toDateString()) return false;
-    return doTimeRangesOverlap(slotStart, slotEnd, bookingStart, bookingEnd);
+    return bookingDate.toDateString() === normalizedSelectedDate.toDateString();
   });
+  if (same_day_bookings.length === 0) return false;
+
+  return is_time_range_at_capacity_for_event(
+    slotStart,
+    slotEnd,
+    same_day_bookings,
+    occupancyContext,
+    capacity
+  );
 }
 
 /** Calendar YYYY-MM-DD from date picker cell (year/month/day components). */
@@ -236,15 +252,37 @@ function providerDatesForViewerDay(
 function isUtcSlotBooked(
   startUtc: string,
   durationMinutes: number,
-  existingBookings: Booking[]
+  existingBookings: Booking[],
+  capacity = 1,
+  occupancyContext: slot_occupancy_context | null = null
 ): boolean {
   const slotStart = new Date(startUtc);
   const slotEnd = new Date(slotStart.getTime() + durationMinutes * 60_000);
-  return existingBookings.some((booking) => {
-    const bookingStart = new Date(booking.start_at);
-    const bookingEnd = resolveBookingEnd(booking);
-    return doTimeRangesOverlap(slotStart, slotEnd, bookingStart, bookingEnd);
-  });
+  return is_time_range_at_capacity_for_event(
+    slotStart,
+    slotEnd,
+    existingBookings,
+    occupancyContext,
+    capacity
+  );
+}
+
+function utcSlotRemainingSeats(
+  startUtc: string,
+  durationMinutes: number,
+  existingBookings: Booking[],
+  capacity = 1,
+  occupancyContext: slot_occupancy_context | null = null
+): number {
+  const slotStart = new Date(startUtc);
+  const slotEnd = new Date(slotStart.getTime() + durationMinutes * 60_000);
+  return remaining_seats_for_event(
+    slotStart,
+    slotEnd,
+    existingBookings,
+    occupancyContext,
+    capacity
+  );
 }
 
 function isIndividualOverrideDisabledUtc(
@@ -289,7 +327,9 @@ function buildSlotsForProviderDate(
   viewerTimezone: string,
   viewerDateStr: string,
   dateExceptions?: date_exception[] | null,
-  providerId?: string | null
+  providerId?: string | null,
+  capacity = 1,
+  occupancyContext: slot_occupancy_context | null = null
 ): Timeslot[] {
   const timesheetStart = parseTimeToMinutes(daySchedule.startTime);
   const timesheetEnd = parseTimeToMinutes(daySchedule.endTime);
@@ -307,6 +347,7 @@ function buildSlotsForProviderDate(
   const breaks = daySchedule.breaks || [];
   const slots: Timeslot[] = [];
   const showHostTime = needsTimezoneConversion(providerTimezone, viewerTimezone);
+  const is_group_capacity = capacity > 1;
   let t = startMinutes;
 
   while (t + duration <= endMinutes) {
@@ -348,12 +389,6 @@ function buildSlotsForProviderDate(
       continue;
     }
 
-    if (isUtcSlotBooked(startUtc, duration, existingBookings)) {
-      slots.push(makeSlot(true, 'booked'));
-      t += 1;
-      continue;
-    }
-
     if (
       isIndividualOverrideDisabledUtc(
         startUtc,
@@ -362,8 +397,16 @@ function buildSlotsForProviderDate(
         availabilitySettings?.individual
       )
     ) {
-      slots.push(makeSlot(true, 'unavailable'));
-      t = Math.min(Math.max((Math.floor(t / 60) + 1) * 60, t + 1), endMinutes);
+      if (is_group_capacity) {
+        slots.push({
+          ...makeSlot(true, 'unavailable'),
+          seatsRemaining: 0,
+        });
+        t += duration;
+      } else {
+        slots.push(makeSlot(true, 'unavailable'));
+        t = Math.min(Math.max((Math.floor(t / 60) + 1) * 60, t + 1), endMinutes);
+      }
       continue;
     }
 
@@ -376,13 +419,46 @@ function buildSlotsForProviderDate(
         slotEndMinutes
       )
     ) {
-      slots.push(makeSlot(true, 'unavailable'));
-      t = Math.min(Math.max((Math.floor(t / 60) + 1) * 60, t + 1), endMinutes);
+      if (is_group_capacity) {
+        slots.push({
+          ...makeSlot(true, 'unavailable'),
+          seatsRemaining: 0,
+        });
+        t += duration;
+      } else {
+        slots.push(makeSlot(true, 'unavailable'));
+        t = Math.min(Math.max((Math.floor(t / 60) + 1) * 60, t + 1), endMinutes);
+      }
       continue;
     }
 
-    if (isUtcSlotInPast(startUtc, minLeadTimeMinutes)) {
+    const past = isUtcSlotInPast(startUtc, minLeadTimeMinutes);
+    const remaining = utcSlotRemainingSeats(
+      startUtc,
+      duration,
+      existingBookings,
+      capacity,
+      occupancyContext
+    );
+    const full = remaining <= 0;
+
+    if (is_group_capacity) {
+      slots.push({
+        ...makeSlot(past || full, past ? 'past' : full ? 'booked' : undefined),
+        seatsRemaining: remaining,
+      });
+      t += duration;
+      continue;
+    }
+
+    if (past) {
       slots.push(makeSlot(true, 'past'));
+      t += 1;
+      continue;
+    }
+
+    if (full) {
+      slots.push(makeSlot(true, 'booked'));
       t += 1;
       continue;
     }
@@ -406,7 +482,9 @@ function hasBookableSlotForProviderDate(
   viewerTimezone: string,
   viewerDateStr: string,
   dateExceptions?: date_exception[] | null,
-  providerId?: string | null
+  providerId?: string | null,
+  capacity = 1,
+  occupancyContext: slot_occupancy_context | null = null
 ): boolean {
   const timesheetStart = parseTimeToMinutes(daySchedule.startTime);
   const timesheetEnd = parseTimeToMinutes(daySchedule.endTime);
@@ -422,6 +500,7 @@ function hasBookableSlotForProviderDate(
   const startMinutes = bounds.startMinutes;
   const endMinutes = bounds.endMinutes;
   const breaks = daySchedule.breaks || [];
+  const is_group_capacity = capacity > 1;
   let t = startMinutes;
 
   while (t + duration <= endMinutes) {
@@ -449,11 +528,6 @@ function hasBookableSlotForProviderDate(
       continue;
     }
 
-    if (isUtcSlotBooked(startUtc, duration, existingBookings)) {
-      t += duration;
-      continue;
-    }
-
     if (
       isIndividualOverrideDisabledUtc(
         startUtc,
@@ -462,7 +536,9 @@ function hasBookableSlotForProviderDate(
         availabilitySettings?.individual
       )
     ) {
-      t = Math.min(Math.max((Math.floor(t / 60) + 1) * 60, t + 1), endMinutes);
+      t = is_group_capacity
+        ? t + duration
+        : Math.min(Math.max((Math.floor(t / 60) + 1) * 60, t + 1), endMinutes);
       continue;
     }
 
@@ -475,7 +551,9 @@ function hasBookableSlotForProviderDate(
         slotEndMinutes
       )
     ) {
-      t = Math.min(Math.max((Math.floor(t / 60) + 1) * 60, t + 1), endMinutes);
+      t = is_group_capacity
+        ? t + duration
+        : Math.min(Math.max((Math.floor(t / 60) + 1) * 60, t + 1), endMinutes);
       continue;
     }
 
@@ -484,7 +562,18 @@ function hasBookableSlotForProviderDate(
       continue;
     }
 
-    return true;
+    const remaining = utcSlotRemainingSeats(
+      startUtc,
+      duration,
+      existingBookings,
+      capacity,
+      occupancyContext
+    );
+    if (remaining > 0) {
+      return true;
+    }
+
+    t += duration;
   }
 
   return false;
@@ -503,7 +592,9 @@ export function hasBookableSlotForDay(
   providerTimezone?: string | null,
   viewerTimezone?: string | null,
   dateExceptions?: date_exception[] | null,
-  providerId?: string | null
+  providerId?: string | null,
+  capacity = 1,
+  occupancyContext: slot_occupancy_context | null = null
 ): boolean {
   const duration =
     typeof slotDurationMinutes === 'number' &&
@@ -517,6 +608,8 @@ export function hasBookableSlotForDay(
   const viewerTz = viewerTimezone?.trim() || providerTimezone?.trim() || fallbackTz;
   if (!availabilitySettings?.timesheet) return false;
 
+  const resolvedContext =
+    occupancyContext ?? slot_occupancy_context_from_event_type(selectedType);
   const viewerDateStr = getViewerDateString(selectedDate);
   const providerDates = providerDatesForViewerDay(viewerDateStr, viewerTz, providerTz);
 
@@ -553,7 +646,9 @@ export function hasBookableSlotForDay(
         viewerTz,
         viewerDateStr,
         dateExceptions,
-        providerId
+        providerId,
+        capacity,
+        resolvedContext
       )
     ) {
       return true;
@@ -576,7 +671,9 @@ export function buildTimeslotsForDay(
   providerTimezone?: string,
   viewerTimezone?: string,
   dateExceptions?: date_exception[] | null,
-  providerId?: string | null
+  providerId?: string | null,
+  capacity = 1,
+  occupancyContext: slot_occupancy_context | null = null
 ): Timeslot[] {
   const buildT0 = performance.now();
   const duration =
@@ -591,6 +688,8 @@ export function buildTimeslotsForDay(
   const viewerTz = viewerTimezone?.trim() || providerTimezone?.trim() || fallbackTz;
   if (!availabilitySettings?.timesheet) return [];
 
+  const resolvedContext =
+    occupancyContext ?? slot_occupancy_context_from_event_type(selectedType);
   const viewerDateStr = getViewerDateString(selectedDate);
   const providerDates = providerDatesForViewerDay(viewerDateStr, viewerTz, providerTz);
 
@@ -628,7 +727,9 @@ export function buildTimeslotsForDay(
         viewerTz,
         viewerDateStr,
         dateExceptions,
-        providerId
+        providerId,
+        capacity,
+        resolvedContext
       )
     );
   }

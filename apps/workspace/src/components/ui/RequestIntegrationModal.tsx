@@ -1,5 +1,6 @@
 "use client";
 
+import { getWorkspaceSession } from '@/src/lib/auth_session';
 import { useState } from "react";
 
 type RequestIntegrationModalProps = {
@@ -38,10 +39,7 @@ export function RequestIntegrationModal({ open, onClose, onSubmitted }: RequestI
     }
     setLoading(true);
     try {
-      const { supabase } = await import("@/lib/supabaseClient");
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
+      const { session } = await getWorkspaceSession();
       const token = session?.access_token;
 
       const res = await fetch("/api/integrations/request", {
@@ -68,10 +66,15 @@ export function RequestIntegrationModal({ open, onClose, onSubmitted }: RequestI
 
   return (
     <div
-      className="fixed inset-0 z-[100] flex items-center justify-center overflow-y-auto bg-black/40 p-4"
+      className="fixed inset-0 z-999 flex items-center justify-center overflow-y-auto"
       onClick={handleClose}
       role="presentation"
     >
+      <div
+        className="absolute inset-0 cursor-default bg-slate-900/40 backdrop-blur-[2px]"
+        aria-hidden="true"
+        onClick={handleClose}
+      />
       <div
         className="relative w-full max-w-md rounded-2xl bg-white shadow-2xl"
         onClick={(e) => e.stopPropagation()}

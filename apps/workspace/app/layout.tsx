@@ -23,7 +23,7 @@ export default function RootLayout({
   return (
     <html lang="en" className="scroll-smooth" suppressHydrationWarning>
       <body
-        className={`${roboto.variable} antialiased`}
+        className={`${roboto.variable} antialiased bg-gray-100`}
         suppressHydrationWarning
       >
         <LayoutWrapper>

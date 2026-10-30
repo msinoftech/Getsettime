@@ -2,10 +2,10 @@
 
 import { useCallback, useEffect, useRef, useState, type MouseEvent } from "react";
 import { createPortal } from "react-dom";
-import { LuCheck, LuCopy, LuEllipsisVertical, LuLink2, LuTrash2 } from "react-icons/lu";
+import { LuCheck, LuCopy, LuEllipsisVertical, LuLink2, LuPencil, LuTrash2 } from "react-icons/lu";
 
 const MENU_WIDTH = 176;
-const MENU_HEIGHT = 132;
+const MENU_HEIGHT = 168;
 const MENU_GAP = 4;
 
 type MenuPosition = {
@@ -18,6 +18,7 @@ type EventTypeActionsMenuProps = {
   copy_disabled: boolean;
   copy_copied: boolean;
   on_toggle: () => void;
+  on_edit?: () => void;
   on_copy_link: () => void | Promise<void>;
   on_duplicate: () => void;
   on_delete: () => void;
@@ -28,6 +29,7 @@ export function EventTypeActionsMenu({
   copy_disabled,
   copy_copied,
   on_toggle,
+  on_edit,
   on_copy_link,
   on_duplicate,
   on_delete,
@@ -117,6 +119,17 @@ export function EventTypeActionsMenu({
               role="menu"
               onMouseDown={stop_menu_event}
             >
+              {on_edit ? (
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={on_edit}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
+                >
+                  <LuPencil className="h-4 w-4" aria-hidden />
+                  Edit
+                </button>
+              ) : null}
               <button
                 type="button"
                 role="menuitem"

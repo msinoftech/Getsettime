@@ -9,6 +9,20 @@ import {
   normalize_event_type_slug_input,
 } from '@/src/features/event-types/event_type_slug';
 import { parse_event_type_status } from '@/src/features/event-types/event_type_status';
+import {
+  parse_event_type_format,
+  parse_internal_label,
+  resolve_capacity_per_slot,
+} from '@/src/features/event-types/event_type_format';
+import { parse_event_type_availability_mode } from '@/src/features/event-types/event_type_availability';
+import { resolve_event_type_recurrence_for_storage, parse_event_type_recurrence } from '@/src/features/event-types/event_type_recurrence';
+import {
+  parse_boolean_flag,
+  parse_max_booking_window_days,
+  parse_min_booking_notice_minutes,
+  parse_waitlist_capacity,
+} from '@/src/features/event-types/event_type_booking_options';
+import { filterEventTypesForServiceProvider } from '@/src/utils/bookingFormUtils';
 
 /**
  * Creates an authenticated Supabase client using the anon key (respects RLS)
@@ -248,32 +262,140 @@ function parse_short_description(value: unknown): string {
   return value.trim();
 }
 
+async function resolveEventTypeDepartmentAndService(
+  supabase: SupabaseClient,
+  workspaceId: number,
+  departmentRaw: unknown,
+  serviceRaw: unknown
+): Promise<
+  | { ok: true; department_id: number; service_id: string }
+  | { ok: false; message: string }
+> {
+  const departmentId =
+    typeof departmentRaw === 'number' && Number.isFinite(departmentRaw)
+      ? Math.trunc(departmentRaw)
+      : parseInt(String(departmentRaw ?? '').trim(), 10);
+  if (!Number.isFinite(departmentId) || departmentId <= 0) {
+    return { ok: false, message: 'Department is required.' };
+  }
+
+  const serviceId =
+    typeof serviceRaw === 'string'
+      ? serviceRaw.trim()
+      : String(serviceRaw ?? '').trim();
+  if (!serviceId) {
+    return { ok: false, message: 'Service is required.' };
+  }
+
+  const { data: department, error: departmentError } = await supabase
+    .from('departments')
+    .select('id')
+    .eq('id', departmentId)
+    .eq('workspace_id', workspaceId)
+    .eq('flag', true)
+    .maybeSingle();
+  if (departmentError || !department) {
+    return { ok: false, message: 'Department not found in this workspace.' };
+  }
+
+  const { data: service, error: serviceError } = await supabase
+    .from('services')
+    .select('id, department_id')
+    .eq('id', serviceId)
+    .eq('workspace_id', workspaceId)
+    .eq('flag', true)
+    .maybeSingle();
+  if (serviceError || !service) {
+    return { ok: false, message: 'Service not found in this workspace.' };
+  }
+  if (Number(service.department_id) !== departmentId) {
+    return { ok: false, message: 'Service does not belong to the selected department.' };
+  }
+
+  return { ok: true, department_id: departmentId, service_id: String(service.id) };
+}
+
+const SERVICE_PROVIDER_UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function parse_service_provider_ids(
+  value: unknown
+): { ok: true; value: string[] } | { ok: false; message: string } {
+  if (value == null || value === '') {
+    return { ok: true, value: [] };
+  }
+  if (!Array.isArray(value)) {
+    return { ok: false, message: 'Invalid service providers.' };
+  }
+  const ids: string[] = [];
+  const seen = new Set<string>();
+  for (const item of value) {
+    const id = typeof item === 'string' ? item.trim() : String(item ?? '').trim();
+    if (!id) continue;
+    if (!SERVICE_PROVIDER_UUID_RE.test(id)) {
+      return { ok: false, message: 'Invalid service provider.' };
+    }
+    if (seen.has(id)) continue;
+    seen.add(id);
+    ids.push(id);
+  }
+  return { ok: true, value: ids };
+}
+
+async function assert_providers_assigned_to_service(
+  supabase: SupabaseClient,
+  workspaceId: number,
+  serviceId: string,
+  providerIds: string[]
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  if (providerIds.length === 0) return { ok: true };
+
+  const { data, error } = await supabase
+    .from('user_services')
+    .select('user_id')
+    .eq('workspace_id', workspaceId)
+    .eq('service_id', serviceId)
+    .in('user_id', providerIds);
+
+  if (error) {
+    return { ok: false, message: error.message };
+  }
+
+  const found = new Set((data ?? []).map((row) => String(row.user_id)));
+  if (found.size !== providerIds.length || providerIds.some((id) => !found.has(id))) {
+    return {
+      ok: false,
+      message: 'One or more providers are not assigned to the selected service.',
+    };
+  }
+
+  return { ok: true };
+}
+
 async function assert_event_type_slug_available(
   supabase: SupabaseClient,
   workspaceId: number,
   slug: string,
   exclude_event_type_id?: number
 ): Promise<{ ok: true } | { ok: false; message: string }> {
-  const { data: rows, error } = await supabase
+  let query = supabase
     .from('event_types')
-    .select('id, slug')
-    .eq('workspace_id', workspaceId);
+    .select('id')
+    .eq('workspace_id', workspaceId)
+    .eq('slug', slug)
+    .limit(1);
+
+  if (exclude_event_type_id != null && Number.isFinite(exclude_event_type_id)) {
+    query = query.neq('id', exclude_event_type_id);
+  }
+
+  const { data: rows, error } = await query;
 
   if (error) {
     return { ok: false, message: error.message };
   }
 
-  const taken = (rows ?? []).some((row) => {
-    if (
-      exclude_event_type_id != null &&
-      Number(row.id) === Number(exclude_event_type_id)
-    ) {
-      return false;
-    }
-    return typeof row.slug === 'string' && row.slug === slug;
-  });
-
-  if (taken) {
+  if ((rows ?? []).length > 0) {
     return {
       ok: false,
       message:
@@ -333,9 +455,9 @@ export async function GET(req: NextRequest) {
 
     let event_types = data || [];
     if (serviceProviderIdParam) {
-      event_types = event_types.filter(
-        (row: { owner_id?: string | null }) =>
-          row.owner_id === serviceProviderIdParam
+      event_types = filterEventTypesForServiceProvider(
+        event_types,
+        serviceProviderIdParam
       );
     } else if (role === ROLE_SERVICE_PROVIDER) {
       event_types = event_types.filter(
@@ -407,6 +529,18 @@ export async function POST(req: NextRequest) {
       title,
       slug,
       short_description,
+      internal_label,
+      event_type_format,
+      capacity_per_slot,
+      availability_mode,
+      recurrence,
+      allow_waitlist,
+      waitlist_capacity,
+      show_seats_remaining,
+      min_booking_notice_minutes,
+      max_booking_window_days,
+      allow_reschedule,
+      allow_cancellation,
       duration_minutes,
       buffer_before,
       buffer_after,
@@ -414,6 +548,9 @@ export async function POST(req: NextRequest) {
       is_public,
       status,
       owner_id,
+      department_id,
+      service_id,
+      service_provider_ids,
     } = body;
 
     if (!title || !title.trim()) {
@@ -423,6 +560,38 @@ export async function POST(req: NextRequest) {
     const slugParsed = parse_event_type_slug(slug);
     if (!slugParsed.ok) {
       return NextResponse.json({ error: slugParsed.message }, { status: 400 });
+    }
+
+    const formatFlag = parse_event_type_format(event_type_format);
+    const recurrenceAudience = parse_event_type_recurrence(recurrence).audience;
+    const capacityResult = resolve_capacity_per_slot(
+      formatFlag,
+      capacity_per_slot,
+      recurrenceAudience
+    );
+    if (!capacityResult.ok) {
+      return NextResponse.json({ error: capacityResult.message }, { status: 400 });
+    }
+    const internalLabelValue = parse_internal_label(internal_label);
+    const availabilityModeFlag = parse_event_type_availability_mode(availability_mode);
+    const recurrenceResult = resolve_event_type_recurrence_for_storage(
+      recurrence,
+      formatFlag
+    );
+    if (!recurrenceResult.ok) {
+      return NextResponse.json({ error: recurrenceResult.message }, { status: 400 });
+    }
+    const noticeResult = parse_min_booking_notice_minutes(min_booking_notice_minutes);
+    if (!noticeResult.ok) {
+      return NextResponse.json({ error: noticeResult.message }, { status: 400 });
+    }
+    const windowResult = parse_max_booking_window_days(max_booking_window_days);
+    if (!windowResult.ok) {
+      return NextResponse.json({ error: windowResult.message }, { status: 400 });
+    }
+    const waitlistCapacityResult = parse_waitlist_capacity(waitlist_capacity);
+    if (!waitlistCapacityResult.ok) {
+      return NextResponse.json({ error: waitlistCapacityResult.message }, { status: 400 });
     }
 
     const durationResult = parse_duration_minutes(duration_minutes);
@@ -469,6 +638,30 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: ownerResult.message }, { status: 400 });
     }
 
+    const assignment = await resolveEventTypeDepartmentAndService(
+      supabase,
+      wid,
+      department_id,
+      service_id
+    );
+    if (!assignment.ok) {
+      return NextResponse.json({ error: assignment.message }, { status: 400 });
+    }
+
+    const providerIdsParsed = parse_service_provider_ids(service_provider_ids);
+    if (!providerIdsParsed.ok) {
+      return NextResponse.json({ error: providerIdsParsed.message }, { status: 400 });
+    }
+    const providersAssigned = await assert_providers_assigned_to_service(
+      supabase,
+      wid,
+      assignment.service_id,
+      providerIdsParsed.value
+    );
+    if (!providersAssigned.ok) {
+      return NextResponse.json({ error: providersAssigned.message }, { status: 400 });
+    }
+
     // RLS validates workspace_id matches JWT; we provide it for INSERT WITH CHECK policy
     const { data, error } = await supabase
       .from('event_types')
@@ -477,11 +670,26 @@ export async function POST(req: NextRequest) {
         owner_id: ownerResult.ownerId,
         title: title.trim(),
         slug: slugParsed.value,
+        internal_label: internalLabelValue,
+        event_type_format: formatFlag,
+        capacity_per_slot: capacityResult.value,
+        availability_mode: availabilityModeFlag,
+        recurrence: recurrenceResult.value,
+        allow_waitlist: parse_boolean_flag(allow_waitlist, true),
+        waitlist_capacity: waitlistCapacityResult.value,
+        show_seats_remaining: parse_boolean_flag(show_seats_remaining, true),
+        min_booking_notice_minutes: noticeResult.value,
+        max_booking_window_days: windowResult.value,
+        allow_reschedule: parse_boolean_flag(allow_reschedule, true),
+        allow_cancellation: parse_boolean_flag(allow_cancellation, true),
         duration_minutes: durationResult.value,
         buffer_before: bufferBefore.value,
         buffer_after: bufferAfter.value,
         location_type: locationParsed.value,
         location_value: null,
+        department_id: assignment.department_id,
+        service_id: assignment.service_id,
+        service_provider_ids: providerIdsParsed.value,
         is_public: publicFlag,
         status: statusFlag,
         settings: build_event_type_settings(parse_short_description(short_description)),
@@ -535,6 +743,18 @@ export async function PATCH(req: NextRequest) {
       title,
       slug,
       short_description,
+      internal_label,
+      event_type_format,
+      capacity_per_slot,
+      availability_mode,
+      recurrence,
+      allow_waitlist,
+      waitlist_capacity,
+      show_seats_remaining,
+      min_booking_notice_minutes,
+      max_booking_window_days,
+      allow_reschedule,
+      allow_cancellation,
       duration_minutes,
       buffer_before,
       buffer_after,
@@ -542,6 +762,9 @@ export async function PATCH(req: NextRequest) {
       is_public,
       status,
       owner_id,
+      department_id,
+      service_id,
+      service_provider_ids,
     } = body;
 
     if (!id) {
@@ -555,6 +778,38 @@ export async function PATCH(req: NextRequest) {
     const slugParsed = parse_event_type_slug(slug);
     if (!slugParsed.ok) {
       return NextResponse.json({ error: slugParsed.message }, { status: 400 });
+    }
+
+    const formatFlag = parse_event_type_format(event_type_format);
+    const recurrenceAudience = parse_event_type_recurrence(recurrence).audience;
+    const capacityResult = resolve_capacity_per_slot(
+      formatFlag,
+      capacity_per_slot,
+      recurrenceAudience
+    );
+    if (!capacityResult.ok) {
+      return NextResponse.json({ error: capacityResult.message }, { status: 400 });
+    }
+    const internalLabelValue = parse_internal_label(internal_label);
+    const availabilityModeFlag = parse_event_type_availability_mode(availability_mode);
+    const recurrenceResult = resolve_event_type_recurrence_for_storage(
+      recurrence,
+      formatFlag
+    );
+    if (!recurrenceResult.ok) {
+      return NextResponse.json({ error: recurrenceResult.message }, { status: 400 });
+    }
+    const noticeResult = parse_min_booking_notice_minutes(min_booking_notice_minutes);
+    if (!noticeResult.ok) {
+      return NextResponse.json({ error: noticeResult.message }, { status: 400 });
+    }
+    const windowResult = parse_max_booking_window_days(max_booking_window_days);
+    if (!windowResult.ok) {
+      return NextResponse.json({ error: windowResult.message }, { status: 400 });
+    }
+    const waitlistCapacityPatch = parse_waitlist_capacity(waitlist_capacity);
+    if (!waitlistCapacityPatch.ok) {
+      return NextResponse.json({ error: waitlistCapacityPatch.message }, { status: 400 });
     }
 
     const durationPatch = parse_duration_minutes(duration_minutes);
@@ -603,19 +858,56 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ error: ownerResult.message }, { status: 400 });
     }
 
+    const assignment = await resolveEventTypeDepartmentAndService(
+      supabase,
+      wid,
+      department_id,
+      service_id
+    );
+    if (!assignment.ok) {
+      return NextResponse.json({ error: assignment.message }, { status: 400 });
+    }
+
+    const providerIdsParsed = parse_service_provider_ids(service_provider_ids);
+    if (!providerIdsParsed.ok) {
+      return NextResponse.json({ error: providerIdsParsed.message }, { status: 400 });
+    }
+    const providersAssigned = await assert_providers_assigned_to_service(
+      supabase,
+      wid,
+      assignment.service_id,
+      providerIdsParsed.value
+    );
+    if (!providersAssigned.ok) {
+      return NextResponse.json({ error: providersAssigned.message }, { status: 400 });
+    }
+
     const { data: beforeEventType } = await supabase
       .from('event_types')
-      .select('id,title,duration_minutes,buffer_before,buffer_after,location_type,is_public,status,owner_id,settings')
+      .select('id,title,internal_label,event_type_format,capacity_per_slot,availability_mode,recurrence,allow_waitlist,min_booking_notice_minutes,max_booking_window_days,allow_reschedule,allow_cancellation,duration_minutes,buffer_before,buffer_after,location_type,department_id,service_id,service_provider_ids,is_public,status,owner_id,settings')
       .eq('id', id)
       .single();
 
     const updatePayload: Record<string, unknown> = {
       title: title.trim(),
       slug: slugParsed.value,
+      internal_label: internalLabelValue,
+      event_type_format: formatFlag,
+      capacity_per_slot: capacityResult.value,
+      availability_mode: availabilityModeFlag,
+      recurrence: recurrenceResult.value,
+      allow_waitlist: parse_boolean_flag(allow_waitlist, true),
+      min_booking_notice_minutes: noticeResult.value,
+      max_booking_window_days: windowResult.value,
+      allow_reschedule: parse_boolean_flag(allow_reschedule, true),
+      allow_cancellation: parse_boolean_flag(allow_cancellation, true),
       duration_minutes: durationPatch.value,
       buffer_before: bufferBeforePatch.value,
       buffer_after: bufferAfterPatch.value,
       location_type: locationPatch.value,
+      department_id: assignment.department_id,
+      service_id: assignment.service_id,
+      service_provider_ids: providerIdsParsed.value,
       is_public: publicPatch,
       status: statusFlag,
       settings: merge_event_type_settings(
@@ -623,6 +915,15 @@ export async function PATCH(req: NextRequest) {
         parse_short_description(short_description)
       ),
     };
+
+    // Callers such as the availability screen patch a subset of the event type;
+    // only overwrite the group settings when they were actually submitted.
+    if (waitlist_capacity !== undefined) {
+      updatePayload.waitlist_capacity = waitlistCapacityPatch.value;
+    }
+    if (show_seats_remaining !== undefined) {
+      updatePayload.show_seats_remaining = parse_boolean_flag(show_seats_remaining, true);
+    }
 
     if (userCanAssignEventTypeOwner(user)) {
       updatePayload.owner_id = ownerResult.ownerId;
@@ -654,20 +955,34 @@ export async function PATCH(req: NextRequest) {
       description: data?.title || title.trim(),
       before_data: {
         title: beforeEventType?.title,
+        internal_label: beforeEventType?.internal_label,
+        event_type_format: beforeEventType?.event_type_format,
+        capacity_per_slot: beforeEventType?.capacity_per_slot,
+        availability_mode: beforeEventType?.availability_mode,
+        recurrence: beforeEventType?.recurrence,
         duration_minutes: beforeEventType?.duration_minutes,
         buffer_before: beforeEventType?.buffer_before,
         buffer_after: beforeEventType?.buffer_after,
         location_type: beforeEventType?.location_type,
+        department_id: beforeEventType?.department_id,
+        service_id: beforeEventType?.service_id,
         is_public: beforeEventType?.is_public,
         status: beforeEventType?.status,
         owner_id: beforeEventType?.owner_id,
       },
       after_data: {
         title: data?.title,
+        internal_label: data?.internal_label,
+        event_type_format: data?.event_type_format,
+        capacity_per_slot: data?.capacity_per_slot,
+        availability_mode: data?.availability_mode,
+        recurrence: data?.recurrence,
         duration_minutes: data?.duration_minutes,
         buffer_before: data?.buffer_before,
         buffer_after: data?.buffer_after,
         location_type: data?.location_type,
+        department_id: data?.department_id,
+        service_id: data?.service_id,
         is_public: data?.is_public,
         status: data?.status,
         owner_id: data?.owner_id,

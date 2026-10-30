@@ -2,7 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { isUnlimitedBookingLimit } from './booking_limit';
 import { PlanLimitError } from './errors';
 import { getWorkspacePlanSnapshot } from './plans';
-import { countMonthlyBookings } from './usage';
+import { getBookingLimitRemaining } from './usage';
 import type { plan_check_result, plan_feature_key, plans } from './types';
 
 const FEATURE_COLUMN: Record<plan_feature_key, keyof plans> = {
@@ -32,16 +32,26 @@ export async function checkPlanFeature(
 
 export async function assertBookingAllowed(
   supabase: SupabaseClient,
-  workspaceId: number
+  workspaceId: number,
+  additionalCount = 1
 ): Promise<void> {
   const snapshot = await getWorkspacePlanSnapshot(supabase, workspaceId);
   if (isUnlimitedBookingLimit(snapshot.plan.booking_limit)) return;
 
-  const count = await countMonthlyBookings(supabase, workspaceId);
+  const remainingInfo = await getBookingLimitRemaining(supabase, workspaceId, snapshot);
 
-  if (count >= snapshot.plan.booking_limit) {
+  if (remainingInfo.remaining < additionalCount) {
+    const scope =
+      remainingInfo.period === 'lifetime'
+        ? `${remainingInfo.used} of ${remainingInfo.limit} total`
+        : `${remainingInfo.used} of ${remainingInfo.limit} this month`;
+    const prefix =
+      remainingInfo.period === 'lifetime'
+        ? 'Booking limit reached'
+        : 'Monthly booking limit reached';
+
     throw new PlanLimitError(
-      `Monthly booking limit reached (${count} of ${snapshot.plan.booking_limit}). Upgrade your plan to continue accepting appointments.`,
+      `${prefix} (${scope}). Upgrade your plan to continue accepting appointments.`,
       'PLAN_LIMIT',
       snapshot.plan.slug,
       true
@@ -61,6 +71,25 @@ export async function assertServiceProviderAllowed(
   if (current + additionalProviders > snapshot.plan.service_provider_limit) {
     throw new PlanLimitError(
       `Service provider limit reached (${current} of ${snapshot.plan.service_provider_limit}). Upgrade your plan to add more providers.`,
+      'PLAN_LIMIT',
+      snapshot.plan.slug,
+      true
+    );
+  }
+}
+
+export async function assertWorkspaceAdminAllowed(
+  supabaseAdmin: SupabaseClient,
+  workspaceId: number,
+  additionalAdmins = 1
+): Promise<void> {
+  const snapshot = await getWorkspacePlanSnapshot(supabaseAdmin, workspaceId);
+  const { countWorkspaceAdminSeatsUsed } = await import('./admin_count');
+  const current = await countWorkspaceAdminSeatsUsed(supabaseAdmin, workspaceId);
+
+  if (current + additionalAdmins > snapshot.plan.admin_limit) {
+    throw new PlanLimitError(
+      `Workspace admin limit reached (${current} of ${snapshot.plan.admin_limit}). Upgrade your plan to add more admins.`,
       'PLAN_LIMIT',
       snapshot.plan.slug,
       true

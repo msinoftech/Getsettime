@@ -11,6 +11,7 @@ export type workspace_shell_workspace = {
   profession_name?: string | null;
   type?: string | null;
   admin_professions_id?: number | null;
+  booking_step_order?: string[] | null;
 };
 
 export type workspace_shell_cache_payload = {

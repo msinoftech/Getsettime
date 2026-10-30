@@ -8,3 +8,5 @@ export * from './plans_admin';
 export * from './usage';
 export * from './check';
 export * from './service_provider_count';
+export * from './admin_count';
+export * from './claim_free';

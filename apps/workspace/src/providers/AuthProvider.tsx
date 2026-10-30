@@ -17,6 +17,11 @@ import {
   workspaceOnboardingInviteWorkspaceId,
 } from '@/lib/auth_onboarding'
 import { logAuthActivityFromSession, logAuthActivityLoginDeduped, signOutWithAuthLog } from '@/src/lib/auth_activity_log_client'
+import {
+  bootstrapWorkspaceSession,
+  syncAuthSessionCache,
+  validateWorkspaceUser,
+} from '@/src/lib/auth_session'
 import { is_public_embed_booking_path } from '@/lib/public_embed_route'
 
 type User = any
@@ -24,11 +29,13 @@ type User = any
 interface AuthContextType {
   user: User | null
   loading: boolean
+  accessToken: string | null
 }
 
 const AuthContext = createContext<AuthContextType>({
   user: null,
   loading: true,
+  accessToken: null,
 })
 
 export const useAuth = () => useContext(AuthContext)
@@ -141,6 +148,7 @@ async function workspaceAdminIncompleteOnboardingWithRetry(
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
+  const [accessToken, setAccessToken] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const router = useRouter()
   const router_ref = useRef(router)
@@ -149,6 +157,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const pathname_ref = useRef(pathname)
   pathname_ref.current = pathname
   const idleDurations = useMemo(() => getWorkspaceIdleLogoutDurations(), [])
+  const isPublicBookingRoute = is_public_embed_booking_path(pathname)
+  const sessionGuardsEnabled = Boolean(user) && !loading && !isPublicBookingRoute
 
   const handleIdleLogout = useCallback(async () => {
     try {
@@ -156,17 +166,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch (err) {
       console.error(err)
     }
+    if (is_public_embed_booking_path(pathname_ref.current)) return
     router.push('/login?reason=idle')
   }, [router])
 
   const { showWarning, secondsRemaining, staySignedIn } = useIdleLogout(
-    Boolean(user) && !loading,
+    sessionGuardsEnabled,
     idleDurations.idleMs,
     idleDurations.warningMs,
     handleIdleLogout
   )
 
-  useRemoteSessionInvalidation(Boolean(user) && !loading, pathname)
+  useRemoteSessionInvalidation(sessionGuardsEnabled, pathname)
 
   useEffect(() => {
     installWorkspaceApiUnauthorizedHandler()
@@ -185,6 +196,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       session: Session | null,
       authEvent?: AuthChangeEvent
     ) => {
+      syncAuthSessionCache(session)
+      setAccessToken(session?.access_token ?? null)
+
       if (!session?.user) {
         setUser(null)
         if (!isPublicPath(pathname_ref.current)) {
@@ -211,13 +225,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       } else if (skipVerifyGetUser) {
         currentUser = session.user as SupabaseUser
       } else {
-        const { data: verified, error: verifyErr } = await supabase.auth.getUser()
-        if (verifyErr || !verified.user) {
+        const { user: verifiedUser, error: verifyErr } = await validateWorkspaceUser()
+        if (verifyErr || !verifiedUser) {
           console.error(verifyErr ?? new Error('getUser returned no user'))
           await clearInvalidSession()
           return
         }
-        currentUser = verified.user
+        currentUser = verifiedUser
       }
 
       const userRole = currentUser.user_metadata?.role
@@ -337,7 +351,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const runInitial = async () => {
       try {
-        const { data, error } = await supabase.auth.getSession()
+        const { session: initialSession, error } = await bootstrapWorkspaceSession()
         if (error) {
           console.error(error)
           setUser(null)
@@ -346,7 +360,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           }
           return
         }
-        await syncAuthFromSessionWithRetry(data.session ?? null)
+        await syncAuthFromSessionWithRetry(initialSession ?? null)
       } catch (err) {
         void handleAuthSyncFailure(err)
       } finally {
@@ -362,6 +376,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event, session) => {
+      syncAuthSessionCache(session)
+      setAccessToken(session?.access_token ?? null)
+
       // Defer so we never call getUser/getSession while inside the auth notifier (avoids deadlocks).
       window.setTimeout(() => {
         void (async () => {
@@ -386,12 +403,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   return (
-    <AuthContext.Provider value={{ user, loading }}>
-      <IdleSessionWarningModal
-        open={showWarning}
-        secondsRemaining={secondsRemaining}
-        onStaySignedIn={staySignedIn}
-      />
+    <AuthContext.Provider value={{ user, loading, accessToken }}>
+      {!isPublicBookingRoute && (
+        <IdleSessionWarningModal
+          open={showWarning}
+          secondsRemaining={secondsRemaining}
+          onStaySignedIn={staySignedIn}
+        />
+      )}
       {children}
     </AuthContext.Provider>
   )

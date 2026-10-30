@@ -1,5 +1,9 @@
 "use client";
 
+/**
+ * @deprecated Use `toast` from `@/src/components/ui/toast` for transient feedback.
+ * ConfirmModal remains the choice for destructive confirmations.
+ */
 interface AlertModalProps {
   message: string;
   onClose: () => void;
@@ -8,9 +12,14 @@ interface AlertModalProps {
 export function AlertModal({ message, onClose }: AlertModalProps) {
   return (
     <div
-      className="fixed inset-0 z-[100] flex items-center justify-center overflow-y-auto bg-black/40 p-4"
+      className="fixed inset-0 z-100001 h-full flex items-center justify-center overflow-y-auto p-4"
       onClick={onClose}
     >
+      <div
+        className="absolute inset-0 cursor-default bg-slate-900/40 backdrop-blur-[2px]"
+        aria-hidden="true"
+        onClick={onClose}
+      />
       <div
         className="relative bg-white rounded-xl shadow-2xl max-w-md w-full"
         onClick={(e) => e.stopPropagation()}

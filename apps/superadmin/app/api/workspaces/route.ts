@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { assignFreePlanToWorkspace } from '@app/db/subscription';
 import { getSupabaseServer } from '@/lib/supabaseServer';
+import { sendNewWorkspaceSuperadminEmail } from '@/lib/send-new-workspace-superadmin-email';
 
 type JsonObject = Record<string, unknown>;
 
@@ -223,6 +224,17 @@ export async function POST(req: Request) {
           { status: 500 }
         );
       }
+
+      void sendNewWorkspaceSuperadminEmail({
+        workspaceId: data.id,
+        workspaceName: name,
+        workspaceSlug: slug,
+        ownerName: typeof admin_name === 'string' ? admin_name : null,
+        ownerEmail: typeof admin_email === 'string' ? admin_email : null,
+        source: 'superadmin dashboard',
+      }).catch((err) =>
+        console.error('Superadmin new-workspace email failed (non-critical):', err)
+      );
     }
 
     // Create workspace_admin user if user fields are provided

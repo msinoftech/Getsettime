@@ -58,14 +58,14 @@ export function CalendarFiltersBar({
   onNextMonth: _onNextMonth,
 }: CalendarFiltersBarProps) {
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-2.5">
+    <div className="bg-white">
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative min-w-[160px] flex-1">
-          <Building2 className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+          <Building2 className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
           <select
             value={departmentFilter}
             onChange={(e) => onDepartmentFilterChange(e.target.value)}
-            className="h-9 w-full appearance-none rounded-md border border-slate-200 bg-white pl-9 pr-8 text-xs font-semibold text-slate-700 outline-none"
+            className="w-full appearance-none rounded-md border border-slate-200 bg-white pl-9 pr-8 py-2 text-sm font-semibold text-slate-700 outline-none"
           >
             <option value="all">All Departments</option>
             {departmentOptions.map((option) => (
@@ -78,11 +78,11 @@ export function CalendarFiltersBar({
         </div>
 
         <div className="relative min-w-[150px] flex-1">
-        <UserRoundPen className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+        <UserRoundPen className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
           <select
             value={serviceFilter}
             onChange={(e) => onServiceFilterChange(e.target.value)}
-            className="h-9 w-full appearance-none rounded-md border border-slate-200 bg-white pl-9 pr-8 text-xs font-semibold text-slate-700 outline-none"
+            className="w-full appearance-none rounded-md border border-slate-200 bg-white pl-9 pr-8 py-2 text-sm font-semibold text-slate-700 outline-none"
           >
             <option value="all">All Services</option>
             {serviceOptions.map((option) => (
@@ -95,11 +95,11 @@ export function CalendarFiltersBar({
         </div>
 
         <div className="relative min-w-[150px] flex-1">
-          <UserRound className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+          <UserRound className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
           <select
             value={providerFilter}
             onChange={(e) => onProviderFilterChange(e.target.value)}
-            className="h-9 w-full appearance-none rounded-md border border-slate-200 bg-white pl-9 pr-8 text-xs font-semibold text-slate-700 outline-none"
+            className="w-full appearance-none rounded-md border border-slate-200 bg-white pl-9 pr-8 py-2 text-sm font-semibold text-slate-700 outline-none"
           >
             <option value="all">All Providers</option>
             {providerOptions.map((option) => (
@@ -112,13 +112,13 @@ export function CalendarFiltersBar({
         </div>
 
         <div className="relative min-w-[150px] flex-1">
-          <ShieldCheck className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+          <ShieldCheck className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
           <select
             value={statusFilter}
             onChange={(e) =>
               onStatusFilterChange(e.target.value as CalendarStatusFilterOption)
             }
-            className="h-9 w-full appearance-none rounded-md border border-slate-200 bg-white pl-9 pr-8 text-xs font-semibold text-slate-700 outline-none"
+            className="w-full appearance-none rounded-md border border-slate-200 bg-white pl-9 pr-8 py-2 text-sm font-semibold text-slate-700 outline-none"
           >
             <option value="all">All Statuses</option>
             <option value="confirmed">Confirmed</option>
@@ -132,9 +132,9 @@ export function CalendarFiltersBar({
         </div>
 
         <div className="relative min-w-[150px] flex-1">
-          <MapPin className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+          <MapPin className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
           <select
-            className="h-9 w-full appearance-none rounded-md border border-slate-200 bg-white pl-9 pr-8 text-xs font-semibold text-slate-700 outline-none"
+            className="w-full appearance-none rounded-md border border-slate-200 bg-white pl-9 pr-8 py-2 text-sm font-semibold text-slate-700 outline-none"
             defaultValue="all-locations"
           >
             <option value="all-locations">All Locations</option>
@@ -151,7 +151,7 @@ export function CalendarFiltersBar({
             onServiceFilterChange("all");
             onProviderFilterChange("all");
           }}
-          className="inline-flex h-9 items-center gap-1.5 rounded-md px-2.5 text-xs font-semibold text-slate-500 hover:text-slate-700"
+          className="inline-flex items-center gap-1.5 rounded-md px-2 text-xs font-semibold text-slate-500 hover:text-slate-700"
         >
           <RefreshCw className="h-3.5 w-3.5" aria-hidden />
           Clear all

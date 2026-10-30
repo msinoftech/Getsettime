@@ -1,4 +1,5 @@
 import { supabase } from "@/lib/supabaseClient";
+import { clearAuthSessionCache, getAccessToken } from "@/src/lib/auth_session";
 import type { user_auth_activity_log_request } from "@/src/types/user_auth_activity";
 
 /** Suppress duplicate "login" rows when the same session triggers SIGNED_IN more than once (e.g. React Strict Mode remount or listener re-subscribe). */
@@ -72,10 +73,7 @@ export async function logAuthActivityFromSession(
   event_type: user_auth_activity_log_request["event_type"],
   opts?: Pick<user_auth_activity_log_request, "reason" | "supabase_auth_event">
 ): Promise<void> {
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
-  const token = session?.access_token;
+  const token = await getAccessToken();
   if (!token) return;
   await logAuthActivity(token, {
     event_type,
@@ -93,4 +91,5 @@ export async function signOutWithAuthLog(
 ): Promise<void> {
   await logAuthActivityFromSession("logout", { reason });
   await supabase.auth.signOut(sign_out_options);
+  clearAuthSessionCache();
 }

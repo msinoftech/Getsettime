@@ -3,6 +3,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { Department, Service, ServiceProvider } from '@/src/types/bookingForm';
 import { BOOKING_BUTTON_LABELS, BOOKING_EMPTY_MESSAGES, BOOKING_LOADING_MESSAGES } from '@/src/constants/booking';
+import { WorkspaceUserAvatar } from '@/src/components/User/WorkspaceUserAvatar';
 
 type GuideTarget = 'provider' | 'services' | 'continue';
 
@@ -21,6 +22,7 @@ interface Step1DepartmentProviderProps {
   onToggleOptionalService: (id: string) => void;
   onSelectDepartment: (dept: Department) => void;
   onSelectProvider: (provider: ServiceProvider) => void;
+  onBack?: () => void;
   onContinue: () => void;
 }
 
@@ -38,6 +40,7 @@ export function Step1DepartmentProvider({
   onToggleOptionalService,
   onSelectDepartment,
   onSelectProvider,
+  onBack,
   onContinue,
 }: Step1DepartmentProviderProps) {
   const canContinue =
@@ -121,10 +124,10 @@ export function Step1DepartmentProvider({
   );
 
   return (
-    <div className="space-y-4 sm:space-y-6 animate-fadeIn">
+    <div className="space-y-4 animate-fadeIn">
       <div className="text-center lg:text-left">
-        <h2 className="text-2xl font-bold text-gray-900">Select Department & Provider</h2>
-        <p className="text-xs sm:text-sm text-gray-500">Choose the department and who you&apos;d like to book with</p>
+        <h2 className="text-lg font-bold tracking-tight text-slate-900 sm:text-xl md:text-2xl">Select Department & Provider</h2>
+        <p className="mt-0.5 text-sm text-slate-500">Choose the department and who you&apos;d like to book with</p>
       </div>
 
       <div>
@@ -141,7 +144,7 @@ export function Step1DepartmentProvider({
             <p className="text-gray-600 font-medium text-sm">{BOOKING_EMPTY_MESSAGES.noDepartments}</p>
           </div>
         ) : (
-          <div className="grid gap-3">
+          <div className="grid gap-2">
             {departments.map((dept) => {
               const isSelected = selectedDepartment?.id === dept.id;
               return (
@@ -149,18 +152,18 @@ export function Step1DepartmentProvider({
                   key={dept.id}
                   type="button"
                   onClick={() => handleSelectDepartment(dept)}
-                  className={`group relative w-full text-left p-3 sm:p-4 rounded-xl border-2 transition-all duration-300 ${
+                  className={`group relative w-full text-left px-4 py-3 rounded-xl border-2 transition-all duration-300 ${
                     isSelected
                       ? 'border-indigo-400 bg-gradient-to-br from-white to-indigo-50/30 shadow-lg'
                       : 'border-gray-200 hover:border-indigo-300 bg-white hover:bg-indigo-50/30'
                   }`}
                 >
                   <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-indigo-500 to-indigo-600 flex items-center justify-center text-white font-bold">
+                    <div className="w-10 h-10 shrink-0 rounded-lg bg-gradient-to-br from-indigo-500 to-indigo-600 flex items-center justify-center text-white font-bold">
                       {dept.name.charAt(0)}
                     </div>
                     <div className="flex-1">
-                      <div className="font-bold text-gray-900">{dept.name}</div>
+                      <div className="text-md font-semibold text-gray-900">{dept.name}</div>
                       {dept.description && (
                         <div className="text-xs text-gray-600 mt-0.5">{dept.description}</div>
                       )}
@@ -201,18 +204,24 @@ export function Step1DepartmentProvider({
                     key={provider.id}
                     type="button"
                     onClick={() => handleSelectProvider(provider)}
-                    className={`group relative w-full text-left p-3 sm:p-4 rounded-xl border-2 transition-all duration-300 ${
+                    className={`group relative w-full text-left px-4 py-3 rounded-xl border transition-all duration-300 ${
                       isSelected
-                        ? 'border-teal-400 bg-gradient-to-br from-white to-teal-50/30 shadow-lg'
-                        : 'border-gray-200 hover:border-teal-300 bg-white hover:bg-teal-50/30'
+                        ? 'border-emerald-400 bg-gradient-to-br from-white to-emerald-50/30 shadow-lg'
+                        : 'border-gray-200 hover:border-emerald-300 bg-white hover:bg-emerald-50/30'
                     }`}
                   >
                     <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-full bg-gradient-to-br from-teal-500 to-teal-600 flex items-center justify-center text-white font-bold">
-                        {provider.name.charAt(0)}
-                      </div>
+                      <WorkspaceUserAvatar
+                        userId={provider.id}
+                        name={provider.name}
+                        email={provider.email}
+                        avatarUrl={provider.avatar_url}
+                        size="lg"
+                        shape="rounded"
+                        className="h-10 w-10 shrink-0 text-white shadow-sm"
+                      />
                       <div className="flex-1 min-w-0">
-                        <div className="font-bold text-gray-900 capitalize">{provider.name}</div>
+                        <div className="font-semibold text-gray-900 capitalize">{provider.name}</div>
                         {(provider.education || provider.experience || provider.specialty) && (
                           <div className="mt-1 space-y-0.5 text-xs text-gray-600">
                             {provider.education ? (
@@ -259,7 +268,7 @@ export function Step1DepartmentProvider({
           {loadingProviderScopedCatalog ? (
             <div className="text-sm text-gray-500 py-4">{BOOKING_LOADING_MESSAGES.services}</div>
           ) : (
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap gap-1">
               {providerScopedCatalogServices.map((s) => {
                 const selected = selectedOptionalServiceIds.includes(s.id);
                 return (
@@ -267,7 +276,7 @@ export function Step1DepartmentProvider({
                     key={s.id}
                     type="button"
                     onClick={() => handleToggleOptionalService(s.id)}
-                    className={`inline-flex items-center gap-2 px-4 py-2 rounded-full border-2 transition-all text-sm font-semibold ${
+                    className={`inline-flex items-center gap-2 px-4 py-2 rounded-full border transition-all text-sm font-semibold ${
                       selected
                         ? 'bg-indigo-600 text-white border-indigo-600 shadow-lg'
                         : 'bg-white text-gray-700 border-gray-200 hover:border-indigo-400 hover:bg-indigo-50'
@@ -283,11 +292,23 @@ export function Step1DepartmentProvider({
       )}
 
       {canContinue && (
-        <div ref={continueSectionRef} className="flex justify-end pt-4 scroll-mt-6">
+        <div
+          ref={continueSectionRef}
+          className="flex flex-col sm:flex-row justify-between gap-3 sm:gap-4 pt-4 scroll-mt-6"
+        >
+          {onBack && (
+            <button
+              type="button"
+              onClick={onBack}
+              className="w-full sm:w-auto rounded-lg bg-white px-4 py-2 text-sm font-semibold text-gray-700 border border-gray-200 hover:border-gray-300 hover:bg-gray-50 transition-all hover:shadow-md"
+            >
+              {BOOKING_BUTTON_LABELS.back}
+            </button>
+          )}
           <button
             type="button"
             onClick={onContinue}
-            className="px-6 sm:px-10 py-3 sm:py-3.5 rounded-xl text-white bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-700 hover:to-indigo-800 shadow-xl hover:shadow-2xl hover:scale-105 transition-all font-semibold"
+            className="w-full sm:w-auto rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700 cursor-pointer"
           >
             {BOOKING_BUTTON_LABELS.continueToServices}
           </button>

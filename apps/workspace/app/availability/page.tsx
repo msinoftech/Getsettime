@@ -1,4 +1,5 @@
 "use client";
+import { getWorkspaceSession } from '@/src/lib/auth_session';
 import { useEffect, useMemo, useState, useRef } from "react";
 import {
   format,
@@ -16,13 +17,16 @@ import {
   eachDayOfInterval,
 } from "date-fns";
 import { LuClock as Clock, LuCopy as Copy, LuCalendarPlus as CalendarPlus, LuUsers as Users, LuChevronDown as ChevronDown } from "react-icons/lu";
+import { toast } from "@/src/components/ui/toast";
 import AvailabilityTimesheet, {
-  type availability_timesheet_save_feedback,
   type availability_timesheet_handle,
 } from '@/src/components/Settings/AvailabilityTimesheet';
 import { DateExceptionsTable } from '@/src/components/Settings/DateExceptionsTable';
 import { AddExceptionPanel } from '@/src/features/availability/AddExceptionPanel';
-import AlertMessage from '@/src/components/Auth/AlertMessage';
+import { BookingRulesList } from '@/src/features/availability/BookingRulesList';
+import { EditBookingRulesPanel } from '@/src/features/availability/EditBookingRulesPanel';
+import { resolve_booking_rules } from '@/src/features/availability/booking_rules';
+import { slugify_event_type_title } from '@/src/features/event-types/event_type_slug';
 import { AvailabilityGeneralSkeleton } from '@/src/components/ui/AvailabilityGeneralSkeleton';
 import { TimezoneSelector } from '@/src/components/ui/TimezoneSelector';
 import { ConfirmModal } from '@/src/components/ui/ConfirmModal';
@@ -34,12 +38,39 @@ import {
   formatTimezoneSelectLabel,
   getBrowserTimezone,
 } from '@/src/utils/timezone';
+import type { booking_rules, booking_rules_edit_target } from '@/src/types/booking_rules';
 import type { date_exception } from '@/src/types/date_exceptions';
 import { supabase } from "@/lib/supabaseClient";
 import { sync_settings_response } from '@/src/lib/workspace_shell_sync';
 import type { WorkspaceSettings, provider_availability_entry } from '@/src/types/workspace';
+import ScreenGate from "@/src/components/ScreenGate";
 
-type TabType = 'general' | 'date_exceptions' | 'availability';
+type TabType = 'general' | 'date_exceptions' | 'booking_rules' | 'availability';
+
+type booking_rules_event_type = {
+  id: number;
+  title: string;
+  slug: string | null;
+  short_description?: string | null;
+  internal_label: string | null;
+  event_type_format: string;
+  capacity_per_slot: number;
+  availability_mode: string;
+  recurrence: unknown;
+  allow_waitlist: boolean;
+  min_booking_notice_minutes: number;
+  max_booking_window_days: number;
+  allow_reschedule: boolean;
+  allow_cancellation: boolean;
+  duration_minutes: number | null;
+  buffer_before: number | null;
+  buffer_after: number | null;
+  location_type: string | null;
+  is_public: boolean | null;
+  status: string;
+  owner_id: string | null;
+  settings?: Record<string, unknown> | null;
+};
 type DayName = "Mon" | "Tue" | "Wed" | "Thu" | "Fri" | "Sat" | "Sun";
 type BreakTime = { id: string; start: string; end: string };
 type DaySchedule = {
@@ -98,15 +129,12 @@ export default function Availability() {
   const [timesheet, setTimesheet] = useState<Record<DayName, DaySchedule> | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
-  const [saveMessage, setSaveMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [bookings, setBookings] = useState<Array<{ start_at: string; end_at: string | null; status: string | null }>>([]);
   const [serviceProviders, setServiceProviders] = useState<ServiceProvider[]>([]);
   const [selectedProviderId, setSelectedProviderId] = useState<string>('');
   const [currentUserId, setCurrentUserId] = useState<string>('');
   const [currentUserRole, setCurrentUserRole] = useState<string>('');
   /** Cached full availability from settings - used to re-derive when selectedProviderId changes without re-fetching */
-  const [timesheetSaveFeedback, setTimesheetSaveFeedback] =
-    useState<availability_timesheet_save_feedback>(null);
   const [timesheetEditPanelOpen, setTimesheetEditPanelOpen] = useState(false);
   const [timesheetBusy, setTimesheetBusy] = useState(false);
   const timesheetRef = useRef<availability_timesheet_handle | null>(null);
@@ -116,11 +144,29 @@ export default function Availability() {
   const [editingException, setEditingException] = useState<date_exception | null>(null);
   const [exceptionPendingDelete, setExceptionPendingDelete] = useState<date_exception | null>(null);
   const [exceptionDeleting, setExceptionDeleting] = useState(false);
+  const [bookingRulesPanelOpen, setBookingRulesPanelOpen] = useState(false);
+  const [bookingRulesEditTarget, setBookingRulesEditTarget] =
+    useState<booking_rules_edit_target | null>(null);
+  const [bookingRulesEventTypes, setBookingRulesEventTypes] = useState<
+    booking_rules_event_type[]
+  >([]);
+  const [bookingRulesEventTypesLoading, setBookingRulesEventTypesLoading] =
+    useState(false);
+  const [localBookingRules, setLocalBookingRules] = useState<booking_rules | null>(
+    null
+  );
   const [settingsAvailability, setSettingsAvailability] = useState<{
     timesheet: Record<DayName, DaySchedule> | null;
     individual: Record<string, boolean> | undefined;
     providers: Record<string, { timesheet?: Record<DayName, DaySchedule>; individual?: Record<string, boolean> }>;
   } | null>(null);
+
+  const bookingRules = useMemo(() => {
+    if (localBookingRules) return localBookingRules;
+    return resolve_booking_rules(
+      (settings ?? {}) as Record<string, unknown>
+    );
+  }, [localBookingRules, settings]);
 
   const formatHour = (hour: number) => {
     const suffix = hour >= 12 ? "PM" : "AM";
@@ -366,10 +412,9 @@ export default function Availability() {
   // Save availability handler
   const handleSaveAvailability = async () => {
     setIsSaving(true);
-    setSaveMessage(null);
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
+      const { session } = await getWorkspaceSession();
       if (!session) throw new Error('Not authenticated');
 
       const token = session.access_token;
@@ -420,11 +465,7 @@ export default function Availability() {
             },
           });
         }
-        setSaveMessage({
-          type: 'success',
-          text: 'Availability saved successfully for your profile!',
-        });
-        setTimeout(() => setSaveMessage(null), 3000);
+        toast.success('Availability saved successfully for your profile!');
         setIsSaving(false);
         return;
       }
@@ -484,22 +525,14 @@ export default function Availability() {
         ? `for provider ${serviceProviders.find(p => p.id === selectedProviderId)?.name || 'selected provider'}`
         : 'as general availability (applies to all providers)';
 
-      setSaveMessage({ type: 'success', text: `Availability saved successfully ${saveTarget}!` });
-      setTimeout(() => {
-        setSaveMessage(null);
-      }, 3000);
+      toast.success(`Availability saved successfully ${saveTarget}!`);
 
       console.log("Availability saved:", saveTarget);
     } catch (error) {
       console.error("Error saving availability:", error);
-      setSaveMessage({
-        type: 'error',
-        text: error instanceof Error ? error.message : 'Failed to save availability. Please try again.'
-      });
-
-      setTimeout(() => {
-        setSaveMessage(null);
-      }, 5000);
+      toast.error(
+        error instanceof Error ? error.message : 'Failed to save availability. Please try again.'
+      );
     } finally {
       setIsSaving(false);
     }
@@ -632,7 +665,7 @@ export default function Availability() {
 
     const loadTeamMembers = async () => {
       try {
-        const { data: { session } } = await supabase.auth.getSession();
+        const { session } = await getWorkspaceSession();
         if (!session || cancelled) return;
 
         const token = session.access_token;
@@ -692,8 +725,7 @@ export default function Availability() {
 
     const loadBookings = async () => {
       try {
-        const { supabase } = await import('@/lib/supabaseClient');
-        const { data: { session } } = await supabase.auth.getSession();
+        const { session } = await getWorkspaceSession();
         const token = session?.access_token;
 
         let datesToFetch: Date[];
@@ -768,9 +800,7 @@ export default function Availability() {
   }, [calendarMonth]);
 
   const saveTimezone = async (timezone: string) => {
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
+    const { session } = await getWorkspaceSession();
     if (!session?.access_token) throw new Error("No active session");
 
     const response = await fetch("/api/settings", {
@@ -793,9 +823,7 @@ export default function Availability() {
   const fetchDateExceptions = async () => {
     setDateExceptionsLoading(true);
     try {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
+      const { session } = await getWorkspaceSession();
       if (!session?.access_token) return;
 
       const params = new URLSearchParams({ status: "active", limit: "100" });
@@ -858,12 +886,15 @@ export default function Availability() {
 
   const confirmDeleteException = async () => {
     if (!exceptionPendingDelete) return;
+    const deletedName = exceptionPendingDelete.name;
     setExceptionDeleting(true);
     try {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      if (!session?.access_token) return;
+      const { session } = await getWorkspaceSession();
+      if (!session?.access_token) {
+        toast.error("Not authenticated");
+        setExceptionPendingDelete(null);
+        return;
+      }
       const res = await fetch(`/api/date-exceptions/${exceptionPendingDelete.id}`, {
         method: "DELETE",
         headers: { Authorization: `Bearer ${session.access_token}` },
@@ -873,16 +904,179 @@ export default function Availability() {
           prev.filter((e) => e.id !== exceptionPendingDelete.id)
         );
         setExceptionPendingDelete(null);
+        toast.success(`"${deletedName}" deleted successfully.`);
+        return;
       }
+      const data = await res.json().catch(() => ({}));
+      toast.error(
+        typeof data.error === "string" ? data.error : "Failed to delete date exception."
+      );
+      setExceptionPendingDelete(null);
     } catch (error) {
       console.error("Error deleting date exception:", error);
+      toast.error("Failed to delete date exception.");
+      setExceptionPendingDelete(null);
     } finally {
       setExceptionDeleting(false);
     }
   };
 
+  const fetchBookingRulesEventTypes = async () => {
+    setBookingRulesEventTypesLoading(true);
+    try {
+      const { session } = await getWorkspaceSession();
+      if (!session?.access_token) return;
+
+      const res = await fetch("/api/event-types", {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      const rows = Array.isArray(data.data)
+        ? (data.data as booking_rules_event_type[])
+        : [];
+      setBookingRulesEventTypes(rows);
+    } catch (error) {
+      console.error("Error loading event types for booking rules:", error);
+    } finally {
+      setBookingRulesEventTypesLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab !== "booking_rules") return;
+    void fetchBookingRulesEventTypes();
+  }, [activeTab]);
+
+  const openBookingRulesPanel = (target: booking_rules_edit_target) => {
+    if (!isWorkspaceAdminUser) return;
+    setBookingRulesEditTarget(target);
+    setBookingRulesPanelOpen(true);
+  };
+
+  const closeBookingRulesPanel = () => {
+    setBookingRulesPanelOpen(false);
+    setBookingRulesEditTarget(null);
+  };
+
+  const handleSaveGlobalBookingRules = async (next: booking_rules) => {
+    const { session } = await getWorkspaceSession();
+    if (!session?.access_token) {
+      throw new Error("You are not signed in. Please refresh and try again.");
+    }
+
+    const res = await fetch("/api/settings", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${session.access_token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        settings: {
+          booking_rules: next,
+          general: {
+            allow_customer_cancellation: next.allow_cancellation,
+            allow_customer_reschedule: next.allow_reschedule,
+          },
+        },
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(
+        typeof data.error === "string" ? data.error : "Failed to save booking rules."
+      );
+    }
+    if (session.user?.id && data.settings) {
+      sync_settings_response(session.user.id, data);
+    }
+    setLocalBookingRules(next);
+  };
+
+  const handleSaveEventTypeOverride = async (
+    eventTypeId: number,
+    patch: {
+      duration_minutes: number;
+      buffer_before: number;
+      buffer_after: number;
+      min_booking_notice_minutes: number;
+    }
+  ) => {
+    const existing = bookingRulesEventTypes.find((row) => row.id === eventTypeId);
+    if (!existing) {
+      throw new Error("Event type not found.");
+    }
+
+    const { session } = await getWorkspaceSession();
+    if (!session?.access_token) {
+      throw new Error("You are not signed in. Please refresh and try again.");
+    }
+
+    const shortDescription =
+      typeof existing.settings?.short_description === "string"
+        ? existing.settings.short_description
+        : existing.short_description ?? "";
+    const slug =
+      (existing.slug && existing.slug.trim()) ||
+      slugify_event_type_title(existing.title);
+
+    const res = await fetch("/api/event-types", {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${session.access_token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        id: existing.id,
+        title: existing.title,
+        slug,
+        short_description: shortDescription,
+        internal_label: existing.internal_label,
+        event_type_format: existing.event_type_format,
+        capacity_per_slot: existing.capacity_per_slot,
+        availability_mode: existing.availability_mode,
+        recurrence: existing.recurrence,
+        allow_waitlist: existing.allow_waitlist,
+        min_booking_notice_minutes: patch.min_booking_notice_minutes,
+        max_booking_window_days: existing.max_booking_window_days,
+        allow_reschedule: existing.allow_reschedule,
+        allow_cancellation: existing.allow_cancellation,
+        duration_minutes: patch.duration_minutes,
+        buffer_before: patch.buffer_before,
+        buffer_after: patch.buffer_after,
+        location_type: existing.location_type,
+        is_public: existing.is_public,
+        status: existing.status,
+        owner_id: existing.owner_id,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(
+        typeof data.error === "string"
+          ? data.error
+          : "Failed to save event type override."
+      );
+    }
+
+    const updated = (data.data ?? null) as booking_rules_event_type | null;
+    setBookingRulesEventTypes((prev) =>
+      prev.map((row) => {
+        if (row.id !== eventTypeId) return row;
+        if (updated) return { ...row, ...updated };
+        return {
+          ...row,
+          duration_minutes: patch.duration_minutes,
+          buffer_before: patch.buffer_before,
+          buffer_after: patch.buffer_after,
+          min_booking_notice_minutes: patch.min_booking_notice_minutes,
+        };
+      })
+    );
+  };
+
   const renderTabNav = () => (
-    <nav className="flex shrink-0 gap-6 border-b border-slate-200">
+    <nav className="flex shrink-0 gap-4 border-b border-slate-200">
       <button
         type="button"
         onClick={() => setActiveTab("general")}
@@ -913,6 +1107,20 @@ export default function Availability() {
       </button>
       <button
         type="button"
+        onClick={() => setActiveTab("booking_rules")}
+        className={`relative -mb-px pb-3 text-sm font-semibold transition-colors ${
+          activeTab === "booking_rules"
+            ? "text-indigo-600"
+            : "text-slate-500 hover:text-slate-800"
+        }`}
+      >
+        Booking Rules
+        {activeTab === "booking_rules" ? (
+          <span className="absolute inset-x-0 -bottom-px h-0.5 rounded-full bg-indigo-600" />
+        ) : null}
+      </button>
+      <button
+        type="button"
         onClick={() => setActiveTab("availability")}
         className={`relative -mb-px pb-3 text-sm font-semibold transition-colors ${
           activeTab === "availability"
@@ -932,20 +1140,21 @@ export default function Availability() {
     if (!isWorkspaceAdminUser) return null;
 
     return (
-      <div className="flex flex-wrap items-center gap-3 sm:gap-4">
+      <div className="flex flex-col sm:flex-row flex-wrap sm:items-center gap-3 sm:gap-4">
         <label
           htmlFor="availability-service-provider"
           className="shrink-0 text-sm font-semibold text-slate-800"
         >
           Provider
         </label>
+
         <div className="relative min-w-[240px] flex-1 sm:max-w-md sm:flex-none">
           <Users className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
           <select
             id="availability-service-provider"
             value={selectedProviderId}
             onChange={(e) => setSelectedProviderId(e.target.value)}
-            className="w-full appearance-none rounded-lg border border-slate-200 bg-white py-2.5 pl-10 pr-9 text-sm text-slate-700 outline-none transition focus:border-indigo-400 focus:ring-2 focus:ring-indigo-500/20"
+            className="w-full appearance-none rounded-lg border border-slate-200 bg-white py-2 pl-10 pr-9 text-sm text-slate-700 outline-none transition focus:border-indigo-400 focus:ring-2 focus:ring-indigo-500/20"
           >
             <option value="">General Availability</option>
             {serviceProviders.map((provider) => (
@@ -961,17 +1170,15 @@ export default function Availability() {
   };
 
   const layoutPanelOpen =
-    (activeTab === "general" && timesheetEditPanelOpen) || exceptionPanelOpen;
+    (activeTab === "general" && timesheetEditPanelOpen) ||
+    exceptionPanelOpen ||
+    bookingRulesPanelOpen;
 
   const outlineActionBtn =
-    "inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50";
+    "inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50";
 
   return (
-    <section
-      className={`mr-auto space-y-6 transition-[margin] duration-300 ease-in-out ${
-        layoutPanelOpen ? "hidden lg:block lg:mr-[28rem]" : ""
-      }`}
-    >
+    <section className={`mr-auto space-y-6 transition-[margin] duration-300 ease-in-out`}>
       <header className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-slate-900 md:text-3xl">
@@ -990,10 +1197,10 @@ export default function Availability() {
         />
       </header>
 
-      <div className="space-y-4">
+      <div className="flex items-center justify-between flex-wrap gap-2">
         {renderServiceProviderFilter()}
 
-        <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+        <div className="flex gap-3 flex-row flex-wrap items-center">
           <div className="flex flex-wrap items-center gap-2">
             {!isStaffUser ? (
               <>
@@ -1031,33 +1238,28 @@ export default function Availability() {
                 </button>
               </>
             ) : null}
+            
+            {activeTab === "general" && !isStaffUser ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTab("general");
+                  void timesheetRef.current?.saveChanges();
+                }}
+                disabled={settingsLoading || timesheetBusy}
+                className="inline-flex items-center w-fit rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {timesheetBusy ? "Saving..." : "Save changes"}
+              </button>
+            ) : null}
           </div>
-          {activeTab === "general" && !isStaffUser ? (
-            <button
-              type="button"
-              onClick={() => {
-                setActiveTab("general");
-                void timesheetRef.current?.saveChanges();
-              }}
-              disabled={settingsLoading || timesheetBusy}
-              className="inline-flex items-center rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {timesheetBusy ? "Saving..." : "Save changes"}
-            </button>
-          ) : null}
         </div>
       </div>
 
-      <div className="space-y-5">
+      <div className="bg-white p-4 rounded-2xl mb-0">
         {renderTabNav()}
 
-        <div className={activeTab === "general" ? "space-y-4" : "hidden"}>
-          {timesheetSaveFeedback !== null && (
-            <AlertMessage
-              type={timesheetSaveFeedback.type === "success" ? "success" : "error"}
-              message={timesheetSaveFeedback.text}
-            />
-          )}
+        <div className={activeTab === "general" ? "relative mt-4" : "hidden"}>
           {settingsLoading ? (
             <AvailabilityGeneralSkeleton />
           ) : (
@@ -1081,7 +1283,6 @@ export default function Availability() {
               workspaceSettings={settings}
               initialTimesheet={generalInitialTimesheet}
               onSave={handleGeneralTimesheetSaved}
-              onSaveFeedback={setTimesheetSaveFeedback}
               onEditPanelOpenChange={setTimesheetEditPanelOpen}
               onBusyChange={setTimesheetBusy}
               sourceTimezone={sourceTimezone}
@@ -1103,8 +1304,25 @@ export default function Availability() {
           />
         ) : null}
 
+        {activeTab === "booking_rules" ? (
+          <BookingRulesList
+            rules={bookingRules}
+            eventTypes={bookingRulesEventTypes.map((row) => ({
+              id: row.id,
+              title: row.title,
+              duration_minutes: row.duration_minutes,
+              buffer_before: row.buffer_before,
+              buffer_after: row.buffer_after,
+              min_booking_notice_minutes: row.min_booking_notice_minutes ?? 120,
+            }))}
+            loadingEventTypes={bookingRulesEventTypesLoading}
+            readOnly={!isWorkspaceAdminUser}
+            onEdit={openBookingRulesPanel}
+          />
+        ) : null}
+
           {activeTab === 'availability' && (
-            <div className="space-y-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:space-y-6 sm:p-5">
+            <div className="space-y-4 bg-white sm:space-y-6 mt-4">
               {/* Header */}
               <div className="flex flex-col sm:flex-row sm:flex-wrap items-start sm:items-center gap-3 sm:gap-2">
                 {/* Filters */}
@@ -1180,12 +1398,13 @@ export default function Availability() {
                   </div>
 
                   {/* Availability Grid - Mobile Vertical Layout / Desktop Horizontal Scroll */}
-                  <div className="rounded-2xl overflow-hidden border border-gray-200">
+                  <div className="rounded-2xl overflow-hidden xl:border border-gray-200">
                     {/* Desktop Week View - Horizontal Scroll */}
                     {viewMode === "week" && (
                       <>
+                        <ScreenGate minWidth={1280}>
                         {/* Desktop Grid View */}
-                        <div className="hidden xl:block overflow-x-auto">
+                        <div className="overflow-x-auto">
                           {/* Hours Header */}
                           <div className="grid grid-cols-[100px_repeat(12,minmax(80px,1fr))]">
                             <div></div>
@@ -1256,17 +1475,19 @@ export default function Availability() {
                             );
                           })}
                         </div>
-
+                        </ScreenGate>
+                        
+                        <ScreenGate maxWidth={1279}>
                         {/* Mobile Vertical Card View */}
-                        <div className="xl:hidden space-y-3 p-3">
+                        <div className="space-y-4">
                           {weekDays.map((day) => { const dayName = format(day, "EEE") as DayName;
                             return (
-                              <div key={dayName} className="border border-gray-200 rounded-lg p-3 bg-white">
+                              <div key={dayName} className="border border-gray-200 rounded-2xl p-4 bg-white overflow-hidden">
                                 {/* Day Header */}
                                 <div className="flex items-center justify-between mb-3">
                                   <div>
                                     <p className="text-sm font-semibold">{format(day, "EEE")}</p>
-                                    <p className="text-xs text-slate-500">{format(day, "dd MMM yyyy")}</p>
+                                    <p className="text-sm text-slate-500">{format(day, "dd MMM yyyy")}</p>
                                   </div>
                                   <label className={`inline-flex items-center ${ isPastSlot(day) ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}>
                                     <input type="checkbox" checked={!isDateDisabled(day, dayName) && !isPastSlot(day)} disabled={isPastSlot(day)} onChange={() => !isPastSlot(day) && toggleDateAvailability(day, dayName)} className="sr-only" />
@@ -1277,7 +1498,7 @@ export default function Availability() {
                                 </div>
 
                                 {/* Time Slots Grid */}
-                                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
+                                <div className="grid max-[425px]:grid-cols-2 grid-cols-3 sm:grid-cols-4 md:grid-cols-4 gap-2">
                                   {hours.map((h) => {
                                     const active = isTimeSlotActive(dayName, h, day);
                                     const isPast = isPastTimeSlot(day, h);
@@ -1285,21 +1506,21 @@ export default function Availability() {
                                     return (
                                       <div
                                         key={h}
-                                        className={`p-2 rounded-lg text-center text-xs border-2 transition
+                                        className={`p-2 rounded-lg text-center text-sm border-1 transition
                                           ${
                                             isPast || isBooked
                                               ? isBooked 
                                                 ? "bg-red-200 border-red-400 text-red-700 cursor-not-allowed"
                                                 : "bg-slate-200 border-slate-400 text-slate-500 cursor-not-allowed"
                                               : active
-                                              ? "bg-indigo-600/20 border-indigo-600 text-indigo-600 font-medium cursor-pointer hover:opacity-80"
+                                              ? "bg-indigo-50 border-indigo-600 text-indigo-600 cursor-pointer hover:opacity-80"
                                               : "bg-gray-100 border-gray-200 text-slate-500 cursor-pointer hover:opacity-80"
                                           }
                                         `}
                                         onClick={() => { if (!isPast && !isBooked) toggleTimeSlot(dayName, h, day); }}
                                       >
-                                        <div>{formatHour(h)}</div>
-                                        <div className="text-[10px] leading-tight mt-1">
+                                        <div className="font-medium">{formatHour(h)}</div>
+                                        <div className="leading-tight mt-1">
                                           {isBooked ? "Booked" : isPast ? "Past" : active ? "Available" : "Unavailable"}
                                         </div>
                                       </div>
@@ -1310,6 +1531,7 @@ export default function Availability() {
                             );
                           })}
                         </div>
+                        </ScreenGate>
                       </>
                     )}
 
@@ -1382,7 +1604,7 @@ export default function Availability() {
                             </div>
 
                             {/* Time Slots Grid */}
-                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                            <div className="grid max-[425px]:grid-cols-2 grid-cols-3 sm:grid-cols-4 md:grid-cols-4 gap-2">
                               {hours.map((h) => {
                                 const active = isTimeSlotActive(dayName, h, currentDate);
                                 const isPast = isPastTimeSlot(currentDate, h);
@@ -1390,7 +1612,7 @@ export default function Availability() {
                                 return (
                                   <div
                                     key={h}
-                                    className={`p-3 rounded-lg text-center border-2 transition
+                                    className={`p-2 rounded-lg text-center text-xs border-1 transition
                                       ${
                                         isPast || isBooked
                                           ? isBooked
@@ -1405,8 +1627,8 @@ export default function Availability() {
                                       if (!isPast && !isBooked) toggleTimeSlot(dayName, h, currentDate);
                                     }}
                                   >
-                                    <div className="text-base font-medium">{formatHour(h)}</div>
-                                    <div className="text-[10px] mt-1">
+                                    <div>{formatHour(h)}</div>
+                                    <div className="leading-tight mt-1">
                                       {isBooked ? "Booked" : isPast ? "Past" : active ? "Available" : "Unavailable"}
                                     </div>
                                   </div>
@@ -1422,11 +1644,6 @@ export default function Availability() {
               )}
 
               {/* Save Message */}
-              {saveMessage && (
-                <div className={`p-3 rounded-lg text-sm font-medium ${ saveMessage.type === 'success'  ? 'bg-green-50 text-green-700 border  border-green-200' : 'bg-red-50 text-red-700 border border-red-200'}`}>
-                  {saveMessage.text}
-                </div>
-              )}
 
               {/* Footer Buttons */}
               <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-2">
@@ -1446,6 +1663,15 @@ export default function Availability() {
           isServiceProviderUser && currentUserId ? currentUserId : ""
         }
         lockProviderScope={isServiceProviderUser}
+      />
+
+      <EditBookingRulesPanel
+        open={bookingRulesPanelOpen}
+        target={bookingRulesEditTarget}
+        rules={bookingRules}
+        onClose={closeBookingRulesPanel}
+        onSaveGlobal={handleSaveGlobalBookingRules}
+        onSaveEventType={handleSaveEventTypeOverride}
       />
 
       {exceptionPendingDelete ? (

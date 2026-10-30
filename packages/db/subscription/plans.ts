@@ -1,4 +1,10 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { normalizeBookingLimitPeriod } from './booking_limit';
+import {
+  CLAIM_FREE_PLAN_SLUG,
+  getSelfServeRegistrationPlanSlug,
+  type workspace_signup_type,
+} from './claim_free';
 import type { plans, workspace_plan_snapshot, workspace_subscriptions } from './types';
 
 const FREE_PLAN_SLUG = 'free';
@@ -10,6 +16,8 @@ export function rowToPlan(row: Record<string, unknown>): plans {
     slug: String(row.slug),
     price: Number(row.price),
     booking_limit: Number(row.booking_limit),
+    booking_limit_period: normalizeBookingLimitPeriod(row.booking_limit_period),
+    user_limit: Number(row.user_limit ?? -1),
     workspace_limit: Number(row.workspace_limit),
     admin_limit: Number(row.admin_limit),
     service_provider_limit: Number(row.service_provider_limit),
@@ -67,7 +75,7 @@ export async function getActiveWorkspaceSubscription(
 ): Promise<workspace_plan_snapshot | null> {
   const { data: subRow, error: subError } = await supabase
     .from('workspace_subscriptions')
-    .select('*')
+    .select('*, plans(*)')
     .eq('workspace_id', workspaceId)
     .eq('status', 'active')
     .maybeSingle();
@@ -75,19 +83,33 @@ export async function getActiveWorkspaceSubscription(
   if (subError) throw new Error(subError.message);
   if (!subRow) return null;
 
-  const subscription = rowToSubscription(subRow as Record<string, unknown>);
-  const { data: planRow, error: planError } = await supabase
+  const row = subRow as Record<string, unknown>;
+  const subscription = rowToSubscription(row);
+  const nestedPlan = row.plans;
+  const planRow =
+    nestedPlan && typeof nestedPlan === 'object' && !Array.isArray(nestedPlan)
+      ? (nestedPlan as Record<string, unknown>)
+      : null;
+
+  if (planRow) {
+    return {
+      subscription,
+      plan: rowToPlan(planRow),
+    };
+  }
+
+  const { data: planRowFallback, error: planError } = await supabase
     .from('plans')
     .select('*')
     .eq('id', subscription.plan_id)
     .maybeSingle();
 
   if (planError) throw new Error(planError.message);
-  if (!planRow) return null;
+  if (!planRowFallback) return null;
 
   return {
     subscription,
-    plan: rowToPlan(planRow as Record<string, unknown>),
+    plan: rowToPlan(planRowFallback as Record<string, unknown>),
   };
 }
 
@@ -121,16 +143,17 @@ export async function getWorkspacePlanSnapshot(
   };
 }
 
-export async function assignFreePlanToWorkspace(
+export async function assignPlanToWorkspaceBySlug(
   supabaseAdmin: SupabaseClient,
-  workspaceId: number
+  workspaceId: number,
+  planSlug: string
 ): Promise<workspace_plan_snapshot> {
   const existing = await getActiveWorkspaceSubscription(supabaseAdmin, workspaceId);
   if (existing) return existing;
 
-  const freePlan = await getPlanBySlug(supabaseAdmin, FREE_PLAN_SLUG);
-  if (!freePlan) {
-    throw new Error('Free plan is not configured');
+  const plan = await getPlanBySlug(supabaseAdmin, planSlug);
+  if (!plan) {
+    throw new Error(`Plan is not configured: ${planSlug}`);
   }
 
   const now = new Date().toISOString();
@@ -138,7 +161,7 @@ export async function assignFreePlanToWorkspace(
     .from('workspace_subscriptions')
     .insert({
       workspace_id: workspaceId,
-      plan_id: freePlan.id,
+      plan_id: plan.id,
       status: 'active',
       started_at: now,
       updated_at: now,
@@ -155,9 +178,29 @@ export async function assignFreePlanToWorkspace(
   }
 
   return {
-    plan: freePlan,
+    plan,
     subscription: rowToSubscription(data as Record<string, unknown>),
   };
+}
+
+/** @deprecated Use assignInitialPlanToWorkspace */
+export async function assignFreePlanToWorkspace(
+  supabaseAdmin: SupabaseClient,
+  workspaceId: number
+): Promise<workspace_plan_snapshot> {
+  return assignPlanToWorkspaceBySlug(supabaseAdmin, workspaceId, FREE_PLAN_SLUG);
+}
+
+export async function assignInitialPlanToWorkspace(
+  supabaseAdmin: SupabaseClient,
+  workspaceId: number,
+  signupType: workspace_signup_type
+): Promise<workspace_plan_snapshot> {
+  const slug =
+    signupType === 'free_claimed'
+      ? CLAIM_FREE_PLAN_SLUG
+      : getSelfServeRegistrationPlanSlug();
+  return assignPlanToWorkspaceBySlug(supabaseAdmin, workspaceId, slug);
 }
 
 export async function listActivePlans(supabase: SupabaseClient): Promise<plans[]> {

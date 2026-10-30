@@ -1,6 +1,8 @@
 'use client';
 
+import { authFetch } from '@/src/lib/auth_session';
 import { useEffect, useMemo, useState } from 'react';
+import { useAuth } from '@/src/providers/AuthProvider';
 import { get_dashboard_week_days } from '@/src/utils/dashboard_week';
 import type { dashboard_summary } from '@/src/types/dashboard_summary';
 
@@ -41,6 +43,7 @@ const EMPTY_TRENDS: DashboardTrends = {
 };
 
 export function useDashboardCounts(user: { id?: string } | null) {
+  const { accessToken } = useAuth();
   const [state, setState] = useState<{
     counts: DashboardCounts;
     loading: boolean;
@@ -72,7 +75,7 @@ export function useDashboardCounts(user: { id?: string } | null) {
   useEffect(() => {
     const { week_days_param, week_day_labels } = weekSlice;
 
-    if (!userId) {
+    if (!userId || !accessToken) {
       setState({
         counts: INITIAL_COUNTS,
         loading: false,
@@ -89,12 +92,7 @@ export function useDashboardCounts(user: { id?: string } | null) {
 
     const run = async () => {
       try {
-        const { supabase } = await import('@/lib/supabaseClient');
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
-
-        if (!session?.access_token || ac.signal.aborted) {
+        if (!accessToken || ac.signal.aborted) {
           if (!ac.signal.aborted) {
             setState({
               counts: INITIAL_COUNTS,
@@ -110,8 +108,7 @@ export function useDashboardCounts(user: { id?: string } | null) {
         }
 
         const qs = new URLSearchParams({ week_days: week_days_param });
-        const res = await fetch(`/api/dashboard/summary?${qs.toString()}`, {
-          headers: { Authorization: `Bearer ${session.access_token}` },
+        const res = await authFetch(`/api/dashboard/summary?${qs.toString()}`, {
           signal: ac.signal,
         });
 
@@ -186,7 +183,7 @@ export function useDashboardCounts(user: { id?: string } | null) {
 
     run();
     return () => ac.abort();
-  }, [userId, weekSlice]);
+  }, [userId, accessToken, weekSlice]);
 
   return {
     counts: state.counts,

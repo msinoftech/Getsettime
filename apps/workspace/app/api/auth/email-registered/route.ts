@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { isAuthEmailRegistered } from '@/lib/auth-user-lookup';
 
 /**
  * Returns whether an email is registered in Supabase Auth.
@@ -28,10 +29,9 @@ export async function POST(req: Request) {
       auth: { autoRefreshToken: false, persistSession: false },
     });
 
-    const { data: listData } = await supabaseAdmin.auth.admin.listUsers({ perPage: 1000, page: 1 });
-    const found = listData?.users?.some((u) => u.email?.toLowerCase() === email.toLowerCase()) ?? false;
+    const registered = await isAuthEmailRegistered(supabaseAdmin, email);
 
-    return NextResponse.json({ registered: found });
+    return NextResponse.json({ registered });
   } catch (err: unknown) {
     console.error('email-registered error:', err);
     return NextResponse.json(

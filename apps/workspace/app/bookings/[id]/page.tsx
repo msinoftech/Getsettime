@@ -1,5 +1,6 @@
 'use client';
 
+import { getWorkspaceSession } from '@/src/lib/auth_session';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
@@ -19,7 +20,7 @@ import {
 } from '@/src/hooks/useBookingLookups';
 import { normalizeIntakeForm } from '@/src/utils/intakeForm';
 import { BookingDetailsWithActions } from '@/src/components/Booking/BookingDetailsWithActions';
-import { AlertModal } from '@/src/components/ui/AlertModal';
+import { toast } from '@/src/components/ui/toast';
 import { ConfirmModal } from '@/src/components/ui/ConfirmModal';
 import type { Booking } from '@/src/types/booking';
 
@@ -58,7 +59,6 @@ export default function BookingDetailsPage() {
   const [inline_save_pending, set_inline_save_pending] = useState(false);
   const [delete_confirm_open, set_delete_confirm_open] = useState(false);
   const [deleting, set_deleting] = useState(false);
-  const [alert_message, set_alert_message] = useState<string | null>(null);
 
   const { open: open_create_booking } = useCreateBookingModal();
   const { settings } = useWorkspaceSettings();
@@ -95,7 +95,7 @@ export default function BookingDetailsPage() {
     }
     set_fetch_state({ status: 'loading' });
 
-    const { data: { session } } = await supabase.auth.getSession();
+    const { session } = await getWorkspaceSession();
     if (!session?.access_token) {
       set_fetch_state({ status: 'error', message: 'Not authenticated' });
       return;
@@ -149,22 +149,41 @@ export default function BookingDetailsPage() {
     }
   }, [toolbar_edit_session, is_inline_editing, inline_save_pending]);
 
-  const is_booking_cancelled =
+  const booking_status_normalized =
+    fetch_state.status === 'ready'
+      ? (fetch_state.booking.status || '').trim().toLowerCase()
+      : '';
+  const is_booking_cancelled = booking_status_normalized === 'cancelled';
+  const is_booking_completed = booking_status_normalized === 'completed';
+  const is_booking_past =
     fetch_state.status === 'ready' &&
-    (fetch_state.booking.status || '').trim().toLowerCase() === 'cancelled';
+    (() => {
+      const start_at = fetch_state.booking.start_at;
+      if (!start_at) return false;
+      const start = new Date(start_at);
+      if (Number.isNaN(start.getTime())) return false;
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const booking_day = new Date(start);
+      booking_day.setHours(0, 0, 0, 0);
+      return booking_day.getTime() < today.getTime();
+    })();
+  /** Past / completed / cancelled bookings stay locked; follow-up remains available. */
+  const is_booking_read_only =
+    is_booking_cancelled || is_booking_completed || is_booking_past;
 
   const show_toolbar_save =
-    !is_booking_cancelled &&
+    !is_booking_read_only &&
     toolbar_edit_session &&
     (is_inline_editing || inline_save_pending);
 
   const handle_delete_confirm = useCallback(async () => {
     if (fetch_state.status !== 'ready') return;
 
-    const { data: { session } } = await supabase.auth.getSession();
+    const { session } = await getWorkspaceSession();
     if (!session?.access_token) {
       set_delete_confirm_open(false);
-      set_alert_message('Not authenticated');
+      toast.error('Not authenticated');
       return;
     }
 
@@ -180,26 +199,27 @@ export default function BookingDetailsPage() {
 
       if (response.ok) {
         set_delete_confirm_open(false);
+        toast.success('Booking deleted successfully.');
         router.push('/bookings');
         return;
       }
 
       const error_data = await response.json().catch(() => null);
       set_delete_confirm_open(false);
-      set_alert_message(error_data?.error || 'Failed to delete booking');
+      toast.error(error_data?.error || 'Failed to delete booking');
     } catch (error) {
       console.error('Error deleting booking:', error);
       set_delete_confirm_open(false);
-      set_alert_message('An error occurred while deleting the booking');
+      toast.error('An error occurred while deleting the booking');
     } finally {
       set_deleting(false);
     }
   }, [fetch_state, router]);
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-indigo-50/40 p-4 md:p-6">
+    <div className="relative">
       <div className="mx-auto w-full max-w-7xl space-y-5">
-        <div className="flex items-center justify-between gap-3 print:hidden">
+        <div className="flex items-center flex-wrap justify-between gap-3 print:hidden">
           <div className="flex flex-wrap items-center gap-2 sm:gap-3">
             <Link
               href="/bookings"
@@ -230,17 +250,17 @@ export default function BookingDetailsPage() {
             </Link>
           </div>
           <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-            <button
+            {/* <button
               type="button"
               onClick={open_create_booking}
               className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-3 py-2 text-sm font-semibold text-white shadow-md shadow-indigo-500/20 transition hover:from-indigo-700 hover:to-violet-700"
             >
               <Plus className="h-4 w-4" aria-hidden />
               Add New Booking
-            </button>
+            </button> */}
             {fetch_state.status === 'ready' && (
               <>
-                {!is_booking_cancelled && !show_toolbar_save && (
+                {!is_booking_read_only && !show_toolbar_save && (
                   <button
                     type="button"
                     onClick={() => {
@@ -356,12 +376,6 @@ export default function BookingDetailsPage() {
         />
       )}
 
-      {alert_message && (
-        <AlertModal
-          message={alert_message}
-          onClose={() => set_alert_message(null)}
-        />
-      )}
     </div>
   );
 }

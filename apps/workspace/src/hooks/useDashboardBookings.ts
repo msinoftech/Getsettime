@@ -1,6 +1,8 @@
 'use client';
 
+import { authFetch } from '@/src/lib/auth_session';
 import { useEffect, useState } from 'react';
+import { useAuth } from '@/src/providers/AuthProvider';
 import { toDateKey } from '@/src/components/Calendar/calendar_utils';
 import { get_dashboard_week_days } from '@/src/utils/dashboard_week';
 import type { Booking } from '@/src/types/booking';
@@ -23,6 +25,7 @@ export function useDashboardBookings(
   view_date: Date,
   refresh_key = 0,
 ) {
+  const { accessToken } = useAuth();
   const [state, setState] = useState<dashboard_bookings_state>({
     today_bookings: [],
     today_loading: true,
@@ -39,7 +42,7 @@ export function useDashboardBookings(
   const user_id = user?.id ?? null;
 
   useEffect(() => {
-    if (!user_id) {
+    if (!user_id || !accessToken) {
       setState({
         today_bookings: [],
         today_loading: false,
@@ -68,12 +71,7 @@ export function useDashboardBookings(
       }));
 
       try {
-        const { supabase } = await import('@/lib/supabaseClient');
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
-
-        if (!session?.access_token || ac.signal.aborted) {
+        if (!accessToken || ac.signal.aborted) {
           if (!ac.signal.aborted) {
             setState({
               today_bookings: [],
@@ -91,7 +89,6 @@ export function useDashboardBookings(
           return;
         }
 
-        const auth_header = { Authorization: `Bearer ${session.access_token}` };
         const today_key = toDateKey(new Date());
 
         const week_days = get_dashboard_week_days();
@@ -108,28 +105,13 @@ export function useDashboardBookings(
         });
 
         const [today_res, next_res, upcoming_res, week_res, month_res] = await Promise.all([
-          fetch(
-            `/api/bookings?date=${today_key}&limit=150`,
-            { headers: auth_header, signal: ac.signal },
-          ),
-          fetch('/api/bookings?sort=upcoming&limit=1', {
-            headers: auth_header,
-            signal: ac.signal,
-          }),
+          authFetch(`/api/bookings?date=${today_key}&limit=150`, { signal: ac.signal }),
+          authFetch('/api/bookings?sort=upcoming&limit=1', { signal: ac.signal }),
           // Range-independent: next future appointments across all dates.
           // Fetch extra so inactive (cancelled/etc.) rows can be filtered client-side.
-          fetch('/api/bookings?sort=upcoming&limit=10', {
-            headers: auth_header,
-            signal: ac.signal,
-          }),
-          fetch(`/api/bookings?${week_params.toString()}&limit=500`, {
-            headers: auth_header,
-            signal: ac.signal,
-          }),
-          fetch(`/api/bookings?${range_params.toString()}`, {
-            headers: auth_header,
-            signal: ac.signal,
-          }),
+          authFetch('/api/bookings?sort=upcoming&limit=10', { signal: ac.signal }),
+          authFetch(`/api/bookings?${week_params.toString()}&limit=500`, { signal: ac.signal }),
+          authFetch(`/api/bookings?${range_params.toString()}`, { signal: ac.signal }),
         ]);
 
         if (ac.signal.aborted) return;
@@ -190,7 +172,7 @@ export function useDashboardBookings(
 
     run();
     return () => ac.abort();
-  }, [user_id, view_date, refresh_key]);
+  }, [user_id, accessToken, view_date, refresh_key]);
 
   return state;
 }

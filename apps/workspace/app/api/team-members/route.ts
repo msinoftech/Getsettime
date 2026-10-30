@@ -16,6 +16,7 @@ import {
   ROLE_WORKSPACE_ADMIN,
   SERVICE_PROVIDER_ASSIGNABLE_ADDITIONAL_ROLES,
 } from '@/src/constants/roles';
+import { resolveAvatarUrlFromMetadata } from '@app/db/user-avatar';
 
 /**
  * Authorized to manage team members if user is a workspace owner (regardless
@@ -226,6 +227,9 @@ export async function GET(req: NextRequest) {
           typeof specialtyRaw === 'string' && specialtyRaw.trim() !== ''
             ? specialtyRaw.trim()
             : null;
+        const bioRaw = meta?.bio;
+        const bio =
+          typeof bioRaw === 'string' && bioRaw.trim() !== '' ? bioRaw.trim() : null;
         return {
           id: u.id,
           email: u.email,
@@ -233,16 +237,12 @@ export async function GET(req: NextRequest) {
           education,
           experience,
           specialty,
+          bio,
           role: u.user_metadata?.role || null,
           additional_roles,
           departments: deptIds,
           phone,
-          avatar_url:
-            typeof meta?.avatar_url === 'string' && meta.avatar_url.trim() !== ''
-              ? meta.avatar_url.trim()
-              : typeof meta?.picture === 'string' && meta.picture.trim() !== ''
-                ? meta.picture.trim()
-                : null,
+          avatar_url: resolveAvatarUrlFromMetadata(meta),
           created_at: u.created_at,
           email_confirmed_at: u.email_confirmed_at,
           deactivated: u.user_metadata?.deactivated || false,
@@ -367,8 +367,19 @@ export async function POST(req: NextRequest) {
     if (assignedRole === 'service_provider') {
       try {
         const { assertServiceProviderAllowed } = await import('@app/db/subscription');
-        const { planLimitErrorResponse } = await import('@/lib/plan-limit-response');
         await assertServiceProviderAllowed(adminClient, Number(workspaceId), 1);
+      } catch (planErr) {
+        const { planLimitErrorResponse } = await import('@/lib/plan-limit-response');
+        const planResp = planLimitErrorResponse(planErr);
+        if (planResp) return planResp;
+        throw planErr;
+      }
+    }
+
+    if (assignedRole === ROLE_WORKSPACE_ADMIN) {
+      try {
+        const { assertWorkspaceAdminAllowed } = await import('@app/db/subscription');
+        await assertWorkspaceAdminAllowed(adminClient, Number(workspaceId), 1);
       } catch (planErr) {
         const { planLimitErrorResponse } = await import('@/lib/plan-limit-response');
         const planResp = planLimitErrorResponse(planErr);
@@ -676,6 +687,28 @@ export async function PUT(req: NextRequest) {
       try {
         const { assertServiceProviderAllowed } = await import('@app/db/subscription');
         await assertServiceProviderAllowed(adminClient, Number(workspaceId), 1);
+      } catch (planErr) {
+        const { planLimitErrorResponse } = await import('@/lib/plan-limit-response');
+        const planResp = planLimitErrorResponse(planErr);
+        if (planResp) return planResp;
+        throw planErr;
+      }
+    }
+
+    const { userHasWorkspaceAdminAccess } = await import('@app/db/subscription');
+    const hadWorkspaceAdminAccess = userHasWorkspaceAdminAccess(
+      existingUser.user_metadata as Record<string, unknown> | undefined
+    );
+    const willHaveWorkspaceAdminAccess = userHasWorkspaceAdminAccess({
+      ...(existingUser.user_metadata as Record<string, unknown>),
+      role: finalPrimaryRole,
+      additional_roles: finalAdditionalRoles,
+    });
+
+    if (!hadWorkspaceAdminAccess && willHaveWorkspaceAdminAccess) {
+      try {
+        const { assertWorkspaceAdminAllowed } = await import('@app/db/subscription');
+        await assertWorkspaceAdminAllowed(adminClient, Number(workspaceId), 1);
       } catch (planErr) {
         const { planLimitErrorResponse } = await import('@/lib/plan-limit-response');
         const planResp = planLimitErrorResponse(planErr);

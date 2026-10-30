@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "@/src/providers/AuthProvider";
 import { useSubscription } from "@/src/hooks/useSubscription";
-import { formatBookingLimitLabel } from "@app/db/subscription";
+import { formatBookingLimitFeature } from "@app/db/subscription";
 import { DashboardUpgradeModal } from "./DashboardUpgradeModal";
 
 function dismissKey(workspaceId: number) {
@@ -54,7 +54,7 @@ export function FreePlanWelcomeBanner() {
             You are currently on the <strong>Free Plan</strong>.
           </p>
           <ul className="mt-3 grid gap-1 text-sm text-slate-700 sm:grid-cols-2">
-            <li>✔ {formatBookingLimitLabel(data.plan.booking_limit)} bookings/month</li>
+            <li>✔ {formatBookingLimitFeature(data.plan.booking_limit, data.plan.booking_limit_period)}</li>
             <li>✔ {data.plan.admin_limit} Admin</li>
             <li>✔ Up to {data.plan.service_provider_limit} Service Providers</li>
             <li>✔ Google Calendar Sync</li>
@@ -102,7 +102,7 @@ export function FreePlanWelcomeBanner() {
       <DashboardUpgradeModal
         open={show_upgrade_modal}
         onClose={() => set_show_upgrade_modal(false)}
-        usedBookings={data.usage.bookings_this_month}
+        usedBookings={data.usage.bookings_used}
         bookingLimit={data.usage.booking_limit}
       />
     </div>

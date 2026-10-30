@@ -1,18 +1,29 @@
 import { NextResponse } from 'next/server';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import {
+  ClaimCodeError,
+  consumeClaimCode,
+  isEmailClaimIneligible,
+  validateClaimCodeForSignup,
+} from '@app/db/subscription';
+import { findAuthUserByEmail } from '@/lib/auth-user-lookup';
 import { sendConfirmationEmail } from '@/lib/email-service';
 
 function normalize_auth_email(raw: unknown): string {
   return typeof raw === 'string' ? raw.trim().toLowerCase() : '';
 }
 
-function signup_user_metadata(name: string) {
+function signup_user_metadata(
+  name: string,
+  extras?: Record<string, unknown>
+) {
   return {
     name,
     role: 'workspace_admin' as const,
     signup_method: 'password',
     onboarding_completed: false,
     onboarding_last_completed_step: 0,
+    ...extras,
   };
 }
 
@@ -72,8 +83,12 @@ async function send_magiclink_confirmation(params: {
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { email: rawEmail, password, name } = body;
+    const { email: rawEmail, password, name, claim_code: rawClaimCode } = body;
     const normalizedEmail = normalize_auth_email(rawEmail);
+    const claimCode =
+      typeof rawClaimCode === 'string' && rawClaimCode.trim()
+        ? rawClaimCode.trim()
+        : null;
 
     if (!normalizedEmail || !password || typeof name !== 'string' || !name.trim()) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
@@ -102,11 +117,23 @@ export async function POST(req: Request) {
       auth: { autoRefreshToken: false, persistSession: false },
     });
 
-    const displayName = name.trim();
-    const meta = signup_user_metadata(displayName);
+    if (claimCode) {
+      const validation = await validateClaimCodeForSignup(supabaseAdmin, claimCode);
+      if (!validation.valid) {
+        return NextResponse.json({ error: validation.message }, { status: 400 });
+      }
+      if (await isEmailClaimIneligible(supabaseAdmin, normalizedEmail)) {
+        return NextResponse.json(
+          { error: 'Your claim is not valid.' },
+          { status: 400 }
+        );
+      }
+    }
 
-    const { data: listData } = await supabaseAdmin.auth.admin.listUsers({ perPage: 1000, page: 1 });
-    const existingUser = listData?.users?.find((u) => u.email?.toLowerCase() === normalizedEmail);
+    const displayName = name.trim();
+    let claimExtras: Record<string, unknown> = {};
+
+    const existingUser = await findAuthUserByEmail(supabaseAdmin, normalizedEmail);
 
     if (existingUser?.email_confirmed_at) {
       return NextResponse.json(
@@ -116,7 +143,27 @@ export async function POST(req: Request) {
     }
 
     if (existingUser && !existingUser.email_confirmed_at) {
-      const existingMeta = (existingUser.user_metadata as Record<string, unknown> | undefined) ?? {};
+      if (claimCode) {
+        try {
+          const claimedCodeId = await consumeClaimCode(
+            supabaseAdmin,
+            claimCode,
+            existingUser.id,
+            normalizedEmail
+          );
+          claimExtras = {
+            claim_code: claimCode,
+            claimed_code_id: claimedCodeId,
+            signup_type: 'free_claimed',
+          };
+        } catch (err) {
+          const message =
+            err instanceof ClaimCodeError ? err.message : 'Your claim is not valid.';
+          return NextResponse.json({ error: message }, { status: 400 });
+        }
+      }
+      const existingMeta = existingUser.user_metadata ?? {};
+      const meta = signup_user_metadata(displayName, claimExtras);
       const { error: updateError } = await supabaseAdmin.auth.admin.updateUserById(existingUser.id, {
         password,
         user_metadata: { ...existingMeta, ...meta },
@@ -154,7 +201,7 @@ export async function POST(req: Request) {
       email: normalizedEmail,
       password,
       email_confirm: false,
-      user_metadata: meta,
+      user_metadata: signup_user_metadata(displayName),
     });
 
     if (createError) {
@@ -167,6 +214,39 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: 'This email is already registered. Please login instead.' }, { status: 409 });
       }
       return NextResponse.json({ error: msg || 'Failed to create user. Please try again.' }, { status: 400 });
+    }
+
+    const newUserId = createData.user?.id;
+    if (!newUserId) {
+      return NextResponse.json({ error: 'Failed to create user.' }, { status: 500 });
+    }
+
+    if (claimCode) {
+      try {
+        const claimedCodeId = await consumeClaimCode(
+          supabaseAdmin,
+          claimCode,
+          newUserId,
+          normalizedEmail
+        );
+        claimExtras = {
+          claim_code: claimCode,
+          claimed_code_id: claimedCodeId,
+          signup_type: 'free_claimed',
+        };
+      } catch (err) {
+        await supabaseAdmin.auth.admin.deleteUser(newUserId);
+        const message =
+          err instanceof ClaimCodeError ? err.message : 'Your claim is not valid.';
+        return NextResponse.json({ error: message }, { status: 400 });
+      }
+
+      const { error: metaErr } = await supabaseAdmin.auth.admin.updateUserById(newUserId, {
+        user_metadata: signup_user_metadata(displayName, claimExtras),
+      });
+      if (metaErr) {
+        console.error('Failed to attach claim metadata', metaErr);
+      }
     }
 
     const sent = await send_magiclink_confirmation({

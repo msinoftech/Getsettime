@@ -1,25 +1,41 @@
 "use client";
 
+import { getWorkspaceSession } from '@/src/lib/auth_session';
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
+import { toast } from "@/src/components/ui/toast";
 import { supabase } from "@/lib/supabaseClient";
 import { useAuth } from "@/src/providers/AuthProvider";
 import { EventTypeSkeleton } from "@/src/components/ui/EventTypeSkeleton";
 import {
   EventTypeFormLayout,
+  empty_form_recurrence,
+  from_form_recurrence,
   parse_location_types_from_storage,
   serialize_location_types,
   split_duration_minutes,
+  to_form_recurrence,
   total_duration_minutes,
   type event_type_form_state,
   type event_type_service_provider_option,
 } from "@/src/features/event-types/EventTypeFormLayout";
 import {
+  default_booking_options_form_fields,
+  parse_boolean_flag,
+} from "@/src/features/event-types/event_type_booking_options";
+import {
   check_event_type_slug_available,
+  normalize_event_type_slug_input,
   parse_short_description_from_settings,
   validate_event_type_slug_input,
 } from "@/src/features/event-types/event_type_slug";
 import { parse_event_type_status } from "@/src/features/event-types/event_type_status";
+import {
+  default_capacity_for_event_type_format,
+  parse_event_type_format,
+} from "@/src/features/event-types/event_type_format";
+import { parse_event_type_availability_mode } from "@/src/features/event-types/event_type_availability";
+import type { event_type_availability_mode, event_type_format } from "@/src/types/event_types";
 import {
   ROLE_MANAGER,
   ROLE_SERVICE_PROVIDER,
@@ -30,19 +46,36 @@ import {
   userActsAsServiceProviderFromSupabaseUser,
 } from "@/lib/service_provider_role";
 import { useServiceProviders } from "@/src/hooks/useBookingLookups";
+import { useWorkspaceSettings } from "@/src/hooks/useWorkspaceSettings";
 import {
   capitalize_booking_display_label,
   getServiceProviderName,
 } from "@/src/utils/booking";
-
+import { get_public_booking_origin } from "@/src/utils/public_booking_link";
+import { format_timezone_display_label } from "@/lib/date-timezone";
 type event_type_record = {
   id: number;
   title: string;
   slug: string | null;
+  internal_label?: string | null;
+  event_type_format?: event_type_format | string | null;
+  capacity_per_slot?: number | null;
+  availability_mode?: event_type_availability_mode | string | null;
+  recurrence?: unknown;
+  allow_waitlist?: boolean | null;
+  waitlist_capacity?: number | null;
+  show_seats_remaining?: boolean | null;
+  min_booking_notice_minutes?: number | null;
+  max_booking_window_days?: number | null;
+  allow_reschedule?: boolean | null;
+  allow_cancellation?: boolean | null;
   duration_minutes: number | null;
   buffer_before: number | null;
   buffer_after: number | null;
   location_type: string | null;
+  department_id?: number | null;
+  service_id?: string | null;
+  service_provider_ids?: string[] | null;
   is_public: boolean | null;
   status?: string | null;
   owner_id?: string | null;
@@ -60,6 +93,8 @@ type EventTypeEditFormProps = {
   embedded?: boolean;
   variant?: "page" | "panel";
   onClose?: () => void;
+  /** Panel save: show success on the list page and close the sidebar. */
+  onSaved?: (message: string) => void;
 };
 
 export function EventTypeEditForm({
@@ -67,9 +102,11 @@ export function EventTypeEditForm({
   embedded = false,
   variant = "page",
   onClose,
+  onSaved,
 }: EventTypeEditFormProps) {
   const router = useRouter();
   const { user } = useAuth();
+  const { general, workspaceSlug: cached_workspace_slug } = useWorkspaceSettings();
   const user_role =
     typeof user?.user_metadata?.role === "string" ? user.user_metadata.role : "";
   const can_assign_event_type_owner =
@@ -79,7 +116,13 @@ export function EventTypeEditForm({
   const [form, setForm] = useState<event_type_form_state>({
     title: "",
     slug: "",
+    internal_label: "",
     short_description: "",
+    event_type_format: "one_on_one",
+    capacity_per_slot: "1",
+    availability_mode: "provider",
+    recurrence: empty_form_recurrence(),
+    ...default_booking_options_form_fields(),
     duration_hours: "",
     duration_minutes_part: "",
     buffer_before: "",
@@ -88,10 +131,12 @@ export function EventTypeEditForm({
     is_public: false,
     status: "active",
     service_provider_id: "",
+    service_provider_ids: [],
+    department_id: "",
+    service_id: "",
   });
   const [formError, setFormError] = useState<string | null>(null);
   const [slug_error, set_slug_error] = useState<string | null>(null);
-  const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [serviceProviderOwnerIds, setServiceProviderOwnerIds] = useState<Set<string>>(
     () => new Set()
@@ -128,8 +173,19 @@ export function EventTypeEditForm({
   const event_type_self_assign_option = useMemo(() => {
     if (logged_in_user_acts_as_service_provider) return null;
     if (!logged_in_user_display_name) return null;
-    return { label: logged_in_user_display_name };
-  }, [logged_in_user_acts_as_service_provider, logged_in_user_display_name]);
+    const meta = user?.user_metadata as Record<string, unknown> | undefined;
+    const avatar_url =
+      typeof meta?.avatar_url === "string" && meta.avatar_url.trim() !== ""
+        ? meta.avatar_url.trim()
+        : serviceProviders.find((provider) => provider.id === user?.id)?.avatar_url?.trim() ||
+          null;
+    return { label: logged_in_user_display_name, avatar_url };
+  }, [
+    logged_in_user_acts_as_service_provider,
+    logged_in_user_display_name,
+    serviceProviders,
+    user,
+  ]);
 
   useEffect(() => {
     if (!user) return;
@@ -139,9 +195,7 @@ export function EventTypeEditForm({
     const load_event_type = async () => {
       set_load_state({ status: "loading" });
       try {
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
+        const { session } = await getWorkspaceSession();
         if (!session?.access_token || cancelled) {
           if (!cancelled) {
             set_load_state({ status: "error", message: "Not authenticated" });
@@ -184,10 +238,52 @@ export function EventTypeEditForm({
         );
 
         if (!cancelled) {
+          const format = parse_event_type_format(item.event_type_format);
+          const capacity =
+            format === "group_class" &&
+            typeof item.capacity_per_slot === "number" &&
+            Number.isFinite(item.capacity_per_slot) &&
+            item.capacity_per_slot >= 1
+              ? String(Math.trunc(item.capacity_per_slot))
+              : String(default_capacity_for_event_type_format(format));
+
           setForm({
             title: item.title,
             slug: item.slug ?? "",
+            internal_label: item.internal_label ?? "",
             short_description: parse_short_description_from_settings(item.settings),
+            event_type_format: format,
+            capacity_per_slot: capacity,
+            availability_mode: parse_event_type_availability_mode(
+              item.availability_mode
+            ),
+            recurrence: to_form_recurrence(item.recurrence),
+            allow_waitlist: parse_boolean_flag(item.allow_waitlist, true),
+            waitlist_capacity:
+              typeof item.waitlist_capacity === "number" &&
+              Number.isFinite(item.waitlist_capacity) &&
+              item.waitlist_capacity >= 0
+                ? String(Math.trunc(item.waitlist_capacity))
+                : "",
+            show_seats_remaining: parse_boolean_flag(
+              item.show_seats_remaining,
+              true
+            ),
+            min_booking_notice_minutes: String(
+              typeof item.min_booking_notice_minutes === "number" &&
+                Number.isFinite(item.min_booking_notice_minutes)
+                ? Math.max(0, Math.trunc(item.min_booking_notice_minutes))
+                : 120
+            ),
+            max_booking_window_days: String(
+              typeof item.max_booking_window_days === "number" &&
+                Number.isFinite(item.max_booking_window_days) &&
+                item.max_booking_window_days >= 1
+                ? Math.trunc(item.max_booking_window_days)
+                : 30
+            ),
+            allow_reschedule: parse_boolean_flag(item.allow_reschedule, true),
+            allow_cancellation: parse_boolean_flag(item.allow_cancellation, true),
             duration_hours,
             duration_minutes_part,
             buffer_before: item.buffer_before?.toString() || "",
@@ -196,6 +292,14 @@ export function EventTypeEditForm({
             is_public: item.is_public || false,
             status: parse_event_type_status(item.status),
             service_provider_id: "",
+            service_provider_ids: Array.isArray(item.service_provider_ids)
+              ? item.service_provider_ids.map((id) => String(id))
+              : [],
+            department_id:
+              item.department_id != null && Number.isFinite(Number(item.department_id))
+                ? String(item.department_id)
+                : "",
+            service_id: item.service_id ? String(item.service_id) : "",
           });
           set_load_state({ status: "ready", item });
         }
@@ -226,9 +330,7 @@ export function EventTypeEditForm({
 
     const load_team_members = async () => {
       try {
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
+        const { session } = await getWorkspaceSession();
         if (!session?.access_token || cancelled) return;
 
         const response = await fetch("/api/team-members", {
@@ -297,6 +399,8 @@ export function EventTypeEditForm({
       label: capitalize_booking_display_label(
         getServiceProviderName(provider.id, serviceProviders)
       ),
+      avatar_url: provider.avatar_url?.trim() || null,
+      role_label: "Service provider",
     }));
 
     const selected_id = form.service_provider_id.trim();
@@ -319,6 +423,7 @@ export function EventTypeEditForm({
         label: `${capitalize_booking_display_label(
           getServiceProviderName(selected_provider.id, serviceProviders)
         )} (Inactive)`,
+        avatar_url: selected_provider.avatar_url?.trim() || null,
       },
     ];
   }, [active_service_providers, form.service_provider_id, serviceProviders]);
@@ -345,18 +450,38 @@ export function EventTypeEditForm({
     return parsed.value;
   };
 
+  const review_timezone_label = useMemo(() => {
+    const raw = format_timezone_display_label(general?.timezone);
+    if (raw === "Not set") return raw;
+    return raw.replace(/^[^/]+\//, "").replace(/_/g, " ");
+  }, [general?.timezone]);
+
+  const review_booking_url = useMemo(() => {
+    const workspace_slug = (cached_workspace_slug ?? "").trim();
+    const event_slug = normalize_event_type_slug_input(form.slug);
+    if (!workspace_slug || !event_slug) return null;
+    return `${get_public_booking_origin()}/${workspace_slug}/${event_slug}`;
+  }, [cached_workspace_slug, form.slug]);
+
   const handle_slug_blur = async () => {
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
+    const { session } = await getWorkspaceSession();
     if (!session?.access_token || !form.slug.trim()) return;
     await verify_slug(session.access_token, form.slug);
+  };
+
+  const handle_validate_slug = async (): Promise<boolean> => {
+    const { session } = await getWorkspaceSession();
+    if (!session?.access_token) {
+      set_slug_error("You are not signed in. Please refresh and try again.");
+      return false;
+    }
+    const normalized = await verify_slug(session.access_token, form.slug);
+    return normalized != null;
   };
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setFormError(null);
-    setSuccessMessage(null);
 
     if (!form.title.trim()) return;
 
@@ -371,42 +496,47 @@ export function EventTypeEditForm({
       return;
     }
 
-    const {
-      data: { session: precheckSession },
-    } = await supabase.auth.getSession();
-    if (!precheckSession?.access_token) {
-      setFormError("You are not signed in. Please refresh and try again.");
-      return;
-    }
-
-    const normalized_slug = await verify_slug(precheckSession.access_token, form.slug);
-    if (!normalized_slug) return;
-
     if (submitInFlightRef.current) return;
     submitInFlightRef.current = true;
     setSubmitting(true);
 
     let succeeded = false;
     try {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
+      const { session } = await getWorkspaceSession();
       if (!session?.access_token) {
         setFormError("You are not signed in. Please refresh and try again.");
         return;
       }
+
+      const normalized_slug = await verify_slug(session.access_token, form.slug);
+      if (!normalized_slug) return;
 
       const payload = {
         id: eventTypeId,
         title: form.title,
         slug: normalized_slug,
         short_description: form.short_description.trim() || null,
+        internal_label: form.internal_label.trim() || null,
+        event_type_format: form.event_type_format,
+        capacity_per_slot: form.capacity_per_slot,
+        availability_mode: form.availability_mode,
+        recurrence: from_form_recurrence(form.recurrence),
+        allow_waitlist: form.allow_waitlist,
+        waitlist_capacity: form.waitlist_capacity.trim() || null,
+        show_seats_remaining: form.show_seats_remaining,
+        min_booking_notice_minutes: form.min_booking_notice_minutes,
+        max_booking_window_days: form.max_booking_window_days,
+        allow_reschedule: form.allow_reschedule,
+        allow_cancellation: form.allow_cancellation,
         duration_minutes: durationMinutes,
         buffer_before: form.buffer_before || null,
         buffer_after: form.buffer_after || null,
         location_type: serialize_location_types(form.location_types),
         is_public: form.is_public,
         status: form.status,
+        department_id: form.department_id.trim() || null,
+        service_id: form.service_id.trim() || null,
+        service_provider_ids: form.service_provider_ids,
         ...(can_assign_event_type_owner && {
           owner_id: form.service_provider_id.trim() || null,
         }),
@@ -436,22 +566,22 @@ export function EventTypeEditForm({
       }
 
       succeeded = true;
-      if (onClose) {
+      const saved_message = "Event type updated successfully.";
+      if (onSaved) {
+        onSaved(saved_message);
+      } else if (onClose) {
         onClose();
       } else {
-        setSuccessMessage("Event type updated successfully.");
-        setTimeout(() => {
-          router.push("/event-type");
-        }, 1200);
+        toast.success(saved_message);
+        router.push("/event-type");
       }
     } catch (err) {
       console.error("Error:", err);
       setFormError("Something went wrong. Please try again.");
     } finally {
       submitInFlightRef.current = false;
-      // Keep the submit button disabled while the success message shows and we
-      // redirect, so the form cannot be submitted again.
       if (!succeeded) setSubmitting(false);
+      else if (!onSaved) setSubmitting(false);
     }
   };
 
@@ -516,7 +646,6 @@ export function EventTypeEditForm({
         }}
         editingId={eventTypeId}
         formError={formError}
-        successMessage={successMessage}
         submitting={submitting}
         onSubmit={handleSubmit}
         onCancel={handleCancel}
@@ -527,6 +656,12 @@ export function EventTypeEditForm({
         variant={variant}
         slug_error={slug_error}
         on_slug_blur={() => void handle_slug_blur()}
+        on_slug_edited={() => {
+          if (slug_error) set_slug_error(null);
+        }}
+        on_validate_slug={handle_validate_slug}
+        timezone_label={review_timezone_label}
+        booking_url={review_booking_url}
       />
     </div>
   );

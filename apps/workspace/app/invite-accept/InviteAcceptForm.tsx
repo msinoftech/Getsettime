@@ -393,7 +393,7 @@ export default function InviteAcceptForm() {
           <div className="text-center pt-4 border-t border-gray-200">
             <p className="text-sm text-gray-600">
               Already have an account?{" "}
-              <Link href="/login" className="text-blue-600 hover:text-blue-800 font-medium">
+              <Link href="/login" className="text-indigo-600 hover:text-indigo-800 font-medium">
                 Sign In
               </Link>
             </p>

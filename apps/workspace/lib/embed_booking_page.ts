@@ -1,5 +1,6 @@
 import { createSupabaseClient, createSupabaseServerClient } from '@app/db';
 import { find_provider_id_by_link_slug } from '@/lib/provider_booking_link';
+import { BOOKING_EVENT_TYPE_PUBLIC_SELECT } from '@/src/features/booking-flow';
 
 export type embed_workspace_row = {
   id: string;
@@ -102,7 +103,7 @@ export async function get_embed_event_type_by_slug(
 
     const { data, error } = await supabase
       .from('event_types')
-      .select('id, title, slug, duration_minutes, owner_id, status')
+      .select(BOOKING_EVENT_TYPE_PUBLIC_SELECT)
       .eq('workspace_id', workspaceId)
       .eq('slug', decodedSlug)
       .eq('status', 'active')
