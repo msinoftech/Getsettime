@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import * as AppIcons from "@app/icons";
 import { Pagination, usePagination } from "@app/ui";
 
 interface ProfessionOption {
@@ -16,6 +17,55 @@ interface DepartmentRow {
   updated_at: string;
   profession_id: number | null;
   profession_name?: string | null;
+  icon?: string | null;
+}
+
+type IconComponent = React.ComponentType<{ className?: string }>;
+
+const ICON_OPTIONS: Array<{
+  key: string;
+  label: string;
+  icon: IconComponent;
+}> = Object.entries(AppIcons)
+  .filter(([key, value]) => {
+    if (typeof value !== "function") return false;
+    return key.startsWith("Fc") || key.startsWith("Fa") || key.startsWith("Md");
+  })
+  .map(([key, value]) => {
+    const label = key
+      .replace(/^(Fc|Fa|Md)/, "")
+      .replace(/([A-Z])/g, " $1")
+      .trim();
+    return {
+      key,
+      label,
+      icon: value as IconComponent,
+    };
+  })
+  .sort((a, b) => a.label.localeCompare(b.label));
+
+const DEFAULT_ICON_KEY = "FcBriefcase";
+const CUSTOM_ICON_PREFIX = "data:image/";
+const MAX_CUSTOM_ICON_PX = 50;
+
+const isCustomIconValue = (iconValue: string | null | undefined): iconValue is string => {
+  return typeof iconValue === "string" && iconValue.startsWith(CUSTOM_ICON_PREFIX);
+};
+
+function resolve_icon_option(iconValue: string | null | undefined) {
+  return (
+    ICON_OPTIONS.find((item) => item.key === iconValue) ||
+    ICON_OPTIONS.find((item) => item.key === DEFAULT_ICON_KEY)!
+  );
+}
+
+function read_image_size(src: string): Promise<{ width: number; height: number }> {
+  return new Promise((resolve, reject) => {
+    const img = new window.Image();
+    img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });
+    img.onerror = () => reject(new Error("Failed to read icon image"));
+    img.src = src;
+  });
 }
 
 export default function DepartmentsPage() {
@@ -28,6 +78,9 @@ export default function DepartmentsPage() {
   const [deleting, setDeleting] = useState<DepartmentRow | null>(null);
   const [formName, setFormName] = useState("");
   const [formProfessionId, setFormProfessionId] = useState<string>("");
+  const [formIcon, setFormIcon] = useState(DEFAULT_ICON_KEY);
+  const [iconSearch, setIconSearch] = useState("");
+  const [uploadingIcon, setUploadingIcon] = useState(false);
   const [professionOptions, setProfessionOptions] = useState<ProfessionOption[]>([]);
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
@@ -72,6 +125,9 @@ export default function DepartmentsPage() {
     setEditing(null);
     setFormName("");
     setFormProfessionId("");
+    setFormIcon(DEFAULT_ICON_KEY);
+    setIconSearch("");
+    setUploadingIcon(false);
     setFormErrors({});
     setModalError(null);
     setIsModalOpen(true);
@@ -81,6 +137,9 @@ export default function DepartmentsPage() {
     setEditing(row);
     setFormName(row.name);
     setFormProfessionId(row.profession_id != null ? String(row.profession_id) : "");
+    setFormIcon(row.icon || DEFAULT_ICON_KEY);
+    setIconSearch("");
+    setUploadingIcon(false);
     setFormErrors({});
     setModalError(null);
     setIsModalOpen(true);
@@ -89,7 +148,46 @@ export default function DepartmentsPage() {
   const closeModal = () => {
     setIsModalOpen(false);
     setEditing(null);
+    setIconSearch("");
+    setUploadingIcon(false);
     setModalError(null);
+  };
+
+  const handleIconUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      setModalError("Please upload an image file.");
+      return;
+    }
+    if (file.size > 1024 * 1024) {
+      setModalError("Icon file size must be 1MB or less.");
+      return;
+    }
+
+    setUploadingIcon(true);
+    setModalError(null);
+    try {
+      const iconDataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ""));
+        reader.onerror = () => reject(new Error("Failed to read icon file"));
+        reader.readAsDataURL(file);
+      });
+      if (!isCustomIconValue(iconDataUrl)) {
+        throw new Error("Unsupported icon format");
+      }
+      const { width, height } = await read_image_size(iconDataUrl);
+      if (width > MAX_CUSTOM_ICON_PX || height > MAX_CUSTOM_ICON_PX) {
+        throw new Error(`Custom icon must be ${MAX_CUSTOM_ICON_PX}×${MAX_CUSTOM_ICON_PX} pixels or smaller.`);
+      }
+      setFormIcon(iconDataUrl);
+    } catch (err: unknown) {
+      setModalError(err instanceof Error ? err.message : "Failed to upload icon");
+    } finally {
+      setUploadingIcon(false);
+    }
   };
 
   const validateForm = (): boolean => {
@@ -118,7 +216,11 @@ export default function DepartmentsPage() {
       const res = await fetch(url, {
         method,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: formName.trim(), profession_id: professionId }),
+        body: JSON.stringify({
+          name: formName.trim(),
+          profession_id: professionId,
+          icon: formIcon,
+        }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -195,6 +297,15 @@ export default function DepartmentsPage() {
     setCurrentPage(1);
   }, [filters.search, filters.profession_id]);
 
+  const filteredIcons = ICON_OPTIONS.filter((item) => {
+    if (!iconSearch.trim()) return true;
+    const query = iconSearch.toLowerCase();
+    return item.label.toLowerCase().includes(query) || item.key.toLowerCase().includes(query);
+  });
+  const isCustomSelected = isCustomIconValue(formIcon);
+  const selectedIcon = resolve_icon_option(formIcon);
+  const SelectedIconComponent = selectedIcon.icon;
+
   return (
     <div className="space-y-6">
       <section className="space-y-6">
@@ -265,6 +376,7 @@ export default function DepartmentsPage() {
                 <thead className="bg-slate-50 border-b border-slate-200">
                   <tr className="border border-slate-200">
                     <th className="px-6 py-4 text-left text-sm font-bold text-slate-700">Name</th>
+                    <th className="px-6 py-4 text-left text-sm font-bold text-slate-700">Icon</th>
                     <th className="px-6 py-4 text-left text-sm font-bold text-slate-700">Profession</th>
                     <th className="px-6 py-4 text-left text-sm font-bold text-slate-700">Enabled</th>
                     <th className="px-6 py-4 text-left text-sm font-bold text-slate-700">Created</th>
@@ -275,6 +387,26 @@ export default function DepartmentsPage() {
                   {paginated.map((row) => (
                     <tr key={row.id} className="bg-white border border-slate-200 hover:bg-slate-50">
                       <td className="px-6 py-4 text-sm font-semibold text-slate-900">{row.name}</td>
+                      <td className="px-6 py-4">
+                        {isCustomIconValue(row.icon) ? (
+                          <span className="inline-flex h-9 w-9 items-center justify-center overflow-hidden p-1">
+                            <img
+                              src={row.icon}
+                              alt={`${row.name} icon`}
+                              className="h-7 w-7 object-contain"
+                            />
+                          </span>
+                        ) : (
+                          (() => {
+                            const IconPreview = resolve_icon_option(row.icon).icon;
+                            return (
+                              <span className="inline-flex items-center justify-center p-2">
+                                <IconPreview className="h-5 w-5" />
+                              </span>
+                            );
+                          })()
+                        )}
+                      </td>
                       <td className="px-6 py-4 text-sm text-slate-600">
                         {row.profession_name ?? (row.profession_id != null ? `ID ${row.profession_id}` : "—")}
                       </td>
@@ -401,6 +533,83 @@ export default function DepartmentsPage() {
                   {formErrors.profession_id && (
                     <p className="mt-1 text-sm text-red-600">{formErrors.profession_id}</p>
                   )}
+                </div>
+                <div className="grid gap-3">
+                  <label className="block text-sm font-medium text-slate-700">Icon</label>
+                  <div className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2">
+                    {isCustomSelected ? (
+                      <img
+                        src={formIcon}
+                        alt="Custom icon preview"
+                        className="h-6 w-6 object-contain"
+                      />
+                    ) : (
+                      <SelectedIconComponent className="h-6 w-6" />
+                    )}
+                    <div className="text-sm text-slate-700">
+                      {isCustomSelected
+                        ? "Custom uploaded icon"
+                        : `${selectedIcon.label} (${selectedIcon.key})`}
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <label className="inline-flex cursor-pointer items-center rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50">
+                      Upload custom icon
+                      <input
+                        type="file"
+                        accept="image/png,image/jpeg,image/jpg,image/webp,image/svg+xml"
+                        className="hidden"
+                        onChange={handleIconUpload}
+                        disabled={uploadingIcon}
+                      />
+                    </label>
+                    {isCustomSelected && (
+                      <button
+                        type="button"
+                        onClick={() => setFormIcon(DEFAULT_ICON_KEY)}
+                        className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                      >
+                        Use library icon
+                      </button>
+                    )}
+                    {uploadingIcon && <span className="text-xs text-slate-500">Uploading icon...</span>}
+                  </div>
+                  <p className="text-xs text-slate-500">
+                    Custom icons must be {MAX_CUSTOM_ICON_PX}×{MAX_CUSTOM_ICON_PX} pixels or smaller.
+                  </p>
+                  <input
+                    type="text"
+                    value={iconSearch}
+                    onChange={(e) => setIconSearch(e.target.value)}
+                    className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                    placeholder="Search icons..."
+                  />
+                  <div className="grid max-h-56 grid-cols-2 gap-2 overflow-y-auto rounded-lg border border-slate-200 bg-white p-2 sm:grid-cols-3">
+                    {filteredIcons.map((iconOption) => {
+                      const IconOptionComponent = iconOption.icon;
+                      const isSelected = formIcon === iconOption.key;
+                      return (
+                        <button
+                          key={iconOption.key}
+                          type="button"
+                          onClick={() => setFormIcon(iconOption.key)}
+                          className={`flex items-center gap-2 rounded-lg border px-2 py-2 text-left text-xs transition ${
+                            isSelected
+                              ? "border-indigo-500 bg-indigo-50 text-indigo-700"
+                              : "border-slate-200 bg-white text-slate-700 hover:border-indigo-300 hover:bg-indigo-50/50"
+                          }`}
+                        >
+                          <IconOptionComponent className="h-5 w-5 shrink-0" />
+                          <span className="truncate">{iconOption.label}</span>
+                        </button>
+                      );
+                    })}
+                    {filteredIcons.length === 0 && (
+                      <div className="col-span-full rounded-lg border border-dashed border-slate-200 px-3 py-4 text-center text-xs text-slate-500">
+                        No icons match your search.
+                      </div>
+                    )}
+                  </div>
                 </div>
                 <div className="flex justify-end gap-3">
                   <button

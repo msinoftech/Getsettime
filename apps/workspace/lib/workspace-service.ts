@@ -704,6 +704,11 @@ export async function updateUserWorkspaceMetadata(
         : {}),
     };
 
+    if (isNewWorkspace) {
+      mergedMetadata.onboarding_completed = false;
+      mergedMetadata.onboarding_last_completed_step = 0;
+    }
+
     const { error: updateError } = await supabaseAdmin.auth.admin.updateUserById(userId, {
       user_metadata: mergedMetadata,
     });

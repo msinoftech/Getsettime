@@ -310,6 +310,11 @@ export default function LoginForm() {
         }
       }
 
+      const { user: userAfterBootstrap } = await validateWorkspaceUser();
+      if (userAfterBootstrap) {
+        userForNav = userAfterBootstrap;
+      }
+
       const sessionRes = await fetch("/api/auth/session-set", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -340,7 +345,9 @@ export default function LoginForm() {
           hasWorkspaceProfile = !!(ws?.type || ws?.profession_id);
         }
         if (workspaceAdminNeedsOnboardingWizard(meta, hasWorkspaceProfile)) {
-          router.push(workspaceOnboardingRegisterUrl(meta));
+          router.push(
+            workspaceOnboardingRegisterUrl(meta, { workspaceHasProfessionOrType: hasWorkspaceProfile })
+          );
           return;
         }
       }

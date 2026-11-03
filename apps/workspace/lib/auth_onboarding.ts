@@ -6,6 +6,13 @@ export const WORKSPACE_ONBOARDING_STEP_COUNT = 4;
 /** Client-side workspace row fetch during auth callback must not hang indefinitely. */
 const WORKSPACE_ONBOARDING_REMOTE_TIMEOUT_MS = 30_000;
 
+export function parseMetadataBoolean(raw: unknown): boolean | undefined {
+  if (raw === true || raw === false) return raw;
+  if (raw === "true") return true;
+  if (raw === "false") return false;
+  return undefined;
+}
+
 /**
  * Parsed `onboarding_last_completed_step`: 0 = none, 1 = step 1 done, …, 4 = all steps done.
  */
@@ -28,9 +35,17 @@ export function workspaceOnboardingLastCompletedStep(
  * `onboarding_last_completed_step` in user metadata: 0 = none, 1 = step 1 done, …, 4 = all steps done.
  */
 export function workspaceOnboardingResumeStep(
-  userMetadata: Record<string, unknown> | null | undefined
+  userMetadata: Record<string, unknown> | null | undefined,
+  workspaceHasProfessionOrType?: boolean
 ): number {
   const lastDone = workspaceOnboardingLastCompletedStep(userMetadata);
+  const oc = parseMetadataBoolean(userMetadata?.onboarding_completed);
+  if (
+    workspaceHasProfessionOrType === false &&
+    (oc === true || lastDone >= WORKSPACE_ONBOARDING_STEP_COUNT)
+  ) {
+    return 1;
+  }
   return Math.min(WORKSPACE_ONBOARDING_STEP_COUNT, Math.max(1, lastDone + 1));
 }
 
@@ -74,12 +89,11 @@ export function workspaceOnboardingInviteWorkspaceId(
 /** Register URL with `step` query for incomplete onboarding (uses metadata). */
 export function workspaceOnboardingRegisterUrl(
   userMetadata: Record<string, unknown> | null | undefined,
-  options?: { inviteWorkspaceId?: number }
+  options?: { inviteWorkspaceId?: number; workspaceHasProfessionOrType?: boolean }
 ): string {
-  const step = workspaceOnboardingResumeStep(userMetadata);
+  const step = workspaceOnboardingResumeStep(userMetadata, options?.workspaceHasProfessionOrType);
   const params = new URLSearchParams({ onboarding: "1", step: String(step) });
-  const inviteWorkspaceId =
-    options?.inviteWorkspaceId ?? workspaceOnboardingInviteWorkspaceId(userMetadata);
+  const inviteWorkspaceId = options?.inviteWorkspaceId;
   if (inviteWorkspaceId != null && Number.isFinite(inviteWorkspaceId) && inviteWorkspaceId > 0) {
     params.set("invite_workspace_id", String(inviteWorkspaceId));
   }
@@ -94,8 +108,11 @@ export function workspaceAdminNeedsOnboardingWizard(
   userMetadata: Record<string, unknown> | null | undefined,
   workspaceHasProfessionOrType: boolean
 ): boolean {
-  const oc = userMetadata?.onboarding_completed;
-  if (oc === true) return false;
+  const oc = parseMetadataBoolean(userMetadata?.onboarding_completed);
+  if (oc === true) {
+    if (!workspaceHasProfessionOrType) return true;
+    return false;
+  }
   if (oc === false) return true;
 
   const lastDone = workspaceOnboardingLastCompletedStep(userMetadata);
@@ -105,15 +122,19 @@ export function workspaceAdminNeedsOnboardingWizard(
   return !workspaceHasProfessionOrType;
 }
 
-/**
- * True when this user must stay on onboarding until `onboarding_completed` is true (workspace admins only).
- */
-export async function workspaceAdminIncompleteOnboarding(
+export type workspace_admin_onboarding_status = {
+  incomplete: boolean;
+  hasWorkspaceProfile: boolean;
+};
+
+export async function resolveWorkspaceAdminOnboardingStatus(
   supabase: SupabaseClient,
   user: User
-): Promise<boolean> {
+): Promise<workspace_admin_onboarding_status> {
   const role = user.user_metadata?.role as string | undefined;
-  if (role !== "workspace_admin") return false;
+  if (role !== "workspace_admin") {
+    return { incomplete: false, hasWorkspaceProfile: false };
+  }
 
   const wid = user.user_metadata?.workspace_id as number | undefined;
   let hasWorkspaceProfile = false;
@@ -135,7 +156,7 @@ export async function workspaceAdminIncompleteOnboarding(
       if (looksLikeAuth) {
         throw new Error("WORKSPACE_AUTH_LOOKUP_FAILED");
       }
-      console.error("[workspaceAdminIncompleteOnboarding]", error);
+      console.error("[resolveWorkspaceAdminOnboardingStatus]", error);
       hasWorkspaceProfile = false;
     } else {
       hasWorkspaceProfile = !!(ws?.type || ws?.profession_id);
@@ -143,7 +164,21 @@ export async function workspaceAdminIncompleteOnboarding(
   }
 
   const meta = user.user_metadata as Record<string, unknown> | undefined;
-  return workspaceAdminNeedsOnboardingWizard(meta, hasWorkspaceProfile);
+  return {
+    incomplete: workspaceAdminNeedsOnboardingWizard(meta, hasWorkspaceProfile),
+    hasWorkspaceProfile,
+  };
+}
+
+/**
+ * True when this user must stay on onboarding until `onboarding_completed` is true (workspace admins only).
+ */
+export async function workspaceAdminIncompleteOnboarding(
+  supabase: SupabaseClient,
+  user: User
+): Promise<boolean> {
+  const { incomplete } = await resolveWorkspaceAdminOnboardingStatus(supabase, user);
+  return incomplete;
 }
 
 /**
@@ -211,11 +246,11 @@ export async function resolvePostAuthNavigationPath(
     return requestedNext.startsWith("/") ? requestedNext : "/";
   }
 
-  let needs: boolean;
+  let status: workspace_admin_onboarding_status;
   try {
-    needs = await Promise.race([
-      workspaceAdminIncompleteOnboarding(supabase, user),
-      new Promise<boolean>((_, reject) => {
+    status = await Promise.race([
+      resolveWorkspaceAdminOnboardingStatus(supabase, user),
+      new Promise<workspace_admin_onboarding_status>((_, reject) => {
         setTimeout(
           () => reject(new Error("WORKSPACE_ONBOARDING_REMOTE_TIMEOUT")),
           WORKSPACE_ONBOARDING_REMOTE_TIMEOUT_MS
@@ -226,9 +261,11 @@ export async function resolvePostAuthNavigationPath(
     throw new Error("WORKSPACE_ADMIN_ONBOARDING_CHECK_FAILED");
   }
 
-  if (needs) {
+  if (status.incomplete) {
     const meta = user.user_metadata as Record<string, unknown> | undefined;
-    return workspaceOnboardingRegisterUrl(meta ?? {});
+    return workspaceOnboardingRegisterUrl(meta ?? {}, {
+      workspaceHasProfessionOrType: status.hasWorkspaceProfile,
+    });
   }
 
   if (requestedNext.includes("onboarding=1")) {

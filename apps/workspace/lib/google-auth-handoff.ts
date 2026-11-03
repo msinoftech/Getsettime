@@ -222,8 +222,6 @@ async function handleNewUserSignup(
     data;
   const claimCode =
     typeof data.claimCode === 'string' && data.claimCode.trim() ? data.claimCode.trim() : null;
-  const isClaimSignup = Boolean(claimCode);
-
   if (claimCode) {
     const validation = await validateClaimCodeForSignup(clients.supabaseAdmin, claimCode);
     if (!validation.valid) {
@@ -249,8 +247,8 @@ async function handleNewUserSignup(
       google_calendar_sync: enableCalendarSync,
       google_id,
       picture: data.picture,
-      onboarding_completed: isClaimSignup ? false : true,
-      onboarding_last_completed_step: isClaimSignup ? 0 : 4,
+      onboarding_completed: false,
+      onboarding_last_completed_step: 0,
     },
   });
 
@@ -322,8 +320,8 @@ async function handleNewUserSignup(
       google_calendar_sync: enableCalendarSync,
       google_id,
       picture: data.picture,
-      onboarding_completed: isClaimSignup ? false : true,
-      onboarding_last_completed_step: isClaimSignup ? 0 : 4,
+      onboarding_completed: false,
+      onboarding_last_completed_step: 0,
     },
     clients.supabaseAdmin,
     workspaceResult.isNewWorkspace,
@@ -364,12 +362,10 @@ async function handleNewUserSignup(
     });
   }
 
-  const nextPath = isClaimSignup ? '/register?onboarding=1' : '/';
-
   return finalizeAuthRedirect(req, clients, {
     email,
     userId,
-    nextPath,
+    nextPath: '/register?onboarding=1',
   });
 }
 

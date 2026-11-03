@@ -20,6 +20,7 @@ import {
   serviceProviderNeedsOnboardingWizard,
   workspaceOnboardingLastCompletedStep,
   workspaceOnboardingResumeStep,
+  parseMetadataBoolean,
   readInviteOnboardingContext,
   clearInviteOnboardingContext,
   persistInviteOnboardingContext,
@@ -489,11 +490,38 @@ export default function RegisterForm() {
 
     const inviteCtxStored = readInviteOnboardingContext();
     const inviteWorkspaceParam = searchParams.get("invite_workspace_id");
-    if (inviteCtxStored) {
+
+    const isOnboardingFlow = searchParams.get("onboarding") === "1";
+
+    const { user: userResultEarly, error: getUserEarlyErr } = await validateWorkspaceUser();
+    if (!getUserEarlyErr && userResultEarly?.user_metadata) {
+      meta = userResultEarly.user_metadata as Record<string, unknown>;
+      wid = parseWorkspaceIdFromMeta(meta) ?? wid;
+    }
+
+    const invitedAtEarly = meta.invited_at;
+    const isInvitedMemberEarly =
+      typeof invitedAtEarly === "string"
+        ? invitedAtEarly.trim() !== ""
+        : invitedAtEarly != null;
+    const metaRoleEarly = typeof meta.role === "string" ? meta.role : "";
+    const isWorkspaceOwnerSignup =
+      meta.is_workspace_owner === true ||
+      ((metaRoleEarly === ROLE_WORKSPACE_ADMIN || metaRoleEarly === "") &&
+        !isInvitedMemberEarly);
+    const honorInviteWorkspaceContext =
+      !isWorkspaceOwnerSignup &&
+      (metaRoleEarly === ROLE_SERVICE_PROVIDER ||
+        isInvitedMemberEarly ||
+        metaRoleEarly === "manager" ||
+        metaRoleEarly === "staff" ||
+        metaRoleEarly === "customer");
+
+    if (honorInviteWorkspaceContext && inviteCtxStored) {
       wid = inviteCtxStored.workspaceId;
       onboardingKindRef.current = "invite";
       lockedWorkspaceIdRef.current = inviteCtxStored.workspaceId;
-    } else if (inviteWorkspaceParam) {
+    } else if (honorInviteWorkspaceContext && inviteWorkspaceParam) {
       const fromInvite = parseInt(inviteWorkspaceParam, 10);
       if (Number.isFinite(fromInvite) && fromInvite > 0) {
         wid = fromInvite;
@@ -501,26 +529,20 @@ export default function RegisterForm() {
         lockedWorkspaceIdRef.current = fromInvite;
         persistInviteOnboardingContext(fromInvite);
       }
-    }
-
-    const isOnboardingFlow = searchParams.get("onboarding") === "1";
-
-    const { user: userResultEarly, error: getUserEarlyErr } = await validateWorkspaceUser();
-    if (!getUserEarlyErr && userResultEarly?.user_metadata) {
-      meta = userResultEarly.user_metadata as Record<string, unknown>;
-      if (onboardingKindRef.current !== "invite") {
-        wid = parseWorkspaceIdFromMeta(meta) ?? wid;
-      }
+    } else if (isWorkspaceOwnerSignup && (inviteCtxStored || inviteWorkspaceParam)) {
+      clearInviteOnboardingContext();
     }
     if (onboardingKindRef.current === "invite" && lockedWorkspaceIdRef.current != null) {
       wid = lockedWorkspaceIdRef.current;
-    } else if (inviteCtxStored) {
+    } else if (honorInviteWorkspaceContext && inviteCtxStored) {
       wid = inviteCtxStored.workspaceId;
-    } else if (inviteWorkspaceParam) {
+    } else if (honorInviteWorkspaceContext && inviteWorkspaceParam) {
       const fromInviteLocked = parseInt(inviteWorkspaceParam, 10);
       if (Number.isFinite(fromInviteLocked) && fromInviteLocked > 0) {
         wid = fromInviteLocked;
       }
+    } else {
+      wid = parseWorkspaceIdFromMeta(meta) ?? wid;
     }
 
     const isConfirmedParam = searchParams.get("confirmed") === "1";
@@ -541,8 +563,8 @@ export default function RegisterForm() {
     // Invited team members: never create a personal workspace (bootstrap syncs invite workspace only).
     const isInviteOnboarding =
       onboardingKindRef.current === "invite" ||
-      Boolean(inviteWorkspaceParam) ||
-      Boolean(inviteCtxStored) ||
+      (honorInviteWorkspaceContext &&
+        (Boolean(inviteWorkspaceParam) || Boolean(inviteCtxStored))) ||
       isInvitedMember ||
       isInvitedTeamRole;
 
@@ -587,12 +609,7 @@ export default function RegisterForm() {
       if (!res.ok) return null;
       const body = (await res.json()) as {
         workspace_id?: number;
-        skip_onboarding?: boolean;
       };
-      if (body.skip_onboarding) {
-        router.replace("/");
-        return null;
-      }
       const id = body.workspace_id;
       return id != null && Number.isFinite(id) ? id : null;
     };
@@ -905,16 +922,23 @@ export default function RegisterForm() {
     // Initial login / first load: resume from metadata; optional ?step= is capped so users cannot skip ahead.
     // Later resolveMode runs (auth events, searchParams) must not override Back/Next.
     if (resumeStepHydratedUserIdRef.current !== userIdForResumeFull) {
-      const resumeFromMeta = workspaceOnboardingResumeStep(meta);
+      const workspaceHasProfile = !!(ws?.type || ws?.profession_id);
+      const resumeFromMeta = workspaceOnboardingResumeStep(meta, workspaceHasProfile);
       const lastDone = workspaceOnboardingLastCompletedStep(meta);
+      const onboardingMarkedComplete = parseMetadataBoolean(meta.onboarding_completed) === true;
+      const staleProgressFromSkippedOnboarding =
+        !workspaceHasProfile &&
+        (onboardingMarkedComplete || lastDone >= ONBOARDING_STEPS);
       let initialStep = resumeFromMeta;
       if (searchParams.get("onboarding") === "1") {
         const rawStep = searchParams.get("step");
         if (rawStep !== null) {
           const n = parseInt(rawStep, 10);
           if (Number.isFinite(n) && n >= 1 && n <= ONBOARDING_STEPS) {
-            // Stale ?step= (e.g. step=2 in URL while resume=3 after saving step 2) must not clamp UI to 2 via Math.min.
-            if (lastDone >= n && n < resumeFromMeta) {
+            if (staleProgressFromSkippedOnboarding) {
+              initialStep = n;
+            } else if (lastDone >= n && n < resumeFromMeta) {
+              // Stale ?step= while user already saved a later step in metadata.
               initialStep = resumeFromMeta;
             } else {
               initialStep = Math.min(n, resumeFromMeta);

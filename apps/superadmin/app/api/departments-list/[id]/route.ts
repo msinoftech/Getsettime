@@ -1,6 +1,21 @@
 import { NextResponse } from 'next/server';
 import { getSupabaseServer } from '@/lib/supabaseServer';
 
+const CUSTOM_ICON_PREFIX = 'data:image/';
+
+function normalize_department_icon(icon: unknown): string | null {
+  if (typeof icon !== 'string') return null;
+  const trimmed = icon.trim();
+  if (!trimmed) return null;
+  if (trimmed.startsWith(CUSTOM_ICON_PREFIX) || /^(Fc|Fa|Md)[A-Za-z0-9]+$/.test(trimmed)) {
+    return trimmed;
+  }
+  return null;
+}
+
+const DEPARTMENT_LIST_SELECT =
+  'id, name, enabled, created_at, updated_at, profession_id, icon, professions_list(name)';
+
 function flatten_department_row(row: Record<string, unknown>) {
   const prof = row.professions_list as { name?: string } | null | undefined;
   const { professions_list: _p, ...rest } = row;
@@ -15,14 +30,23 @@ export async function PATCH(
     const resolved = await Promise.resolve(params);
     const id = resolved.id;
     const body = await req.json();
-    const { name, enabled, profession_id } = body as {
+    const { name, enabled, profession_id, icon } = body as {
       name?: unknown;
       enabled?: unknown;
       profession_id?: unknown;
+      icon?: unknown;
     };
 
-    if (name === undefined && enabled === undefined && profession_id === undefined) {
-      return NextResponse.json({ error: 'Provide name, enabled, and/or profession_id' }, { status: 400 });
+    if (
+      name === undefined &&
+      enabled === undefined &&
+      profession_id === undefined &&
+      icon === undefined
+    ) {
+      return NextResponse.json(
+        { error: 'Provide name, enabled, profession_id, and/or icon' },
+        { status: 400 }
+      );
     }
 
     const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
@@ -46,6 +70,14 @@ export async function PATCH(
         return NextResponse.json({ error: 'profession_id must be a positive number' }, { status: 400 });
       }
       patch.profession_id = profession_id;
+    }
+
+    if (icon !== undefined) {
+      const parsedIcon = normalize_department_icon(icon);
+      if (!parsedIcon) {
+        return NextResponse.json({ error: 'Invalid department icon' }, { status: 400 });
+      }
+      patch.icon = parsedIcon;
     }
 
     const supabaseServer = getSupabaseServer();
@@ -102,7 +134,7 @@ export async function PATCH(
       .from('departments_list')
       .update(patch)
       .eq('id', id)
-      .select('id, name, enabled, created_at, updated_at, profession_id, professions_list(name)')
+      .select(DEPARTMENT_LIST_SELECT)
       .single();
 
     if (error) {

@@ -33,7 +33,7 @@ export function PublicBookingPreviewCard() {
     serviceProviderLinkSlug,
     workspaceName,
     general,
-    workspaceLogoResolved,
+    workspaceLogo,
   } = useWorkspaceSettings();
 
   const is_service_provider =
@@ -42,6 +42,8 @@ export function PublicBookingPreviewCard() {
 
   const workspace_title =
     workspaceName?.trim() || general.accountName?.trim() || 'Your workspace';
+  const workspace_logo_uploaded =
+    workspaceLogo?.trim() || general.logoUrl?.trim() || undefined;
   const service_provider_name =
     (user?.user_metadata?.full_name as string | undefined)?.trim() ||
     (user?.user_metadata?.name as string | undefined)?.trim() ||
@@ -145,7 +147,7 @@ export function PublicBookingPreviewCard() {
             userId={is_service_provider ? user?.id : undefined}
             name={is_service_provider ? service_provider_name : workspace_title}
             email={is_service_provider ? user?.email : undefined}
-            avatarUrl={is_service_provider ? undefined : workspaceLogoResolved || undefined}
+            avatarUrl={is_service_provider ? undefined : workspace_logo_uploaded}
             size="lg"
             shape="rounded"
             className="h-11 w-11 bg-indigo-500 text-white shadow-sm"

@@ -25,6 +25,7 @@ import type {
   provider_notifications_entry,
 } from '@/src/utils/providerSettingsResolution';
 import { workspace_meeting_options_to_location_types } from '@/src/utils/meeting_options';
+import { parseMetadataBoolean } from '@/lib/auth_onboarding';
 
 export type onboarding_auth_context = {
   userId: string;
@@ -108,6 +109,35 @@ async function get_or_create_workspace_profession_id(
   return { id: inserted?.id != null ? (inserted.id as number) : null };
 }
 
+async function workspace_admin_has_onboarding_profile(
+  supabaseAdmin: SupabaseClient,
+  workspaceId: number
+): Promise<boolean> {
+  const { data: ws } = await supabaseAdmin
+    .from('workspaces')
+    .select('type, profession_id')
+    .eq('id', workspaceId)
+    .maybeSingle();
+  return !!(ws?.type || ws?.profession_id);
+}
+
+/** Legacy bootstrap marked onboarding complete without saving profession/type. */
+async function repair_stale_workspace_admin_onboarding_metadata(
+  supabaseAdmin: SupabaseClient,
+  userId: string,
+  meta: Record<string, unknown>
+): Promise<Record<string, unknown>> {
+  const repaired: Record<string, unknown> = {
+    ...meta,
+    onboarding_completed: false,
+    onboarding_last_completed_step: 0,
+  };
+  await supabaseAdmin.auth.admin.updateUserById(userId, {
+    user_metadata: repaired,
+  });
+  return repaired;
+}
+
 export async function resolve_onboarding_auth_context(
   req: NextRequest
 ): Promise<onboarding_auth_context | { error: string; status: number }> {
@@ -133,19 +163,34 @@ export async function resolve_onboarding_auth_context(
   const { data: authRow, error: adminErr } = await supabaseAdmin.auth.admin.getUserById(jwtUser.id);
   if (adminErr || !authRow?.user) return { error: 'Unauthorized', status: 401 };
 
-  const meta = (authRow.user.user_metadata ?? {}) as Record<string, unknown>;
+  let meta = (authRow.user.user_metadata ?? {}) as Record<string, unknown>;
   const role = typeof meta.role === 'string' ? meta.role : '';
   if (role !== ROLE_WORKSPACE_ADMIN && role !== ROLE_SERVICE_PROVIDER) {
     return { error: 'Forbidden', status: 403 };
   }
 
-  if (meta.onboarding_completed === true) {
-    return { error: 'Onboarding already completed', status: 409 };
-  }
-
   const workspaceId = parse_workspace_id(meta.workspace_id);
   if (workspaceId == null) {
     return { error: 'Workspace ID not found', status: 400 };
+  }
+
+  if (parseMetadataBoolean(meta.onboarding_completed) === true) {
+    if (role === ROLE_WORKSPACE_ADMIN) {
+      const hasProfile = await workspace_admin_has_onboarding_profile(
+        supabaseAdmin,
+        workspaceId
+      );
+      if (hasProfile) {
+        return { error: 'Onboarding already completed', status: 409 };
+      }
+      meta = await repair_stale_workspace_admin_onboarding_metadata(
+        supabaseAdmin,
+        jwtUser.id,
+        meta
+      );
+    } else {
+      return { error: 'Onboarding already completed', status: 409 };
+    }
   }
 
   return { userId: jwtUser.id, role, workspaceId, meta, token };

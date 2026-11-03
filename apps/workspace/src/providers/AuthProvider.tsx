@@ -10,11 +10,12 @@ import { getWorkspaceIdleLogoutDurations } from '@/src/utils/workspace_idle_logo
 import { useRouter, usePathname } from 'next/navigation'
 import type { AuthChangeEvent, Session, User as SupabaseUser } from '@supabase/supabase-js'
 import {
-  workspaceAdminIncompleteOnboarding,
+  resolveWorkspaceAdminOnboardingStatus,
   serviceProviderIncompleteOnboarding,
   isAllowedPathDuringWorkspaceOnboarding,
   workspaceOnboardingRegisterUrl,
   workspaceOnboardingInviteWorkspaceId,
+  type workspace_admin_onboarding_status,
 } from '@/lib/auth_onboarding'
 import { logAuthActivityFromSession, logAuthActivityLoginDeduped, signOutWithAuthLog } from '@/src/lib/auth_activity_log_client'
 import {
@@ -114,25 +115,25 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, onTimeout: () => 
   }
 }
 
-async function workspaceAdminIncompleteOnboardingWithTimeout(
-  supabaseClient: Parameters<typeof workspaceAdminIncompleteOnboarding>[0],
+async function workspaceAdminOnboardingStatusWithTimeout(
+  supabaseClient: Parameters<typeof resolveWorkspaceAdminOnboardingStatus>[0],
   user: SupabaseUser
-): Promise<boolean> {
+): Promise<workspace_admin_onboarding_status> {
   return withTimeout(
-    workspaceAdminIncompleteOnboarding(supabaseClient, user),
+    resolveWorkspaceAdminOnboardingStatus(supabaseClient, user),
     ONBOARDING_AUTH_CHECK_TIMEOUT_MS,
     () => new OnboardingCheckTimeoutError()
   )
 }
 
-async function workspaceAdminIncompleteOnboardingWithRetry(
-  supabaseClient: Parameters<typeof workspaceAdminIncompleteOnboarding>[0],
+async function workspaceAdminOnboardingStatusWithRetry(
+  supabaseClient: Parameters<typeof resolveWorkspaceAdminOnboardingStatus>[0],
   user: SupabaseUser
-): Promise<boolean> {
+): Promise<workspace_admin_onboarding_status> {
   let delay = AUTH_RETRY_INITIAL_DELAY_MS
   for (let i = 0; i < AUTH_RETRY_MAX_ATTEMPTS; i++) {
     try {
-      return await workspaceAdminIncompleteOnboardingWithTimeout(supabaseClient, user)
+      return await workspaceAdminOnboardingStatusWithTimeout(supabaseClient, user)
     } catch (e) {
       if (e instanceof OnboardingCheckTimeoutError && i < AUTH_RETRY_MAX_ATTEMPTS - 1) {
         console.warn(`Onboarding check timed out, retrying in ${delay}ms...`)
@@ -143,7 +144,7 @@ async function workspaceAdminIncompleteOnboardingWithRetry(
       }
     }
   }
-  throw new Error('workspaceAdminIncompleteOnboardingWithRetry: exhausted retries')
+  throw new Error('workspaceAdminOnboardingStatusWithRetry: exhausted retries')
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -270,9 +271,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         !isPublicPath(pathname_ref.current) &&
         !isAllowedPathDuringWorkspaceOnboarding(pathname_ref.current)
       ) {
-        let incomplete: boolean
+        let onboardingStatus: { incomplete: boolean; hasWorkspaceProfile: boolean }
         try {
-          incomplete = await workspaceAdminIncompleteOnboardingWithRetry(
+          onboardingStatus = await workspaceAdminOnboardingStatusWithRetry(
             supabase,
             currentUser as SupabaseUser
           )
@@ -281,9 +282,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           await clearInvalidSession()
           return
         }
-        if (incomplete) {
+        if (onboardingStatus.incomplete) {
           const meta = currentUser.user_metadata as Record<string, unknown> | undefined
-          router_ref.current.push(workspaceOnboardingRegisterUrl(meta ?? {}))
+          router_ref.current.push(
+            workspaceOnboardingRegisterUrl(meta ?? {}, {
+              workspaceHasProfessionOrType: onboardingStatus.hasWorkspaceProfile,
+            })
+          )
           setUser(currentUser)
           return
         }

@@ -133,19 +133,11 @@ export async function POST(req: Request) {
     }
 
     const isFreeClaim = isFreeClaimSignupMetadata(meta);
-    const metaForUpdate =
-      workspaceResult.isNewWorkspace && !isFreeClaim
-        ? {
-            ...meta,
-            onboarding_completed: true,
-            onboarding_last_completed_step: 4,
-          }
-        : meta;
 
     const { error: updateError } = await updateUserWorkspaceMetadata(
       user.id,
       workspaceResult.workspaceId,
-      metaForUpdate,
+      meta,
       supabaseAdmin,
       workspaceResult.isNewWorkspace
     );
@@ -167,7 +159,6 @@ export async function POST(req: Request) {
     return NextResponse.json({
       workspace_id: workspaceResult.workspaceId,
       is_free_claim: isFreeClaim,
-      skip_onboarding: workspaceResult.isNewWorkspace && !isFreeClaim,
     });
   } catch (err: unknown) {
     console.error("Bootstrap workspace error:", err);

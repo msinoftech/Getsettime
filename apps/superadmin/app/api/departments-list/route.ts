@@ -1,6 +1,23 @@
 import { NextResponse } from 'next/server';
 import { getSupabaseServer } from '@/lib/supabaseServer';
 
+const DEFAULT_DEPARTMENT_ICON = 'FcBriefcase';
+const CUSTOM_ICON_PREFIX = 'data:image/';
+
+function normalize_department_icon(icon: unknown, fallback = DEFAULT_DEPARTMENT_ICON): string | null {
+  if (icon === undefined || icon === null || icon === '') return fallback;
+  if (typeof icon !== 'string') return null;
+  const trimmed = icon.trim();
+  if (!trimmed) return fallback;
+  if (trimmed.startsWith(CUSTOM_ICON_PREFIX) || /^(Fc|Fa|Md)[A-Za-z0-9]+$/.test(trimmed)) {
+    return trimmed;
+  }
+  return null;
+}
+
+const DEPARTMENT_LIST_SELECT =
+  'id, name, enabled, created_at, updated_at, profession_id, icon, professions_list(name)';
+
 function flatten_department_row(row: Record<string, unknown>) {
   const prof = row.professions_list as { name?: string } | null | undefined;
   const { professions_list: _p, ...rest } = row;
@@ -13,7 +30,7 @@ export async function GET() {
 
     const { data: departments, error } = await supabaseServer
       .from('departments_list')
-      .select('id, name, enabled, created_at, updated_at, profession_id, professions_list(name)')
+      .select(DEPARTMENT_LIST_SELECT)
       .order('name', { ascending: true });
 
     if (error) {
@@ -36,7 +53,11 @@ export async function GET() {
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { name, profession_id } = body as { name?: unknown; profession_id?: unknown };
+    const { name, profession_id, icon } = body as {
+      name?: unknown;
+      profession_id?: unknown;
+      icon?: unknown;
+    };
 
     if (!name || typeof name !== 'string' || !name.trim()) {
       return NextResponse.json({ error: 'Name is required' }, { status: 400 });
@@ -47,6 +68,10 @@ export async function POST(req: Request) {
     }
 
     const trimmed = name.trim();
+    const parsedIcon = normalize_department_icon(icon);
+    if (!parsedIcon) {
+      return NextResponse.json({ error: 'Invalid department icon' }, { status: 400 });
+    }
     const supabaseServer = getSupabaseServer();
 
     const { data: profOk } = await supabaseServer
@@ -75,8 +100,8 @@ export async function POST(req: Request) {
 
     const { data: row, error } = await supabaseServer
       .from('departments_list')
-      .insert({ name: trimmed, enabled: true, profession_id })
-      .select('id, name, enabled, created_at, updated_at, profession_id, professions_list(name)')
+      .insert({ name: trimmed, enabled: true, profession_id, icon: parsedIcon })
+      .select(DEPARTMENT_LIST_SELECT)
       .single();
 
     if (error) {
