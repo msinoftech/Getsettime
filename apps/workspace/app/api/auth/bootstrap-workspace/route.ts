@@ -1,14 +1,14 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import {
-  getOrCreateWorkspace,
-  updateUserWorkspaceMetadata,
   resolveAcceptedInviteForEmail,
   syncInvitedUserWorkspaceMetadata,
 } from "@/lib/workspace-service";
-import { sendWorkspaceWelcomeEmail } from "@/lib/send-workspace-welcome-email";
+import {
+  ensureWorkspaceCreatorFlagsIfNeeded,
+  finalizeWorkspaceOwnerSignup,
+} from "@/lib/workspace-owner-signup";
 import { resolveRegistrationGeoFromHeaders } from "@/lib/ipapi-geo";
-import { isFreeClaimSignupMetadata } from "@app/db/subscription";
 
 export async function POST(req: Request) {
   try {
@@ -77,6 +77,16 @@ export async function POST(req: Request) {
 
     const existingWorkspaceId = parseWorkspaceId(meta.workspace_id);
     if (Number.isFinite(existingWorkspaceId) && existingWorkspaceId > 0) {
+      const { error: repairError } = await ensureWorkspaceCreatorFlagsIfNeeded(
+        supabaseAdmin,
+        user.id,
+        existingWorkspaceId,
+        meta as Record<string, unknown>
+      );
+      if (repairError) {
+        console.error("Bootstrap creator flag repair error:", repairError);
+        return NextResponse.json({ error: "Failed to update user metadata" }, { status: 500 });
+      }
       return NextResponse.json({ workspace_id: existingWorkspaceId });
     }
 
@@ -101,7 +111,7 @@ export async function POST(req: Request) {
 
     let browserTimezone: string | undefined;
     try {
-      const body = await req.json() as { timezone?: string };
+      const body = (await req.json()) as { timezone?: string };
       browserTimezone = typeof body.timezone === "string" ? body.timezone.trim() : undefined;
     } catch {
       browserTimezone = undefined;
@@ -112,53 +122,28 @@ export async function POST(req: Request) {
       browserTimezone
     );
 
-    // Get or create workspace (ensures one user = one workspace) — workspace owners / self-signup only
-    const { data: workspaceResult, error: workspaceError } = await getOrCreateWorkspace({
+    const finalized = await finalizeWorkspaceOwnerSignup({
       userId: user.id,
       userName: name,
       userEmail,
       supabaseAdmin,
       registrationGeo,
-      userMetadata: meta,
+      userMetadata: meta as Record<string, unknown>,
     });
 
-    if (workspaceError || !workspaceResult) {
-      console.error("Bootstrap workspace error:", workspaceError);
+    if (!finalized.ok) {
+      console.error("Bootstrap workspace error:", finalized.error);
       const status =
-        workspaceError === "Your claim is not valid." ? 400 : 500;
+        finalized.error === "Your claim is not valid." ? 400 : 500;
       return NextResponse.json(
-        { error: workspaceError || "Failed to get or create workspace" },
+        { error: finalized.error || "Failed to get or create workspace" },
         { status }
       );
     }
 
-    const isFreeClaim = isFreeClaimSignupMetadata(meta);
-
-    const { error: updateError } = await updateUserWorkspaceMetadata(
-      user.id,
-      workspaceResult.workspaceId,
-      meta,
-      supabaseAdmin,
-      workspaceResult.isNewWorkspace
-    );
-
-    if (updateError) {
-      console.error("Bootstrap user update error:", updateError);
-      return NextResponse.json({ error: "Failed to update user metadata" }, { status: 500 });
-    }
-
-    if (workspaceResult.isNewWorkspace && userEmail) {
-      sendWorkspaceWelcomeEmail({
-        to: userEmail,
-        workspaceId: workspaceResult.workspaceId,
-        adminName: name,
-        supabaseAdmin,
-      }).catch((err) => console.error("Welcome email failed (non-critical):", err));
-    }
-
     return NextResponse.json({
-      workspace_id: workspaceResult.workspaceId,
-      is_free_claim: isFreeClaim,
+      workspace_id: finalized.workspaceId,
+      is_free_claim: finalized.isFreeClaim,
     });
   } catch (err: unknown) {
     console.error("Bootstrap workspace error:", err);

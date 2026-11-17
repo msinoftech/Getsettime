@@ -44,7 +44,7 @@ export const PAGE_ACCESS_RULES: readonly PageAccessRule[] = [
   { prefix: '/contacts', allowedRoles: MANAGEMENT_ROLES },
   { prefix: '/integrations', allowedRoles: MANAGEMENT_ROLES },
   { prefix: '/roles-permissions', allowedRoles: MANAGEMENT_ROLES },
-  { prefix: '/billings', allowedRoles: MANAGEMENT_ROLES },
+  { prefix: '/plans', allowedRoles: MANAGEMENT_ROLES },
   { prefix: '/settings', allowedRoles: MANAGEMENT_ROLES },
 ];
 

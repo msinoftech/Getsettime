@@ -58,6 +58,8 @@ import { useServiceProviders, useUserDepartments } from "@/src/hooks/useBookingL
 import { useAuth } from "@/src/providers/AuthProvider";
 import type { ServiceProvider } from "@/src/types/booking-entities";
 import ScreenGate from "@/src/components/ScreenGate";
+import { ServiceAddPanelDrawer } from "@/src/features/services/ServiceAddPanelDrawer";
+import type { service_form_saved_result } from "@/src/features/services/ServiceFormPanel";
 
 
 /** Public=active, Private=private, Draft=draft; inactive kept for legacy rows. */
@@ -78,7 +80,31 @@ const VISIBILITY_OPTIONS: {
 function toVisibilityStatus(status: DepartmentStatus): VisibilityStatus {
   if (status === "active") return "active";
   if (status === "draft") return "draft";
-  return "private";
+  if (status === "private") return "private";
+  return "active";
+}
+
+const DEPARTMENT_VISIBILITY_META_KEY = "visibility_status";
+
+function isVisibilityStatus(value: unknown): value is VisibilityStatus {
+  return value === "active" || value === "private" || value === "draft";
+}
+
+/** Visibility preserved while `status` is `inactive` (stored in meta_data). */
+function departmentStoredVisibility(department: Department): VisibilityStatus {
+  const stored = department.meta_data?.[DEPARTMENT_VISIBILITY_META_KEY];
+  if (isVisibilityStatus(stored)) return stored;
+  if (department.status !== "inactive") {
+    return toVisibilityStatus(department.status);
+  }
+  return "active";
+}
+
+function departmentEditVisibility(department: Department): VisibilityStatus {
+  if (department.status === "inactive") {
+    return departmentStoredVisibility(department);
+  }
+  return toVisibilityStatus(department.status);
 }
 
 function departmentStatusLabel(status: DepartmentStatus): string {
@@ -110,6 +136,7 @@ interface Department {
     service_providers?: DepartmentServiceProviderMeta[];
     color?: string | null;
     services?: unknown[];
+    visibility_status?: VisibilityStatus;
   } | null;
   created_at: string;
 }
@@ -142,6 +169,57 @@ function serviceProviderDisplayName(p: ServiceProvider): string {
     p.raw_user_meta_data?.name ||
     p.email ||
     "Unknown"
+  );
+}
+
+function DepartmentServicesCell({
+  count,
+  departmentId,
+  departmentName,
+  countClassName,
+  wrapperClassName,
+  onAdd,
+  canAdd,
+}: {
+  count: number;
+  departmentId: number;
+  departmentName: string;
+  countClassName: string;
+  wrapperClassName?: string;
+  onAdd: (departmentId: number, departmentName: string) => void;
+  canAdd: boolean;
+}) {
+  if (count > 0) {
+    return (
+      <p className={classNames("text-sm", wrapperClassName, countClassName)}>
+        {count} service{count !== 1 ? "s" : ""}
+      </p>
+    );
+  }
+
+  return (
+    <div
+      className={classNames(
+        "flex flex-wrap items-center gap-2",
+        wrapperClassName
+      )}
+    >
+      <span className="text-sm text-slate-400">No services</span>
+      {canAdd ? (
+        <button
+          type="button"
+          onClick={(event) => {
+            event.stopPropagation();
+            onAdd(departmentId, departmentName);
+          }}
+          aria-label={`Add service to ${departmentName}`}
+          title="Add service"
+          className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-indigo-200 bg-white text-indigo-600 transition hover:bg-indigo-50"
+        >
+          <Plus className="h-4 w-4" aria-hidden />
+        </button>
+      ) : null}
+    </div>
   );
 }
 
@@ -198,6 +276,12 @@ export default function DepartmentsPage() {
   const [busyAction, setBusyAction] = useState(false);
 
   const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
+
+  const [addServicePanelOpen, setAddServicePanelOpen] = useState(false);
+  const [addServiceDepartment, setAddServiceDepartment] = useState<{
+    id: number;
+    name: string;
+  } | null>(null);
 
   const doctorAssignmentInFlightRef = useRef<Set<string>>(new Set());
 
@@ -711,6 +795,38 @@ export default function DepartmentsPage() {
     setShowAddPanel(true);
   };
 
+  const openAddServiceForDepartment = useCallback(
+    (departmentId: number, departmentName: string) => {
+      if (isStaffUser) return;
+      setAddServiceDepartment({ id: departmentId, name: departmentName });
+      setAddServicePanelOpen(true);
+    },
+    [isStaffUser]
+  );
+
+  const closeAddServicePanel = useCallback(() => {
+    setAddServicePanelOpen(false);
+    setAddServiceDepartment(null);
+  }, []);
+
+  const handleAddServiceSaved = useCallback(
+    async ({ service }: service_form_saved_result) => {
+      toast.success(`"${service.name}" added successfully.`);
+      await fetchServices();
+      closeAddServicePanel();
+    },
+    [fetchServices, closeAddServicePanel]
+  );
+
+  const addServiceExistingNames = useMemo(() => {
+    if (!addServiceDepartment) return [];
+    return getDepartmentServices(addServiceDepartment.id).map((s) => ({
+      id: s.id,
+      name: s.name,
+      department_id: s.department_id,
+    }));
+  }, [addServiceDepartment, getDepartmentServices]);
+
   const handleAddDepartmentCreated = useCallback(
     async (created: { id: number; name: string }) => {
       await Promise.all([
@@ -731,7 +847,7 @@ export default function DepartmentsPage() {
     setEditDepartmentDescription(
       (department.description ?? "").slice(0, DESCRIPTION_MAX_LENGTH)
     );
-    setEditDepartmentStatus(toVisibilityStatus(department.status));
+    setEditDepartmentStatus(departmentEditVisibility(department));
     setEditDepartmentColor(
       parse_department_color(department.meta_data?.color) ??
         DEFAULT_DEPARTMENT_COLOR
@@ -771,15 +887,24 @@ export default function DepartmentsPage() {
       return;
     }
 
+    const editingDepartment = departments.find(
+      (d) => d.id === editingDepartmentId
+    );
+    const statusForSave: DepartmentStatus =
+      editingDepartment?.status === "inactive"
+        ? "inactive"
+        : editDepartmentStatus;
+
     setBusyAction(true);
     try {
       const data = await callApi("PUT", {
         id: editingDepartmentId,
         name: trimmedName,
         description: editDepartmentDescription.trim() || null,
-        status: editDepartmentStatus,
+        status: statusForSave,
         meta_data: {
           color: editDepartmentColor,
+          visibility_status: editDepartmentStatus,
         },
       });
 
@@ -816,11 +941,20 @@ export default function DepartmentsPage() {
   };
 
   const toggleDepartmentStatus = async (department: Department) => {
-    const nextStatus: DepartmentStatus =
-      department.status === "inactive" ? "active" : "inactive";
+    const is_inactive = department.status === "inactive";
+    const visibility = departmentStoredVisibility(department);
+    const nextStatus: DepartmentStatus = is_inactive ? visibility : "inactive";
+    const meta_data: Department["meta_data"] = {
+      ...(department.meta_data ?? {}),
+      visibility_status: visibility,
+    };
 
     setBusyAction(true);
-    const data = await callApi("PUT", { id: department.id, status: nextStatus });
+    const data = await callApi("PUT", {
+      id: department.id,
+      status: nextStatus,
+      meta_data,
+    });
     setBusyAction(false);
 
     if (data?.department) {
@@ -828,10 +962,10 @@ export default function DepartmentsPage() {
         prev.map((d) => (d.id === department.id ? { ...d, ...data.department } : d))
       );
       if (editingDepartmentId === department.id) {
-        setEditDepartmentStatus(toVisibilityStatus(nextStatus));
+        setEditDepartmentStatus(departmentEditVisibility(data.department));
       }
       toast.success(
-        nextStatus === "active"
+        is_inactive
           ? "Department activated successfully."
           : "Department deactivated successfully."
       );
@@ -1133,7 +1267,25 @@ export default function DepartmentsPage() {
 
                           return (
                             <div key={dep.id} className="group">
-                              <div className="relative flex w-full items-start md:items-center justify-between rounded-xl border border-slate-200  px-4 py-3.5 transition-all duration-200 hover:border-slate-300 hover:bg-slate-50/50 hover:shadow-sm">
+                              <div
+                                role={showRowActions ? "button" : undefined}
+                                tabIndex={showRowActions ? 0 : undefined}
+                                onClick={() => {
+                                  if (!showRowActions) return;
+                                  openEditDepartment(dep);
+                                }}
+                                onKeyDown={(e) => {
+                                  if (!showRowActions) return;
+                                  if (e.key === "Enter" || e.key === " ") {
+                                    e.preventDefault();
+                                    openEditDepartment(dep);
+                                  }
+                                }}
+                                className={classNames(
+                                  "relative flex w-full items-start md:items-center justify-between rounded-xl border border-slate-200 px-4 py-3.5 transition-all duration-200 hover:border-slate-300 hover:bg-slate-50/50 hover:shadow-sm",
+                                  showRowActions && "cursor-pointer"
+                                )}
+                              >
                                 <div className="flex items-start flex-col sm:items-center gap-3 pr-4">
                                   <div className="flex gap-2">
                                     {/* Icon */}
@@ -1161,18 +1313,15 @@ export default function DepartmentsPage() {
                                         //   {doctorCount} consultant
                                         //   {doctorCount !== 1 ? "s" : ""}
                                         // </p>
-                                        <div className="flex shrink-0 flex-col justify-center">
-                                          {services.length === 0 ? (
-                                            <p className="mt-0.5 text-sm text-slate-400">
-                                              No services
-                                            </p>
-                                          ) : (
-                                            <p className="mt-0.5 text-sm text-slate-400">
-                                              {services.length} service
-                                              {services.length !== 1 ? "s" : ""}
-                                            </p>
-                                          )}
-                                        </div>
+                                        <DepartmentServicesCell
+                                          count={services.length}
+                                          departmentId={dep.id}
+                                          departmentName={dep.name}
+                                          countClassName="text-slate-400"
+                                          wrapperClassName="mt-0.5"
+                                          onAdd={openAddServiceForDepartment}
+                                          canAdd={showRowActions}
+                                        />
                                       )}
                                     </div>
                                   </div>
@@ -1306,7 +1455,11 @@ export default function DepartmentsPage() {
 
                                 {/* ACTION */}
                                 {showRowActions && (
-                                  <div className="flex shrink-0 flex-col items-end justify-end gap-2">
+                                  <div
+                                    className="flex shrink-0 flex-col items-end justify-end gap-2"
+                                    onClick={(e) => e.stopPropagation()}
+                                    onKeyDown={(e) => e.stopPropagation()}
+                                  >
                                     {/* STATUS */}
                                     <div className="">
                                       <span
@@ -1473,7 +1626,14 @@ export default function DepartmentsPage() {
                             return (
                               <tr
                                 key={dep.id}
-                                className="cursor-pointer transition hover:bg-slate-50 border border-slate-100 last:border-b-0  border-b border-slate-100"
+                                onClick={() => {
+                                  if (!showRowActions) return;
+                                  openEditDepartment(dep);
+                                }}
+                                className={classNames(
+                                  "transition hover:bg-slate-50 border border-slate-100 last:border-b-0 border-b border-slate-100",
+                                  showRowActions && "cursor-pointer"
+                                )}
                               >
                                 <td className="text-sm px-6 py-5 align-middle border-b border-slate-100" data-label="Department">
                                   <div className="flex max-[1301px]:justify-end gap-2.5">
@@ -1549,16 +1709,14 @@ export default function DepartmentsPage() {
                                 </td>
 
                                 <td className="text-sm px-6 py-5 align-middle border-b border-slate-100" data-label="Services">
-                                  {services.length === 0 ? (
-                                    <span className="text-sm text-slate-400">
-                                      No services
-                                    </span>
-                                  ) : (
-                                    <p className="text-sm text-slate-700">
-                                      {services.length} service
-                                      {services.length !== 1 ? "s" : ""}
-                                    </p>
-                                  )}
+                                  <DepartmentServicesCell
+                                    count={services.length}
+                                    departmentId={dep.id}
+                                    departmentName={dep.name}
+                                    countClassName="text-slate-700"
+                                    onAdd={openAddServiceForDepartment}
+                                    canAdd={showRowActions}
+                                  />
                                 </td>
 
                                 <td className="text-sm px-6 py-5 align-middle border-b border-slate-100" data-label="Status">
@@ -1573,7 +1731,11 @@ export default function DepartmentsPage() {
                                 </td>
 
                                 {showRowActions && (
-                                  <td className="px-6 py-5 whitespace-nowrap text-right text-sm font-medium align-middle border-b border-slate-100" data-label="Action">
+                                  <td
+                                    className="px-6 py-5 whitespace-nowrap text-right text-sm font-medium align-middle border-b border-slate-100"
+                                    data-label="Action"
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
                                     <div className="flex items-center justify-end gap-2">
                                       <PortalActionsMenu
                                         open={rowMenuId === dep.id}
@@ -1742,7 +1904,7 @@ export default function DepartmentsPage() {
           />
         {editPanelVisible && (
           <>
-            <div className="relative ml-auto flex w-full max-w-xl flex-col border-l border-slate-200 bg-white shadow-2xl pb-[60px] lg:pb-0">
+            <div className="relative ml-auto flex w-full max-w-xl flex-col border-l border-slate-200 bg-white shadow-2xl">
               <div className="flex shrink-0 items-center justify-between border-b border-slate-200 px-5 py-4">
                 <h2 className="text-lg font-bold text-slate-900">
                   Edit Department
@@ -1758,7 +1920,7 @@ export default function DepartmentsPage() {
               </div>
 
               <div className="flex min-h-0 flex-1 flex-col overflow-hidden overscroll-contain">
-                <div className="flex h-full min-h-0 flex-col pb-[60px] lg:pb-0">
+                <div className="flex h-full min-h-0 flex-col">
                   <div className="flex-1 overflow-y-auto px-5 py-5">
                     <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
                       <PanelSection number={1} title="Basic Details">
@@ -2091,7 +2253,7 @@ export default function DepartmentsPage() {
                   </div>
 
                   <div className="shrink-0 border-t border-slate-200 bg-white px-5 py-4">
-                    <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+                    <div className="flex gap-2 flex-row justify-end">
                       <button
                         type="button"
                         onClick={closeEditDepartmentPanel}
@@ -2135,6 +2297,14 @@ export default function DepartmentsPage() {
           loading={busyAction}
         />
       )}
+
+      <ServiceAddPanelDrawer
+        open={addServicePanelOpen}
+        department={addServiceDepartment}
+        existing_services={addServiceExistingNames}
+        on_close={closeAddServicePanel}
+        on_saved={handleAddServiceSaved}
+      />
 
     </>
   );

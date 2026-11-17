@@ -46,6 +46,7 @@ import {
   CLAIM_FREE_EXIT_COPY,
   useClaimFreeRegister,
 } from "@/src/hooks/useClaimFreeRegister";
+import { OnboardingBootstrapLoading } from "./OnboardingBootstrapLoading";
 
 type OnboardingRole = "workspace_admin" | "service_provider";
 
@@ -1939,6 +1940,9 @@ export default function RegisterForm() {
   }
 
   if (onboardingMode === null) {
+    if (searchParams.get("onboarding") === "1") {
+      return <OnboardingBootstrapLoading step={searchParams.get("step")} />;
+    }
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-white to-purple-50">
         <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600" />

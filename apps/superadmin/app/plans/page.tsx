@@ -14,7 +14,9 @@ import { PlanTableSkeleton } from "@/src/components/Plans/PlanTableSkeleton";
 type PlanFormState = {
   name: string;
   slug: string;
+  description: string;
   price: string;
+  annual_discount_percent: string;
   booking_limit: string;
   booking_limit_period: booking_limit_period;
   unlimited_bookings: boolean;
@@ -45,7 +47,9 @@ type PlanFormState = {
 const EMPTY_FORM: PlanFormState = {
   name: "",
   slug: "",
+  description: "",
   price: "0",
+  annual_discount_percent: "0",
   booking_limit: "250",
   booking_limit_period: "lifetime",
   unlimited_bookings: false,
@@ -77,7 +81,9 @@ function planToForm(plan: plans_with_content): PlanFormState {
   return {
     name: plan.name,
     slug: plan.slug,
+    description: plan.description ?? "",
     price: String(plan.price),
+    annual_discount_percent: String(plan.annual_discount_percent ?? 0),
     booking_limit: isUnlimitedBookingLimit(plan.booking_limit)
       ? String(UNLIMITED_BOOKING_LIMIT)
       : String(plan.booking_limit),
@@ -115,7 +121,9 @@ function formToPayload(form: PlanFormState) {
   return {
     name: form.name.trim(),
     slug: form.slug.trim().toLowerCase(),
+    description: form.description.trim() || null,
     price: Number(form.price),
+    annual_discount_percent: Number(form.annual_discount_percent) || 0,
     booking_limit: form.unlimited_bookings
       ? UNLIMITED_BOOKING_LIMIT
       : Number(form.booking_limit),
@@ -557,6 +565,16 @@ export default function PlansPage() {
                         <p className="mt-1 text-sm text-red-600">{formErrors.name}</p>
                       )}
                     </div>
+                    <div className="sm:col-span-2">
+                      <label className={labelClass}>Description</label>
+                      <textarea
+                        rows={2}
+                        className={`${inputClass} resize-y`}
+                        value={form.description}
+                        placeholder='e.g. "Perfect for solo providers and small teams launching online booking."'
+                        onChange={(e) => setForm((p) => ({ ...p, description: e.target.value }))}
+                      />
+                    </div>
                     <div>
                       <label className={labelClass}>Slug *</label>
                       <input
@@ -588,6 +606,24 @@ export default function PlansPage() {
                         value={form.price}
                         onChange={(e) => setForm((p) => ({ ...p, price: e.target.value }))}
                       />
+                    </div>
+                    <div>
+                      <label className={labelClass}>Annual discount (%)</label>
+                      <input
+                        type="number"
+                        min="0"
+                        max="100"
+                        step="0.01"
+                        className={inputClass}
+                        value={form.annual_discount_percent}
+                        onChange={(e) =>
+                          setForm((p) => ({ ...p, annual_discount_percent: e.target.value }))
+                        }
+                        placeholder="e.g. 20"
+                      />
+                      <p className="mt-1 text-xs text-slate-500">
+                        Percent off vs 12× monthly price when billed annually.
+                      </p>
                     </div>
                     <div>
                       <div className="mb-1 flex items-center justify-between gap-2">

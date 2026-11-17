@@ -427,7 +427,14 @@ export default function ProfileCreative({ }) {
         fileInputRef.current.value = "";
       }
 
-      writeCachedProfileImage(avatarUrl);
+      {
+        const meta = (user.user_metadata ?? {}) as Record<string, unknown>;
+        const workspaceId =
+          typeof meta.workspace_id === 'number' || typeof meta.workspace_id === 'string'
+            ? meta.workspace_id
+            : null;
+        writeCachedProfileImage(avatarUrl, user.id, workspaceId);
+      }
 
       toast.success("Profile updated successfully.");
       formDirtyRef.current = false;

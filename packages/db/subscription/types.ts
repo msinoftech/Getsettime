@@ -10,7 +10,9 @@ export type plans = {
   id: number;
   name: string;
   slug: string;
+  description: string | null;
   price: number;
+  annual_discount_percent: number;
   /** -1 = unlimited bookings (respects booking_limit_period for display only) */
   booking_limit: number;
   /** monthly = cap per UTC month; lifetime = total cap for workspace */
@@ -68,7 +70,9 @@ export type plan_content_input = {
 export type plan_input = {
   name: string;
   slug: string;
+  description?: string | null;
   price: number;
+  annual_discount_percent?: number;
   booking_limit: number;
   booking_limit_period?: booking_limit_period;
   user_limit?: number;

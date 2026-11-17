@@ -1473,9 +1473,6 @@ export default function EventTypes() {
                             Duration
                           </th>
                           <th className="px-6 py-4 font-semibold">
-                            Capacity
-                          </th>
-                          <th className="px-6 py-4 font-semibold">
                             Team / Provider
                           </th>
                           <th className="px-6 py-4 font-semibold">
@@ -1506,9 +1503,20 @@ export default function EventTypes() {
                           return (
                             <tr
                               key={item.id}
-                              className="cursor-pointer transition hover:bg-slate-50 border border-slate-100 last:border-b-0  border-b border-slate-100"
+                              onClick={() => {
+                                if (isStaffUser) return;
+                                handleEdit(item);
+                              }}
+                              className={cn(
+                                "transition hover:bg-slate-50 border border-slate-100 last:border-b-0 border-b border-slate-100",
+                                !isStaffUser && "cursor-pointer"
+                              )}
                             >
-                              <td className="text-sm px-6 py-5 align-middle border-b border-slate-100" data-label="Select">
+                              <td
+                                className="text-sm px-6 py-5 align-middle border-b border-slate-100"
+                                data-label="Select"
+                                onClick={(e) => e.stopPropagation()}
+                              >
                                 <input
                                   type="checkbox"
                                   checked={selected}
@@ -1552,9 +1560,6 @@ export default function EventTypes() {
                               <td className="text-sm px-6 py-5 align-middle border-b border-slate-100" data-label="Duration">
                                 {format_duration_short(item.duration_minutes)}
                               </td>
-                              <td className="text-sm px-6 py-5 align-middle border-b border-slate-100" data-label="Capacity">
-                                {capacity}
-                              </td>
                               <td className="text-sm px-6 py-5 align-middle border-b border-slate-100" data-label="Team / Provider">
                                 <EventTypeAssignedProviders
                                   eventType={item}
@@ -1579,7 +1584,11 @@ export default function EventTypes() {
                                 </span>
                               </td>
                               {!isStaffUser ? (
-                                <td className="px-6 py-5 whitespace-nowrap text-right text-sm font-medium align-middle border-b border-slate-100" data-label="Action">
+                                <td
+                                  className="px-6 py-5 whitespace-nowrap text-right text-sm font-medium align-middle border-b border-slate-100"
+                                  data-label="Action"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
                                   <div className="flex items-center justify-end">
                                     <EventTypeActionsMenu
                                       open={open_menu_id === item.id}
@@ -1665,7 +1674,7 @@ export default function EventTypes() {
           />
         {panel_visible && (
           <>
-              <div className="relative ml-auto flex w-full max-w-5xl flex-col border-l border-slate-200 bg-white shadow-2xl pb-[60px] lg:pb-0">
+              <div className="relative ml-auto flex w-full max-w-5xl flex-col border-l border-slate-200 bg-white shadow-2xl">
                 <div className="flex shrink-0 items-center justify-between border-b border-slate-200 px-5 py-4">
                   <h2 className="text-lg font-bold text-slate-900">
                     {editingId ? "Edit Event Type" : "Add Event Type"}
@@ -1680,7 +1689,7 @@ export default function EventTypes() {
                   </button>
                 </div>
 
-              <div className="flex min-h-0 h-full flex-1 flex-col pb-[60px] lg:pb-0">
+              <div className="flex min-h-0 h-full flex-1 flex-col">
                 {editingId !== null ? (
                   <EventTypeEditForm
                     key={editingId}
@@ -1737,14 +1746,14 @@ export default function EventTypes() {
       )}
 
       {settings_open && (
-        <div className="fixed inset-0 z-999 flex">
+        <div className="fixed inset-0 z-100001 flex">
           <button
             type="button"
             aria-label="Close settings"
             onClick={() => set_settings_open(false)}
             className="absolute inset-0 cursor-default bg-slate-900/40 backdrop-blur-[2px]"
           />
-          <div className="relative ml-auto flex w-full max-w-xl flex-col border-l border-slate-200 bg-white shadow-2xl pb-[60px] lg:pb-0">
+          <div className="relative ml-auto flex w-full max-w-xl flex-col border-l border-slate-200 bg-white shadow-2xl">
             <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4 sm:px-6">
               <div className="flex gap-3">
                 <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-indigo-100 text-indigo-600">

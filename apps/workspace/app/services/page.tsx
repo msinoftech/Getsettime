@@ -590,11 +590,17 @@ export default function ServicesPage() {
         : `"${service.name}" added successfully.`
     );
 
-    if (!assignments_synced) {
-      setServices((prev) => [service, ...prev]);
-      return;
+    if (assignments_synced) {
+      await refreshServiceAssignments();
+    } else {
+      setServices((prev) => {
+        const exists = prev.some((row) => row.id === service.id);
+        if (exists) {
+          return prev.map((row) => (row.id === service.id ? service : row));
+        }
+        return [service, ...prev];
+      });
     }
-    await refreshServiceAssignments();
     closeServicePanel();
   };
 
@@ -1159,7 +1165,17 @@ export default function ServicesPage() {
                           const deptName = getServiceDepartmentName(service);
                           const serviceDepartment = getServiceDepartment(service);
                           return (
-                            <tr key={service.id} className="cursor-pointer transition hover:bg-slate-50 border border-slate-100 last:border-b-0  border-b border-slate-100">
+                            <tr
+                              key={service.id}
+                              onClick={() => {
+                                if (!showRowActions) return;
+                                openEditService(service);
+                              }}
+                              className={classNames(
+                                "transition hover:bg-slate-50 border border-slate-100 last:border-b-0 border-b border-slate-100",
+                                showRowActions && "cursor-pointer"
+                              )}
+                            >
                               <td className="text-sm px-6 py-5 align-middle border-b border-slate-100" data-label="Department">
                                 {serviceDepartment ? (
                                   <span className={classNames(
@@ -1243,7 +1259,11 @@ export default function ServicesPage() {
                                 </span>
                               </td>
                               {showRowActions ? (
-                                <td className="px-6 py-5 whitespace-nowrap text-right text-sm font-medium align-middle border-b border-slate-100" data-label="Action">
+                                <td
+                                  className="px-6 py-5 whitespace-nowrap text-right text-sm font-medium align-middle border-b border-slate-100"
+                                  data-label="Action"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
                                   <div className="flex items-center justify-end gap-2">
                                     <PortalActionsMenu
                                       open={rowMenuId === service.id}
@@ -1359,7 +1379,25 @@ export default function ServicesPage() {
 
                   return (
                     <div key={service.id} className="rounded-2xl border border-slate-200 bg-white p-3.5 shadow-[0_8px_24px_-18px_rgba(15,23,42,0.35)]">
-                      <div className={classNames( "flex w-full items-start gap-3 text-left", showRowActions ? "cursor-pointer" :  "cursor-default" )}>
+                      <div
+                        role={showRowActions ? "button" : undefined}
+                        tabIndex={showRowActions ? 0 : undefined}
+                        onClick={() => {
+                          if (!showRowActions) return;
+                          openEditService(service);
+                        }}
+                        onKeyDown={(e) => {
+                          if (!showRowActions) return;
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            openEditService(service);
+                          }
+                        }}
+                        className={classNames(
+                          "flex w-full items-start gap-3 text-left",
+                          showRowActions ? "cursor-pointer" : "cursor-default"
+                        )}
+                      >
                         <div className="w-full flex justify-between">
                           <div className="flex w-full justify-between gap-2">
                             
@@ -1482,7 +1520,11 @@ export default function ServicesPage() {
                                 </span>
                               </div>
                               
-                              <div className="flex items-center gap-2">
+                              <div
+                                className="flex items-center gap-2"
+                                onClick={(e) => e.stopPropagation()}
+                                onKeyDown={(e) => e.stopPropagation()}
+                              >
                                 {showRowActions ? (
                                   <PortalActionsMenu
                                     open={rowMenuId === `mobile-${service.id}`}

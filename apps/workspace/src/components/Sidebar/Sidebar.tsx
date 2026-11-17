@@ -23,7 +23,7 @@ const PATH_TO_MENU: Record<string, string> = {
   "/team": "team",
   "/profile": "profile",
   "/settings": "settings",
-  "/billings": "billings",
+  "/plans": "plans",
   "/contacts": "contacts",
   "/roles-permissions": "roles-permissions",
   "/calendar": "calendar",
@@ -34,7 +34,7 @@ const ADMIN_CENTER_MENUS = [
   "contacts",
   "integrations",
   "roles-permissions",
-  "billings",
+  "plans",
   "settings",
 ];
 
@@ -214,10 +214,6 @@ export default function Sidebar() {
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-shield-check h-4.5 w-4.5" aria-hidden="true" data-source-pos="107:20-107:52" data-source-name="Icon"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"></path><path d="m9 12 2 2 4-4"></path></svg>
               Roles &amp; permissions
             </Link>
-            {/* <Link href="/billings" className={`flex items-center gap-3 rounded-lg px-4 py-2 text-left text-[14px] font-medium transition-all ${ activeMenu === "billings" ? "bg-indigo-50 text-indigo-600 shadow-sm" : "text-gray-700 hover:text-indigo-600 hover:bg-indigo-50" }`} onClick={handleNavClick}>
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4.5 w-4.5" aria-hidden="true"><rect width="20" height="14" x="2" y="5" rx="2"/><line x1="2" x2="22" y1="10" y2="10"/></svg>
-              Billing &amp; Plans
-            </Link>             */}
             <Link href="/contacts" className={`flex items-center gap-3 rounded-lg px-4 py-2 text-left text-[14px] font-medium transition-all ${ activeMenu === "contacts" ? "bg-indigo-50 text-indigo-600 shadow-sm" : "text-gray-700 hover:text-indigo-600 hover:bg-indigo-50" }`} onClick={handleNavClick}>
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-contact h-4.5 w-4.5" aria-hidden="true" data-source-pos="107:20-107:52" data-source-name="Icon"><path d="M16 2v2"></path><path d="M7 22v-2a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v2"></path><path d="M8 2v2"></path><circle cx="12" cy="11" r="3"></circle><rect x="3" y="4" width="18" height="18" rx="2"></rect></svg>
               Contacts

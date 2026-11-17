@@ -2,9 +2,8 @@
 
 import { getWorkspaceSession } from '@/src/lib/auth_session';
 import { useEffect, useMemo, useState } from 'react';
-import { supabase } from '@/lib/supabaseClient';
 import DashboardIcon from '@/src/components/Dashboard/DashboardIcon';
-import { WorkspaceUserAvatar } from '@/src/components/User/WorkspaceUserAvatar';
+import { UserAvatar } from '@app/ui';
 import { useWorkspaceSettings } from '@/src/hooks/useWorkspaceSettings';
 import { build_service_provider_public_booking_url, build_workspace_public_booking_url } from '@/src/utils/public_booking_link';
 import { ROLE_SERVICE_PROVIDER } from '@/src/constants/roles';
@@ -33,7 +32,6 @@ export function PublicBookingPreviewCard() {
     serviceProviderLinkSlug,
     workspaceName,
     general,
-    workspaceLogo,
   } = useWorkspaceSettings();
 
   const is_service_provider =
@@ -42,13 +40,9 @@ export function PublicBookingPreviewCard() {
 
   const workspace_title =
     workspaceName?.trim() || general.accountName?.trim() || 'Your workspace';
-  const workspace_logo_uploaded =
-    workspaceLogo?.trim() || general.logoUrl?.trim() || undefined;
-  const service_provider_name =
-    (user?.user_metadata?.full_name as string | undefined)?.trim() ||
-    (user?.user_metadata?.name as string | undefined)?.trim() ||
-    user?.email?.split('@')[0] ||
-    undefined;
+  // Preview badge shows only the first letter of the workspace name (never a photo/logo).
+  const workspace_initial =
+    workspace_title.trim().charAt(0).toUpperCase() || '?';
 
   const booking_url = useMemo(() => {
     if (is_service_provider) {
@@ -143,11 +137,9 @@ export function PublicBookingPreviewCard() {
 
       <div className="mt-4 rounded-2xl border border-slate-100 bg-slate-50/60 p-5 text-slate-900">
         <div className="flex items-center gap-3">
-          <WorkspaceUserAvatar
-            userId={is_service_provider ? user?.id : undefined}
-            name={is_service_provider ? service_provider_name : workspace_title}
-            email={is_service_provider ? user?.email : undefined}
-            avatarUrl={is_service_provider ? undefined : workspace_logo_uploaded}
+          <UserAvatar
+            avatarUrl={null}
+            name={workspace_initial}
             size="lg"
             shape="rounded"
             className="h-11 w-11 bg-indigo-500 text-white shadow-sm"

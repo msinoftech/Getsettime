@@ -781,7 +781,19 @@ export default function ContactsCreative() {
                     const status = get_contact_status(contact);
 
                     return (
-                      <div key={contact.id} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition hover:shadow-md">
+                      <div
+                        key={contact.id}
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => handle_edit_contact(contact)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            handle_edit_contact(contact);
+                          }
+                        }}
+                        className="cursor-pointer rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition hover:shadow-md"
+                      >
                         {/* Header */}
                         <div className="flex items-start justify-between gap-3">
                           <div className="flex min-w-0 items-start gap-3">
@@ -817,7 +829,11 @@ export default function ContactsCreative() {
                             </div>
                           </ScreenGate>
 
-                          <div className="flex flex-col justify-end items-end gap-1">
+                          <div
+                            className="flex flex-col justify-end items-end gap-1"
+                            onClick={(e) => e.stopPropagation()}
+                            onKeyDown={(e) => e.stopPropagation()}
+                          >
                             {/* Status */}
                             <span
                               className={`shrink-0 rounded-xl px-3 py-1 text-xs font-bold capitalize border ${
@@ -1001,7 +1017,8 @@ export default function ContactsCreative() {
                       {filtered_contacts.map((contact) => (
                         <tr
                           key={contact.id}
-                          className="cursor-pointer transition hover:bg-slate-50 border border-slate-100 last:border-b-0  border-b border-slate-100"
+                          onClick={() => handle_edit_contact(contact)}
+                          className="cursor-pointer transition hover:bg-slate-50 border border-slate-100 last:border-b-0 border-b border-slate-100"
                         >
                           <td className="text-sm px-6 py-5 align-middle border-b border-slate-100" data-label="Contact">
                             <div className="flex items-start max-[1301px]:justify-end gap-2.5">
@@ -1062,7 +1079,11 @@ export default function ContactsCreative() {
                             </span>
                           </td>
 
-                          <td className="text-sm px-6 py-5 align-middle border-b border-slate-100" data-label="Actions">
+                          <td
+                            className="text-sm px-6 py-5 align-middle border-b border-slate-100"
+                            data-label="Actions"
+                            onClick={(e) => e.stopPropagation()}
+                          >
                             <div className="flex items-center justify-end gap-2">
                               <IconButton
                                 label="View"

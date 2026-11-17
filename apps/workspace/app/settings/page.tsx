@@ -958,7 +958,7 @@ export default function SettingsPage() {
   };
 
   const link_field_class = (hasError: boolean) =>
-    `relative flex min-w-0 overflow-hidden rounded-xl border bg-slate-50 transition focus-within:bg-white focus-within:ring-4 focus-within:ring-indigo-100 flex-row ${
+    `relative flex flex-col sm-flex-row min-w-0 overflow-hidden rounded-xl border bg-slate-50 transition focus-within:bg-white focus-within:ring-4 focus-within:ring-indigo-100 ${
       hasError
         ? "border-red-400 focus-within:border-red-500"
         : "border-slate-200 focus-within:border-indigo-400"
@@ -1081,7 +1081,7 @@ export default function SettingsPage() {
                   </div>
 
                   <div className="grid gap-5">
-                    <div className="grid gap-5 sm:grid-cols-3">
+                    <div className="w-full grid gap-5 sm:grid-cols-3">
                       <label className="col-span-2 sm:col-span-1 block">
                         <span className="mb-2 block text-sm font-bold text-slate-700">
                           Workspace Name

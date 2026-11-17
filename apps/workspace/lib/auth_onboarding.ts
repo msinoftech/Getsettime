@@ -40,13 +40,23 @@ export function workspaceOnboardingResumeStep(
 ): number {
   const lastDone = workspaceOnboardingLastCompletedStep(userMetadata);
   const oc = parseMetadataBoolean(userMetadata?.onboarding_completed);
+  if (oc === true) {
+    return WORKSPACE_ONBOARDING_STEP_COUNT;
+  }
   if (
     workspaceHasProfessionOrType === false &&
-    (oc === true || lastDone >= WORKSPACE_ONBOARDING_STEP_COUNT)
+    lastDone >= WORKSPACE_ONBOARDING_STEP_COUNT
   ) {
     return 1;
   }
   return Math.min(WORKSPACE_ONBOARDING_STEP_COUNT, Math.max(1, lastDone + 1));
+}
+
+/** Authoritative flag: user finished the workspace admin onboarding wizard. */
+export function workspaceAdminOnboardingCompleteFromMetadata(
+  userMetadata: Record<string, unknown> | null | undefined
+): boolean {
+  return parseMetadataBoolean(userMetadata?.onboarding_completed) === true;
 }
 
 export const INVITE_WORKSPACE_STORAGE_KEY = "gst_invite_workspace_id";
@@ -110,14 +120,15 @@ export function workspaceAdminNeedsOnboardingWizard(
 ): boolean {
   const oc = parseMetadataBoolean(userMetadata?.onboarding_completed);
   if (oc === true) {
-    if (!workspaceHasProfessionOrType) return true;
     return false;
   }
   if (oc === false) return true;
 
   const lastDone = workspaceOnboardingLastCompletedStep(userMetadata);
   if (lastDone > 0 && lastDone < WORKSPACE_ONBOARDING_STEP_COUNT) return true;
-  if (lastDone >= WORKSPACE_ONBOARDING_STEP_COUNT) return true;
+  if (lastDone >= WORKSPACE_ONBOARDING_STEP_COUNT) {
+    return false;
+  }
 
   return !workspaceHasProfessionOrType;
 }

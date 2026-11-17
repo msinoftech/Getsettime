@@ -50,6 +50,8 @@ export default function RecentActivityFeed() {
 
   useEffect(() => {
     let alive = true;
+    let idle_id: number | undefined;
+    let timeout_id: ReturnType<typeof setTimeout> | undefined;
 
     const load = async () => {
       set_loading(true);
@@ -77,9 +79,22 @@ export default function RecentActivityFeed() {
       }
     };
 
-    load();
+    const schedule = () => {
+      if (alive) void load();
+    };
+
+    if (typeof window !== "undefined" && typeof window.requestIdleCallback === "function") {
+      idle_id = window.requestIdleCallback(schedule, { timeout: 2000 });
+    } else {
+      timeout_id = setTimeout(schedule, 400);
+    }
+
     return () => {
       alive = false;
+      if (idle_id != null && typeof window !== "undefined") {
+        window.cancelIdleCallback(idle_id);
+      }
+      if (timeout_id != null) clearTimeout(timeout_id);
     };
   }, []);
 

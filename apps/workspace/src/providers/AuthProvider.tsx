@@ -15,6 +15,7 @@ import {
   isAllowedPathDuringWorkspaceOnboarding,
   workspaceOnboardingRegisterUrl,
   workspaceOnboardingInviteWorkspaceId,
+  workspaceAdminOnboardingCompleteFromMetadata,
   type workspace_admin_onboarding_status,
 } from '@/lib/auth_onboarding'
 import { logAuthActivityFromSession, logAuthActivityLoginDeduped, signOutWithAuthLog } from '@/src/lib/auth_activity_log_client'
@@ -126,6 +127,28 @@ async function workspaceAdminOnboardingStatusWithTimeout(
   )
 }
 
+/**
+ * Onboarding redirects on cold session start only. Login/register handle post-sign-in routing;
+ * TOKEN_REFRESHED must not re-run the gate (tab focus).
+ */
+function shouldEnforceOnboardingRedirect(
+  authEvent: AuthChangeEvent | undefined,
+  userId: string,
+  gateAlreadyRanForUserId: string | null
+): boolean {
+  if (
+    authEvent === 'TOKEN_REFRESHED' ||
+    authEvent === 'USER_UPDATED' ||
+    authEvent === 'SIGNED_IN'
+  ) {
+    return false
+  }
+  if (authEvent === undefined || authEvent === 'INITIAL_SESSION') {
+    return gateAlreadyRanForUserId !== userId
+  }
+  return false
+}
+
 async function workspaceAdminOnboardingStatusWithRetry(
   supabaseClient: Parameters<typeof resolveWorkspaceAdminOnboardingStatus>[0],
   user: SupabaseUser
@@ -184,6 +207,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     installWorkspaceApiUnauthorizedHandler()
   }, [])
 
+  const onboardingGateRanForUserIdRef = useRef<string | null>(null)
+
   useEffect(() => {
     const clearInvalidSession = async () => {
       await signOutLocalBounded('session_invalid')
@@ -201,6 +226,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setAccessToken(session?.access_token ?? null)
 
       if (!session?.user) {
+        onboardingGateRanForUserIdRef.current = null
         setUser(null)
         if (!isPublicPath(pathname_ref.current)) {
           router_ref.current.push('/login')
@@ -266,48 +292,54 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return
       }
 
-      if (
-        userRole === 'workspace_admin' &&
-        !isPublicPath(pathname_ref.current) &&
-        !isAllowedPathDuringWorkspaceOnboarding(pathname_ref.current)
-      ) {
-        let onboardingStatus: { incomplete: boolean; hasWorkspaceProfile: boolean }
-        try {
-          onboardingStatus = await workspaceAdminOnboardingStatusWithRetry(
-            supabase,
-            currentUser as SupabaseUser
-          )
-        } catch (e) {
-          console.error(e)
-          await clearInvalidSession()
-          return
-        }
-        if (onboardingStatus.incomplete) {
-          const meta = currentUser.user_metadata as Record<string, unknown> | undefined
-          router_ref.current.push(
-            workspaceOnboardingRegisterUrl(meta ?? {}, {
-              workspaceHasProfessionOrType: onboardingStatus.hasWorkspaceProfile,
-            })
-          )
-          setUser(currentUser)
-          return
-        }
-      }
+      const enforceOnboarding = shouldEnforceOnboardingRedirect(
+        authEvent,
+        currentUser.id,
+        onboardingGateRanForUserIdRef.current
+      )
 
-      if (
-        userRole === 'service_provider' &&
+      const onAppRoute =
         !isPublicPath(pathname_ref.current) &&
         !isAllowedPathDuringWorkspaceOnboarding(pathname_ref.current)
-      ) {
-        if (serviceProviderIncompleteOnboarding(currentUser as SupabaseUser)) {
-          const meta = currentUser.user_metadata as Record<string, unknown> | undefined
-          router_ref.current.push(
-            workspaceOnboardingRegisterUrl(meta ?? {}, {
+
+      if (enforceOnboarding && onAppRoute) {
+        const meta = currentUser.user_metadata as Record<string, unknown> | undefined
+
+        if (userRole === 'workspace_admin') {
+          onboardingGateRanForUserIdRef.current = currentUser.id
+
+          if (!workspaceAdminOnboardingCompleteFromMetadata(meta)) {
+            let onboardingStatus: { incomplete: boolean; hasWorkspaceProfile: boolean }
+            try {
+              onboardingStatus = await workspaceAdminOnboardingStatusWithRetry(
+                supabase,
+                currentUser as SupabaseUser
+              )
+            } catch (e) {
+              console.error(e)
+              await clearInvalidSession()
+              return
+            }
+            if (onboardingStatus.incomplete) {
+              const registerPath = workspaceOnboardingRegisterUrl(meta ?? {}, {
+                workspaceHasProfessionOrType: onboardingStatus.hasWorkspaceProfile,
+              })
+              router_ref.current.push(registerPath)
+              setUser(currentUser)
+              return
+            }
+          }
+        } else if (userRole === 'service_provider') {
+          onboardingGateRanForUserIdRef.current = currentUser.id
+
+          if (serviceProviderIncompleteOnboarding(currentUser as SupabaseUser)) {
+            const registerPath = workspaceOnboardingRegisterUrl(meta ?? {}, {
               inviteWorkspaceId: workspaceOnboardingInviteWorkspaceId(meta),
             })
-          )
-          setUser(currentUser)
-          return
+            router_ref.current.push(registerPath)
+            setUser(currentUser)
+            return
+          }
         }
       }
 

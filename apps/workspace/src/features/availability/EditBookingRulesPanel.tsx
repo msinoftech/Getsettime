@@ -323,7 +323,7 @@ export function EditBookingRulesPanel({
             className="absolute inset-0 cursor-default bg-slate-900/40 backdrop-blur-[2px]"
           />
         {panelVisible ? (
-          <div className="relative ml-auto flex w-full max-w-xl flex-col border-l border-slate-200 bg-white shadow-2xl pb-[60px] lg:pb-0">
+          <div className="relative ml-auto flex w-full max-w-xl flex-col border-l border-slate-200 bg-white shadow-2xl">
             <div className="flex shrink-0 items-center justify-between border-b border-slate-200 px-5 py-4">
               <h2 className="text-lg font-bold text-slate-900">
                 {panel_title(target)}
@@ -581,7 +581,7 @@ export function EditBookingRulesPanel({
               )}
             </div>
 
-            <div className="flex shrink-0 items-center justify-between gap-3 border-t border-slate-200 px-5 py-4">
+            <div className="flex shrink-0 items-center justify-end gap-3 border-t border-slate-200 px-5 py-4">
               <button
                 type="button"
                 onClick={handleClose}

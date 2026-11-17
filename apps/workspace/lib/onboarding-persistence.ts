@@ -286,7 +286,7 @@ async function persist_departments_for_user(
   supabaseAdmin: SupabaseClient,
   ctx: onboarding_auth_context,
   names: string[]
-): Promise<{ error: string | null }> {
+): Promise<{ error: string | null; departmentIds: number[] }> {
   const uniqueNames: string[] = [];
   const seen = new Set<string>();
   for (const n of names.map((x) => x.trim()).filter(Boolean)) {
@@ -297,7 +297,7 @@ async function persist_departments_for_user(
   }
 
   if (uniqueNames.length === 0) {
-    return { error: 'At least one department is required' };
+    return { error: 'At least one department is required', departmentIds: [] };
   }
 
   const { data: existingRows, error: existingErr } = await supabaseAdmin
@@ -305,27 +305,63 @@ async function persist_departments_for_user(
     .select('id, name, flag')
     .eq('workspace_id', ctx.workspaceId);
 
-  if (existingErr) return { error: existingErr.message };
+  if (existingErr) return { error: existingErr.message, departmentIds: [] };
 
   const existing = (existingRows ?? []) as { id: number; name: string; flag: boolean }[];
   const resolved: resolved_department[] = [];
 
   for (const deptName of uniqueNames) {
     const row = await resolve_department_by_name(supabaseAdmin, ctx.workspaceId, deptName, existing);
-    if (!row) return { error: `Failed to create department "${deptName}"` };
+    if (!row) return { error: `Failed to create department "${deptName}"`, departmentIds: [] };
     resolved.push(row);
     if (!existing.some((d) => d.id === row.id)) {
       existing.push({ id: row.id, name: row.name, flag: true });
     }
   }
 
+  const departmentIds = resolved.map((r) => r.id);
   const linkErr = await link_user_departments(
     supabaseAdmin,
     ctx.workspaceId,
     ctx.userId,
-    resolved.map((r) => r.id)
+    departmentIds
   );
-  return { error: linkErr.error };
+  return { error: linkErr.error, departmentIds: linkErr.error ? [] : departmentIds };
+}
+
+/**
+ * Workspace-admin default event type is created at bootstrap (before departments exist).
+ * Assign the first onboarding department once step 1 has persisted departments.
+ */
+async function assign_department_to_admin_default_event_type(
+  supabaseAdmin: SupabaseClient,
+  workspaceId: number,
+  departmentId: number
+): Promise<{ error: string | null }> {
+  if (!Number.isFinite(departmentId) || departmentId <= 0) {
+    return { error: null };
+  }
+
+  const defaultEventId = await resolveDefaultEventTypeId(supabaseAdmin, workspaceId);
+  if (defaultEventId == null) {
+    console.warn(
+      'assign_department_to_admin_default_event_type: no default event type for workspace',
+      workspaceId
+    );
+    return { error: null };
+  }
+
+  const { error } = await supabaseAdmin
+    .from('event_types')
+    .update({ department_id: departmentId })
+    .eq('id', defaultEventId)
+    .eq('workspace_id', workspaceId);
+
+  if (error) {
+    console.error('assign_department_to_admin_default_event_type:', error);
+    return { error: error.message };
+  }
+  return { error: null };
 }
 
 async function persist_admin_profession(
@@ -498,12 +534,22 @@ export async function apply_onboarding_step1(
     if (profErr.error) return profErr;
   }
 
-  const deptErr = await persist_departments_for_user(
+  const deptResult = await persist_departments_for_user(
     supabaseAdmin,
     ctx,
     body.department_names
   );
-  if (deptErr.error) return deptErr;
+  if (deptResult.error) return { error: deptResult.error };
+
+  // Admin default event type already exists from workspace bootstrap; attach first department now.
+  if (ctx.role === ROLE_WORKSPACE_ADMIN && deptResult.departmentIds.length > 0) {
+    const assignErr = await assign_department_to_admin_default_event_type(
+      supabaseAdmin,
+      ctx.workspaceId,
+      deptResult.departmentIds[0]!
+    );
+    if (assignErr.error) return assignErr;
+  }
 
   const extra: Record<string, unknown> = {};
   if (ctx.role === ROLE_SERVICE_PROVIDER) {

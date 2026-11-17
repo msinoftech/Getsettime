@@ -18,7 +18,7 @@ const EMBED_ROUTE_RESERVED_FIRST_SEGMENTS = new Set([
   'profile',
   'integrations',
   'contacts',
-  'billings',
+  'plans',
   'bookings',
   'calendar',
   'emergency-booking',

@@ -27,7 +27,7 @@ export function BookingUsageBanner() {
       </p>
       <p className="mt-1">
         Upgrade to continue accepting appointments without interruption.{" "}
-        <Link href="/billings" className="font-medium text-indigo-700 underline hover:text-indigo-900">
+        <Link href="/plans" className="font-medium text-indigo-700 underline hover:text-indigo-900">
           Upgrade Plan
         </Link>
       </p>

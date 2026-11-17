@@ -512,6 +512,16 @@ export async function PUT(req: NextRequest) {
               ? parsedMetaData.color.trim()
               : null;
         }
+        if ('visibility_status' in parsedMetaData) {
+          const visibility = parsedMetaData.visibility_status;
+          if (
+            visibility === 'active' ||
+            visibility === 'private' ||
+            visibility === 'draft'
+          ) {
+            mergedMetaData.visibility_status = visibility;
+          }
+        }
       }
 
       updatePayload.meta_data = mergedMetaData;

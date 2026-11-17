@@ -8,23 +8,10 @@ import {
 } from '@app/db/subscription';
 import { findAuthUserByEmail } from '@/lib/auth-user-lookup';
 import { sendConfirmationEmail } from '@/lib/email-service';
+import { buildSignupUserMetadata } from '@/lib/workspace-owner-signup';
 
 function normalize_auth_email(raw: unknown): string {
   return typeof raw === 'string' ? raw.trim().toLowerCase() : '';
-}
-
-function signup_user_metadata(
-  name: string,
-  extras?: Record<string, unknown>
-) {
-  return {
-    name,
-    role: 'workspace_admin' as const,
-    signup_method: 'password',
-    onboarding_completed: false,
-    onboarding_last_completed_step: 0,
-    ...extras,
-  };
 }
 
 function is_duplicate_user_error(msg: string): boolean {
@@ -163,7 +150,7 @@ export async function POST(req: Request) {
         }
       }
       const existingMeta = existingUser.user_metadata ?? {};
-      const meta = signup_user_metadata(displayName, claimExtras);
+      const meta = buildSignupUserMetadata(displayName, 'password', claimExtras);
       const { error: updateError } = await supabaseAdmin.auth.admin.updateUserById(existingUser.id, {
         password,
         user_metadata: { ...existingMeta, ...meta },
@@ -201,7 +188,7 @@ export async function POST(req: Request) {
       email: normalizedEmail,
       password,
       email_confirm: false,
-      user_metadata: signup_user_metadata(displayName),
+      user_metadata: buildSignupUserMetadata(displayName, 'password'),
     });
 
     if (createError) {
@@ -242,7 +229,7 @@ export async function POST(req: Request) {
       }
 
       const { error: metaErr } = await supabaseAdmin.auth.admin.updateUserById(newUserId, {
-        user_metadata: signup_user_metadata(displayName, claimExtras),
+        user_metadata: buildSignupUserMetadata(displayName, 'password', claimExtras),
       });
       if (metaErr) {
         console.error('Failed to attach claim metadata', metaErr);

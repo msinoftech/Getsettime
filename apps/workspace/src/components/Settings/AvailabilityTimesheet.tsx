@@ -1562,7 +1562,7 @@ const AvailabilityTimesheet = forwardRef<
           />
         {editPanelVisible && editingDay && editingSchedule ? (
           <>
-            <div className='relative ml-auto flex w-full max-w-xl flex-col border-l border-slate-200 bg-white shadow-2xl pb-[60px] lg:pb-0'>
+            <div className='relative ml-auto flex w-full max-w-xl flex-col border-l border-slate-200 bg-white shadow-2xl'>
               <div className="flex shrink-0 items-center justify-between border-b border-slate-200 px-5 py-4">
                 <h2 className="text-lg font-bold text-slate-900">
                   Edit {DAY_NAMES[editingDay]} Availability
@@ -1577,7 +1577,7 @@ const AvailabilityTimesheet = forwardRef<
                 </button>
               </div>
 
-              <div className="flex min-h-0 flex-1 flex-col overflow-hidden overscroll-contain pb-[60px] lg:pb-0">
+              <div className="flex min-h-0 flex-1 flex-col overflow-hidden overscroll-contain">
                 <div className="flex-1 overflow-y-auto px-5 py-5">
                   <div className="space-y-6">
                     <div className="flex items-center justify-between gap-3 border-b border-slate-200 pb-5">
@@ -1838,7 +1838,7 @@ const AvailabilityTimesheet = forwardRef<
                 </div>
 
                 <div className="shrink-0 border-t border-slate-200 bg-white px-5 py-4">
-                  <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+                  <div className="flex gap-2 flex-row justify-end">
                     <button
                       type="button"
                       onClick={() => closeDayPanel(true)}

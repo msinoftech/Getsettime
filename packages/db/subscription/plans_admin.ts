@@ -92,7 +92,9 @@ export async function createPlanWithContent(
     .insert({
       name: planFields.name,
       slug: planFields.slug,
+      description: planFields.description ?? null,
       price: planFields.price,
+      annual_discount_percent: planFields.annual_discount_percent ?? 0,
       booking_limit: planFields.booking_limit,
       booking_limit_period: planFields.booking_limit_period ?? 'monthly',
       user_limit: planFields.user_limit ?? -1,
@@ -146,7 +148,9 @@ export async function updatePlanWithContent(
   const keys: (keyof Omit<plan_input, 'content'>)[] = [
     'name',
     'slug',
+    'description',
     'price',
+    'annual_discount_percent',
     'booking_limit',
     'booking_limit_period',
     'user_limit',

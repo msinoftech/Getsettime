@@ -6,6 +6,7 @@ import {
 } from '@/src/lib/auth_session';
 import {
   workspaceAdminNeedsOnboardingWizard,
+  workspaceAdminOnboardingCompleteFromMetadata,
   serviceProviderNeedsOnboardingWizard,
   workspaceOnboardingRegisterUrl,
   workspaceOnboardingInviteWorkspaceId,
@@ -334,6 +335,10 @@ export default function LoginForm() {
       const meta = userForNav.user_metadata as Record<string, unknown>;
 
       if (finalRole === "workspace_admin") {
+        if (workspaceAdminOnboardingCompleteFromMetadata(meta)) {
+          router.push("/");
+          return;
+        }
         const wid = userForNav.user_metadata?.workspace_id as number | undefined;
         let hasWorkspaceProfile = false;
         if (wid != null) {

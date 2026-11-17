@@ -57,7 +57,7 @@ export async function notifyBookingLimitReachedIfNeeded(
     null;
 
   const appUrl = (process.env.NEXT_PUBLIC_APP_URL || '').replace(/\/$/, '');
-  const billingsUrl = appUrl ? `${appUrl}/billings` : '/billings';
+  const plansUrl = appUrl ? `${appUrl}/plans` : '/plans';
   const transporter = createSmtpTransporter();
   const from = process.env.SMTP_FROM || process.env.SMTP_USER;
 
@@ -65,7 +65,7 @@ export async function notifyBookingLimitReachedIfNeeded(
   const html = `
 <p>Your workspace <strong>${escapeHtmlForEmail(ws?.name ?? 'Workspace')}</strong> has used all bookings included in your current plan.</p>
 <p>Upgrade your plan to keep accepting appointments.</p>
-<p><a href="${escapeHtmlForEmail(billingsUrl)}">Upgrade plan</a></p>
+<p><a href="${escapeHtmlForEmail(plansUrl)}">Upgrade plan</a></p>
 `;
 
   if (transporter && adminEmail && from) {

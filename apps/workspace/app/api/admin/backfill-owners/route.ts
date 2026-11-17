@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { ROLE_SERVICE_PROVIDER } from '@/src/constants/roles';
+import { workspaceCreatorFlagsMissing } from '@/lib/workspace-owner-signup';
 
 /**
  * POST /api/admin/backfill-owners
@@ -48,13 +50,28 @@ export async function POST(req: NextRequest) {
       const { data: userData } = await admin.auth.admin.getUserById(ws.user_id);
       const meta = userData?.user?.user_metadata ?? {};
 
-      if (meta.is_workspace_owner === true) {
+      if (!workspaceCreatorFlagsMissing(meta)) {
         skipped++;
         continue;
       }
 
+      const existingAdditional = Array.isArray(meta.additional_roles)
+        ? meta.additional_roles.filter((r): r is string => typeof r === 'string')
+        : [];
+      const additional_roles = existingAdditional.includes(ROLE_SERVICE_PROVIDER)
+        ? existingAdditional
+        : [...existingAdditional, ROLE_SERVICE_PROVIDER];
+
       const { error: updateErr } = await admin.auth.admin.updateUserById(ws.user_id, {
-        user_metadata: { ...meta, is_workspace_owner: true },
+        user_metadata: {
+          ...meta,
+          role:
+            typeof meta.role === 'string' && meta.role.trim() !== ''
+              ? meta.role
+              : 'workspace_admin',
+          is_workspace_owner: true,
+          additional_roles,
+        },
       });
 
       if (updateErr) {

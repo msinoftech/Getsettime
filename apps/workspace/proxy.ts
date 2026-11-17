@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
+import { guardPublicMarketingApi, isPublicApiSelfAuthPath } from '@/lib/public-api-auth';
 import { is_public_embed_booking_path } from '@/lib/public_embed_route';
 import { canAccessPage } from '@/src/constants/permissions';
 
@@ -15,6 +16,13 @@ export default function proxy(request: NextRequest) {
 
   // If accessing public routes, allow
   if (isPublicRoute) {
+    return NextResponse.next();
+  }
+
+  // Marketing public APIs: Bearer or allowlisted origin (not claim-free — own auth)
+  if (pathname.startsWith('/api/public/') && !isPublicApiSelfAuthPath(pathname)) {
+    const blocked = guardPublicMarketingApi(request);
+    if (blocked) return blocked;
     return NextResponse.next();
   }
 

@@ -1,8 +1,22 @@
 import { Suspense } from "react";
 import { redirect } from "next/navigation";
 import RegisterForm from "./RegisterForm";
+import { OnboardingBootstrapLoading } from "./OnboardingBootstrapLoading";
 
-function RegisterFallback() {
+function RegisterFallback({
+  onboarding,
+  step,
+}: {
+  onboarding?: string | string[];
+  step?: string | string[];
+}) {
+  const isOnboarding =
+    onboarding === "1" || (Array.isArray(onboarding) && onboarding.includes("1"));
+  if (isOnboarding) {
+    const stepValue = Array.isArray(step) ? step[0] : step;
+    return <OnboardingBootstrapLoading step={stepValue} />;
+  }
+
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-white to-purple-50">
       <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600" />
@@ -38,7 +52,11 @@ export default async function RegisterPage({ searchParams }: RegisterPageProps) 
   }
 
   return (
-    <Suspense fallback={<RegisterFallback />}>
+    <Suspense
+      fallback={
+        <RegisterFallback onboarding={params?.onboarding} step={params?.step} />
+      }
+    >
       <RegisterForm />
     </Suspense>
   );

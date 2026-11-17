@@ -1,10 +1,10 @@
 import { NextResponse } from 'next/server';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import {
-  getOrCreateWorkspace,
-  updateUserWorkspaceMetadata,
-} from '@/lib/workspace-service';
-import { sendWorkspaceWelcomeEmail } from '@/lib/send-workspace-welcome-email';
+  buildSignupUserMetadata,
+  finalizeWorkspaceOwnerSignup,
+  rollbackNewOwnerWorkspace,
+} from '@/lib/workspace-owner-signup';
 import {
   createUserSession,
   storeCallbackToken,
@@ -137,20 +137,7 @@ async function handleExistingUserLogin(
     data;
 
   const userId = existingUser.id;
-  const existingMeta = existingUser.user_metadata ?? {};
-
-  const { data: workspaceResult, error: workspaceError } = await getOrCreateWorkspace({
-    userId,
-    userName: name,
-    userEmail: email,
-    supabaseAdmin: clients.supabaseAdmin,
-    userMetadata: existingMeta,
-  });
-
-  if (workspaceError || !workspaceResult) {
-    console.error('Failed to get/create workspace for existing user:', workspaceError);
-    return NextResponse.redirect(new URL('/login?error=workspace_error', req.url));
-  }
+  const existingMeta = (existingUser.user_metadata ?? {}) as Record<string, unknown>;
 
   const metadataPatch: Record<string, unknown> = {
     google_calendar_sync: enableCalendarSync,
@@ -161,18 +148,23 @@ async function handleExistingUserLogin(
     metadataPatch.google_email = email;
   }
 
-  const { error: metaError, metadata: metaNow } = await updateUserWorkspaceMetadata(
+  const finalized = await finalizeWorkspaceOwnerSignup({
     userId,
-    workspaceResult.workspaceId,
+    userName: name,
+    userEmail: email,
+    supabaseAdmin: clients.supabaseAdmin,
+    userMetadata: existingMeta,
     metadataPatch,
-    clients.supabaseAdmin,
-    false,
-    existingMeta
-  );
+    sendWelcomeEmail: false,
+  });
 
-  if (metaError) {
-    console.warn('Failed to update user metadata (non-critical):', metaError);
+  if (!finalized.ok) {
+    console.error('Failed to get/create workspace for existing user:', finalized.error);
+    return NextResponse.redirect(new URL('/login?error=workspace_error', req.url));
   }
+
+  const metaNow = finalized.metadata;
+  const workspaceResult = { workspaceId: finalized.workspaceId };
 
   const role = typeof metaNow?.role === 'string' ? metaNow.role : undefined;
   const isServiceProvider = role === ROLE_SERVICE_PROVIDER;
@@ -241,15 +233,11 @@ async function handleNewUserSignup(
   const { data: userData, error: createError } = await clients.supabaseAdmin.auth.admin.createUser({
     email,
     email_confirm: true,
-    user_metadata: {
-      name,
-      signup_method: 'google',
+    user_metadata: buildSignupUserMetadata(name, 'google', {
       google_calendar_sync: enableCalendarSync,
       google_id,
       picture: data.picture,
-      onboarding_completed: false,
-      onboarding_last_completed_step: 0,
-    },
+    }),
   });
 
   if (createError || !userData.user) {
@@ -296,57 +284,46 @@ async function handleNewUserSignup(
 
   const registrationGeo = await resolveRegistrationGeoFromHeaders(req.headers);
 
-  const { data: workspaceResult, error: workspaceError } = await getOrCreateWorkspace({
+  const finalized = await finalizeWorkspaceOwnerSignup({
     userId,
     userName: name,
     userEmail: email,
     supabaseAdmin: clients.supabaseAdmin,
     registrationGeo,
     userMetadata: createdMeta,
-  });
-
-  if (workspaceError || !workspaceResult) {
-    console.error('Workspace creation error:', workspaceError);
-    await clients.supabaseAdmin.auth.admin.deleteUser(userId);
-    return NextResponse.redirect(new URL('/register?error=workspace_creation_failed', req.url));
-  }
-
-  const { error: metaError } = await updateUserWorkspaceMetadata(
-    userId,
-    workspaceResult.workspaceId,
-    {
+    metadataPatch: {
       name,
       signup_method: 'google',
       google_calendar_sync: enableCalendarSync,
       google_id,
       picture: data.picture,
-      onboarding_completed: false,
-      onboarding_last_completed_step: 0,
     },
-    clients.supabaseAdmin,
-    workspaceResult.isNewWorkspace,
-    createdMeta
-  );
+  });
 
-  if (metaError) {
-    console.error('Failed to update user metadata:', metaError);
-    await clients.supabaseAdmin
-      .from('configurations')
-      .delete()
-      .eq('workspace_id', workspaceResult.workspaceId);
-    await clients.supabaseAdmin.from('workspaces').delete().eq('id', workspaceResult.workspaceId);
-    await clients.supabaseAdmin.auth.admin.deleteUser(userId);
-    return NextResponse.redirect(new URL('/register?error=user_update_failed', req.url));
+  if (!finalized.ok) {
+    console.error('Workspace owner finalize error:', finalized.error);
+    const { data: orphanWorkspace } = await clients.supabaseAdmin
+      .from('workspaces')
+      .select('id')
+      .eq('user_id', userId)
+      .maybeSingle();
+    if (orphanWorkspace?.id) {
+      await rollbackNewOwnerWorkspace(clients.supabaseAdmin, orphanWorkspace.id, {
+        deleteUserId: userId,
+      });
+    } else {
+      await clients.supabaseAdmin.auth.admin.deleteUser(userId);
+    }
+    const errCode =
+      finalized.error === 'Your claim is not valid.'
+        ? 'claim_invalid'
+        : finalized.error.includes('metadata')
+          ? 'user_update_failed'
+          : 'workspace_creation_failed';
+    return NextResponse.redirect(new URL(`/register?error=${encodeURIComponent(errCode)}`, req.url));
   }
 
-  if (workspaceResult.isNewWorkspace && email) {
-    sendWorkspaceWelcomeEmail({
-      to: email,
-      workspaceId: workspaceResult.workspaceId,
-      adminName: name,
-      supabaseAdmin: clients.supabaseAdmin,
-    }).catch((err) => console.error('Welcome email failed (non-critical):', err));
-  }
+  const workspaceResult = { workspaceId: finalized.workspaceId };
 
   if (enableCalendarSync && refresh_token) {
     await saveGoogleCalendarIntegration({

@@ -1,7 +1,7 @@
 "use client";
 
 import { authFetch } from '@/src/lib/auth_session';
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
@@ -42,6 +42,8 @@ function getRelativeTime(dateIso: string) {
 export default function Topbar({ toggleSidebar, isSidebarOpen }: TopbarProps) {
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
   const [isNotificationOpen, setIsNotificationOpen] = useState(false);
+  const [isSigningOut, setIsSigningOut] = useState(false);
+  const isSigningOutRef = useRef(false);
   const { avatarUrl, displayName, email } = useCurrentUserAvatar();
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [notificationsLoading, setNotificationsLoading] = useState(false);
@@ -62,8 +64,16 @@ export default function Topbar({ toggleSidebar, isSidebarOpen }: TopbarProps) {
   const currentBillingPlan = subscriptionData?.plan?.name?.trim() || "...";
   
   const handleSignOut = async () => {
-    await signOutWithAuthLog("manual");
-    router.push('/login');
+    if (isSigningOutRef.current) return;
+    isSigningOutRef.current = true;
+    setIsSigningOut(true);
+    try {
+      await signOutWithAuthLog("manual");
+      router.push('/login');
+    } catch {
+      isSigningOutRef.current = false;
+      setIsSigningOut(false);
+    }
   };
   
   // Close dropdowns when clicking outside
@@ -85,7 +95,7 @@ export default function Topbar({ toggleSidebar, isSidebarOpen }: TopbarProps) {
 
     // If the click is outside both areas, close both dropdowns
     if (!isClickInsideNotification && !isClickInsideProfile) {
-      setIsProfileMenuOpen(false);
+      if (!isSigningOutRef.current) setIsProfileMenuOpen(false);
       setIsNotificationOpen(false);
     }
   };
@@ -186,7 +196,7 @@ export default function Topbar({ toggleSidebar, isSidebarOpen }: TopbarProps) {
             <DashboardIcon name="plus" size={17} className="text-white" />
             Create Booking
           </button>
-          <Link href="/billings" className="hidden sm:flex text-emerald-600 px-4 py-2 rounded-lg text-sm border bg-emerald-50 hover:bg-emerald-600 hover:text-white border-emerald-200">
+          <Link href="/plans" className="hidden sm:flex text-emerald-600 px-4 py-2 rounded-lg text-sm border bg-emerald-50 hover:bg-emerald-600 hover:text-white border-emerald-200">
             Current Plan: <span className="font-medium"> {currentBillingPlan}</span>
           </Link>
           <div className="relative">
@@ -232,7 +242,7 @@ export default function Topbar({ toggleSidebar, isSidebarOpen }: TopbarProps) {
           </div>
 
           <div className="relative">
-            <button id="profile-button" onClick={(e) => { e.stopPropagation(); setIsProfileMenuOpen(!isProfileMenuOpen); setIsNotificationOpen(false);}} className="flex items-center space-x-2 cursor-pointer focus:outline-none" aria-expanded={isProfileMenuOpen} aria-haspopup="true">
+            <button id="profile-button" onClick={(e) => { e.stopPropagation(); if (isSigningOutRef.current) return; setIsProfileMenuOpen(!isProfileMenuOpen); setIsNotificationOpen(false);}} className="flex items-center space-x-2 cursor-pointer focus:outline-none" aria-expanded={isProfileMenuOpen} aria-haspopup="true">
               <UserAvatar
                 avatarUrl={avatarUrl}
                 name={displayName}
@@ -253,7 +263,21 @@ export default function Topbar({ toggleSidebar, isSidebarOpen }: TopbarProps) {
                 <Link href="/profile" className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100" onClick={() => setIsProfileMenuOpen(false)}>Your Profile</Link>
                 <Link href="/settings" className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100" onClick={() => setIsProfileMenuOpen(false)}>Settings</Link>
                 <div className="border-t border-gray-100 my-1"></div>
-                <button onClick={handleSignOut} className="w-full text-left block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Sign out</button>
+                <button
+                  type="button"
+                  onClick={handleSignOut}
+                  disabled={isSigningOut}
+                  aria-busy={isSigningOut}
+                  className="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 disabled:cursor-wait disabled:opacity-70"
+                >
+                  Sign out
+                  {isSigningOut ? (
+                    <span
+                      className="inline-block h-3.5 w-3.5 shrink-0 animate-spin rounded-full border-2 border-gray-400 border-t-transparent"
+                      aria-hidden
+                    />
+                  ) : null}
+                </button>
               </div>
             )}
           </div>

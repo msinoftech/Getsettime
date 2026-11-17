@@ -37,6 +37,20 @@ function parsePrice(value: unknown): number | null {
   return value;
 }
 
+function parseDiscountPercent(value: unknown): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+  if (value < 0 || value > 100) return null;
+  return value;
+}
+
+function parseOptionalDescription(value: unknown): string | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  return trimmed || null;
+}
+
 function parseOptionalBool(value: unknown): boolean | undefined {
   if (value === undefined) return undefined;
   if (typeof value !== 'boolean') return undefined;
@@ -117,17 +131,32 @@ export function parsePlanInput(body: Record<string, unknown>): plan_input {
     errors.push('booking_limit_period must be monthly or lifetime');
   }
 
+  const annualDiscount =
+    body.annual_discount_percent !== undefined
+      ? parseDiscountPercent(body.annual_discount_percent)
+      : 0;
+  if (body.annual_discount_percent !== undefined && annualDiscount === null) {
+    errors.push('annual_discount_percent must be between 0 and 100');
+  }
+
   if (errors.length) {
     throw new Error(errors.join('; '));
   }
 
-  const content =
+  const description = parseOptionalDescription(body.description);
+  if (body.description !== undefined && description === undefined) {
+    throw new Error('description must be a string or null');
+  }
+
+  const planContent =
     body.content !== undefined ? parseContentInput(body) : undefined;
 
   return {
     name,
     slug: slug as string,
+    description: description ?? null,
     price: price as number,
+    annual_discount_percent: annualDiscount ?? 0,
     booking_limit: bookingLimit as number,
     booking_limit_period: bookingLimitPeriod ?? 'monthly',
     user_limit:
@@ -161,7 +190,7 @@ export function parsePlanInput(body: Record<string, unknown>): plan_input {
       body.display_order !== undefined && typeof body.display_order === 'number'
         ? Math.max(0, Math.floor(body.display_order))
         : undefined,
-    content: content ?? undefined,
+    content: planContent ?? undefined,
   };
 }
 
@@ -179,6 +208,22 @@ export function parsePartialPlanInput(body: Record<string, unknown>): Partial<pl
     const slug = parseSlug(body.slug);
     if (!slug) throw new Error('Slug must be lowercase kebab-case');
     patch.slug = slug;
+  }
+
+  if (body.description !== undefined) {
+    const description = parseOptionalDescription(body.description);
+    if (description === undefined) {
+      throw new Error('description must be a string or null');
+    }
+    patch.description = description;
+  }
+
+  if (body.annual_discount_percent !== undefined) {
+    const discount = parseDiscountPercent(body.annual_discount_percent);
+    if (discount === null) {
+      throw new Error('annual_discount_percent must be between 0 and 100');
+    }
+    patch.annual_discount_percent = discount;
   }
 
   if (body.price !== undefined) {

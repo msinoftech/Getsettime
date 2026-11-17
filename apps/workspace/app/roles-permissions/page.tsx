@@ -3,7 +3,7 @@
 import { useMemo, useState, useCallback } from "react";
 
 /**
- * Default matrix; toggles are client-only until persisted or wired to RBAC.
+ * Read-only permission matrix (reference until persisted or wired to RBAC).
  * Column order: Workspace admin, Manager, Service provider, Staff, Customer.
  */
 type permission_row = {
@@ -55,13 +55,6 @@ const INITIAL_PERMISSION_ROWS: permission_row[] = [
   { resource: "Settings", action: "Update", granted: [true, false, false, false, false] },
 ];
 
-function clone_initial_rows(): permission_row[] {
-  return INITIAL_PERMISSION_ROWS.map((r) => ({
-    ...r,
-    granted: [...r.granted] as [boolean, boolean, boolean, boolean, boolean],
-  }));
-}
-
 /** Stable order: first appearance of each resource in `rows`. */
 function group_rows_by_resource(rows: permission_row[]): { resource: string; row_indices: number[] }[] {
   const order: string[] = [];
@@ -79,35 +72,17 @@ function group_rows_by_resource(rows: permission_row[]): { resource: string; row
   }));
 }
 
-function ToggleCell({
-  allowed,
-  row_index,
-  col_index,
-  resource,
-  action,
-  on_toggle,
-}: {
-  allowed: boolean;
-  row_index: number;
-  col_index: number;
-  resource: string;
-  action: string;
-  on_toggle: (row_index: number, col_index: number) => void;
-}) {
-  //const label = `${ROLE_HEADERS[col_index]} — ${resource} — ${action}: ${allowed ? "allowed" : "not allowed"}. Click to toggle.`;
+function PermissionCell({ allowed, col_index }: { allowed: boolean; col_index: number }) {
   const label = `${ROLE_HEADERS[col_index]}`;
   return (
     <td className="px-3 py-3 text-center border-b border-slate-100" data-label={label}>
-      <button
-        type="button"
-        onClick={() => on_toggle(row_index, col_index)}
-        className={`inline-flex h-9 w-9 items-center justify-center rounded-full border-2 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 ${
+      <span
+        className={`inline-flex h-9 w-9 items-center justify-center rounded-full border-2 ${
           allowed
-            ? "border-emerald-200 bg-emerald-100 text-emerald-700 hover:bg-emerald-200"
-            : "border-slate-200 bg-slate-100 text-slate-400 hover:border-slate-300 hover:bg-slate-200"
+            ? "border-emerald-200 bg-emerald-100 text-emerald-700"
+            : "border-slate-200 bg-slate-100 text-slate-400"
         }`}
-        aria-pressed={allowed}
-        aria-label={label}
+        aria-label={`${label}: ${allowed ? "allowed" : "not allowed"}`}
       >
         {allowed ? (
           <svg
@@ -125,7 +100,7 @@ function ToggleCell({
             —
           </span>
         )}
-      </button>
+      </span>
     </td>
   );
 }
@@ -155,22 +130,14 @@ function AccordionSectionTableHead() {
   );
 }
 
+const DEFAULT_OPEN_RESOURCE = INITIAL_PERMISSION_ROWS[0].resource;
+
 export default function RolesPermissionsPage() {
-  const [rows, set_rows] = useState<permission_row[]>(clone_initial_rows);
-  const [accordion_open, set_accordion_open] = useState<Record<string, boolean>>({});
+  const [accordion_open, set_accordion_open] = useState<Record<string, boolean>>(() => ({
+    [DEFAULT_OPEN_RESOURCE]: true,
+  }));
 
-  const grouped = useMemo(() => group_rows_by_resource(rows), [rows]);
-
-  const toggle_cell = useCallback((row_index: number, col_index: number) => {
-    set_rows((prev) =>
-      prev.map((r, ri) => {
-        if (ri !== row_index) return r;
-        const next = [...r.granted] as [boolean, boolean, boolean, boolean, boolean];
-        next[col_index] = !next[col_index];
-        return { ...r, granted: next };
-      }),
-    );
-  }, []);
+  const grouped = useMemo(() => group_rows_by_resource(INITIAL_PERMISSION_ROWS), []);
 
   const toggle_accordion = useCallback((resource: string) => {
     set_accordion_open((prev) => ({ ...prev, [resource]: !prev[resource] }));
@@ -212,7 +179,7 @@ export default function RolesPermissionsPage() {
             </div>
           </div>
           <p className="text-sm text-slate-600">
-            Click a cell to allow or deny the action for that role. Changes stay in this session only; enforcement is not active yet.
+            Reference matrix for what each role can do. Editing and enforcement are not active yet.
           </p>
         </header>
 
@@ -259,7 +226,7 @@ export default function RolesPermissionsPage() {
                           <AccordionSectionTableHead />
                           <tbody>
                             {row_indices.map((row_index) => {
-                              const row = rows[row_index];
+                              const row = INITIAL_PERMISSION_ROWS[row_index];
                               return (
                                 <tr
                                   key={`${row.resource}-${row.action}`}
@@ -272,15 +239,7 @@ export default function RolesPermissionsPage() {
                                     {row.action}
                                   </th>
                                   {row.granted.map((allowed, col_index) => (
-                                    <ToggleCell
-                                      key={col_index}
-                                      allowed={allowed}
-                                      row_index={row_index}
-                                      col_index={col_index}
-                                      resource={row.resource}
-                                      action={row.action}
-                                      on_toggle={toggle_cell}
-                                    />
+                                    <PermissionCell key={col_index} allowed={allowed} col_index={col_index} />
                                   ))}
                                 </tr>
                               );

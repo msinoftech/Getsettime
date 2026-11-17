@@ -120,7 +120,7 @@ export function ServiceFormPanel({
 
   const [assign_mode, set_assign_mode] = useState<service_doctor_assign_mode>(
     () => {
-      if (!is_edit || !service) return "specific";
+      if (!is_edit || !service) return "all";
       const pool = resolve_department_doctors(service.department_id);
       const assigned_in_pool = (service.meta_data?.service_providers ?? [])
         .map((provider) => provider.id)
@@ -158,6 +158,14 @@ export function ServiceFormPanel({
     if (assign_mode !== "all") return;
     set_assigned_doctor_ids(doctor_pool.map((doctor) => doctor.id));
   }, [assign_mode, doctor_pool]);
+
+  const select_specific_assign_mode = useCallback(() => {
+    set_assign_mode("specific");
+    set_assigned_menu_open(false);
+    const next_ids =
+      doctor_pool.length === 1 ? [doctor_pool[0]!.id] : [];
+    set_assigned_doctor_ids(next_ids);
+  }, [doctor_pool]);
 
   const department_name = selected_department?.name?.trim() ?? "";
 
@@ -376,7 +384,6 @@ export function ServiceFormPanel({
         saved_service.id,
         assigned_ids
       );
-      if (is_edit && !assignments_synced) return;
 
       await on_saved({ service: saved_service, assignments_synced });
     } finally {
@@ -394,7 +401,7 @@ export function ServiceFormPanel({
 
   return (
     <>
-      <div className="relative ml-auto flex w-full max-w-xl flex-col border-l border-slate-200 bg-white shadow-2xl pb-[60px] lg:pb-0">
+      <div className="relative ml-auto flex h-full min-h-0 w-full max-w-xl flex-col overflow-hidden border-l border-slate-200 bg-white shadow-2xl pb-[60px] lg:pb-0">
         <div className="flex shrink-0 items-center justify-between border-b border-slate-200 px-5 py-4">
           <h2 className="text-lg font-bold text-slate-900">
             {is_edit ? "Edit Service" : "Add Service"}
@@ -409,9 +416,9 @@ export function ServiceFormPanel({
           </button>
         </div>
 
-        <div className="flex flex-1 flex-col overflow-y-scroll pb-16 lg:pb-0 overscroll-contain">
-          <div className="flex flex-col">
-            <div className="flex-1 overflow-y-auto px-5 py-5">
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain pb-16 lg:pb-0">
+          <div className="flex min-h-0 flex-1 flex-col">
+            <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
               {error_message ? (
                 <div
                   role="alert"
@@ -667,10 +674,7 @@ export function ServiceFormPanel({
                       </button>
                       <button
                         type="button"
-                        onClick={() => {
-                          set_assign_mode("specific");
-                          set_assigned_menu_open(false);
-                        }}
+                        onClick={select_specific_assign_mode}
                         className={classNames(
                           "flex items-center gap-2.5 rounded-xl border px-3 py-3 text-left text-sm font-medium transition",
                           assign_mode === "specific"

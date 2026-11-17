@@ -73,6 +73,26 @@ function format_subtitle(booking: Booking): string {
   return duration ? `${duration} min ${service.toLowerCase()}` : service;
 }
 
+function UpcomingAppointmentsSkeleton() {
+  return (
+    <div className="space-y-3" aria-busy="true" aria-label="Loading upcoming appointments">
+      {Array.from({ length: 3 }, (_, i) => (
+        <div
+          key={i}
+          className="flex animate-pulse items-start gap-2 sm:gap-4 rounded-2xl border border-slate-200 p-3"
+        >
+          <div className="h-11 w-10 shrink-0 rounded-lg bg-slate-200" />
+          <div className="min-w-0 flex-1 space-y-2 py-0.5">
+            <div className="h-4 w-2/5 max-w-[160px] rounded bg-slate-200" />
+            <div className="h-3 w-3/5 max-w-[220px] rounded bg-slate-100" />
+          </div>
+          <div className="h-7 w-20 shrink-0 rounded-full bg-slate-100" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function UpcomingAppointmentsList({
   bookings,
   loading,
@@ -114,9 +134,7 @@ export default function UpcomingAppointmentsList({
       </div>
 
       {loading ? (
-        <div className="py-10 text-center text-sm font-semibold text-slate-400">
-          Loading…
-        </div>
+        <UpcomingAppointmentsSkeleton />
       ) : items.length === 0 ? (
         <div className="py-10 text-center text-sm font-semibold text-slate-400">
           No upcoming appointments.

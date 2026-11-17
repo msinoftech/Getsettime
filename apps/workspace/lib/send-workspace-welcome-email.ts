@@ -37,7 +37,7 @@ export async function sendWorkspaceWelcomeEmail(params: {
     workspaceName,
     adminName: adminName.trim() || 'there',
     dashboardUrl: `${origin}/`,
-    upgradeUrl: `${origin}/billings`,
+    upgradeUrl: `${origin}/plans`,
     planName: snapshot.plan.name,
     bookingLimit: snapshot.plan.booking_limit,
     bookingLimitPeriod: snapshot.plan.booking_limit_period,

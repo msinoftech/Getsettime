@@ -20,6 +20,14 @@ function sort_bookings_by_start(bookings: Booking[]): Booking[] {
   });
 }
 
+async function parse_bookings_response(
+  res: Response,
+): Promise<Booking[]> {
+  if (!res.ok) return [];
+  const json = (await res.json()) as BookingsApiResponse;
+  return json.data ?? [];
+}
+
 export function useDashboardBookings(
   user: { id?: string } | null,
   view_date: Date,
@@ -70,25 +78,58 @@ export function useDashboardBookings(
         month_loading: true,
       }));
 
-      try {
-        if (!accessToken || ac.signal.aborted) {
+      if (!accessToken || ac.signal.aborted) {
+        if (!ac.signal.aborted) {
+          setState({
+            today_bookings: [],
+            today_loading: false,
+            next_appointment: null,
+            next_loading: false,
+            upcoming_appointments: [],
+            upcoming_loading: false,
+            week_bookings: [],
+            week_loading: false,
+            month_bookings: [],
+            month_loading: false,
+          });
+        }
+        return;
+      }
+
+      // Priority: small upcoming query for the main dashboard list (not blocked by week/month).
+      const load_upcoming = async () => {
+        try {
+          const res = await authFetch('/api/bookings?sort=upcoming&limit=10', {
+            signal: ac.signal,
+          });
+          if (ac.signal.aborted) return;
+          const rows = sort_bookings_by_start(await parse_bookings_response(res));
+          if (ac.signal.aborted) return;
+          setState((prev) => ({
+            ...prev,
+            upcoming_appointments: rows,
+            upcoming_loading: false,
+            next_appointment: rows[0] ?? null,
+            next_loading: false,
+          }));
+        } catch (error) {
+          if ((error as Error).name === 'AbortError') return;
+          console.error('useDashboardBookings upcoming:', error);
           if (!ac.signal.aborted) {
-            setState({
-              today_bookings: [],
-              today_loading: false,
-              next_appointment: null,
-              next_loading: false,
+            setState((prev) => ({
+              ...prev,
               upcoming_appointments: [],
               upcoming_loading: false,
-              week_bookings: [],
-              week_loading: false,
-              month_bookings: [],
-              month_loading: false,
-            });
+              next_appointment: null,
+              next_loading: false,
+            }));
           }
-          return;
         }
+      };
 
+      void load_upcoming();
+
+      try {
         const today_key = toDateKey(new Date());
 
         const week_days = get_dashboard_week_days();
@@ -104,68 +145,44 @@ export function useDashboardBookings(
           end_date: toDateKey(end_of_month),
         });
 
-        const [today_res, next_res, upcoming_res, week_res, month_res] = await Promise.all([
+        const [today_res, week_res, month_res] = await Promise.all([
           authFetch(`/api/bookings?date=${today_key}&limit=150`, { signal: ac.signal }),
-          authFetch('/api/bookings?sort=upcoming&limit=1', { signal: ac.signal }),
-          // Range-independent: next future appointments across all dates.
-          // Fetch extra so inactive (cancelled/etc.) rows can be filtered client-side.
-          authFetch('/api/bookings?sort=upcoming&limit=10', { signal: ac.signal }),
           authFetch(`/api/bookings?${week_params.toString()}&limit=500`, { signal: ac.signal }),
           authFetch(`/api/bookings?${range_params.toString()}`, { signal: ac.signal }),
         ]);
 
         if (ac.signal.aborted) return;
 
-        const today_json = today_res.ok
-          ? ((await today_res.json()) as BookingsApiResponse)
-          : { data: [] };
-        const next_json = next_res.ok
-          ? ((await next_res.json()) as BookingsApiResponse)
-          : { data: [] };
-        const upcoming_json = upcoming_res.ok
-          ? ((await upcoming_res.json()) as BookingsApiResponse)
-          : { data: [] };
-        const week_json = week_res.ok
-          ? ((await week_res.json()) as BookingsApiResponse)
-          : { data: [] };
-        const month_json = month_res.ok
-          ? ((await month_res.json()) as BookingsApiResponse)
-          : { data: [] };
+        const [today_rows, week_rows, month_rows] = await Promise.all([
+          parse_bookings_response(today_res),
+          parse_bookings_response(week_res),
+          parse_bookings_response(month_res),
+        ]);
 
         if (ac.signal.aborted) return;
 
-        const today_sorted = sort_bookings_by_start(today_json.data ?? []);
-
-        const next_first = next_json.data?.[0] ?? null;
-
-        setState({
-          today_bookings: today_sorted,
+        setState((prev) => ({
+          ...prev,
+          today_bookings: sort_bookings_by_start(today_rows),
           today_loading: false,
-          next_appointment: next_first,
-          next_loading: false,
-          upcoming_appointments: sort_bookings_by_start(upcoming_json.data ?? []),
-          upcoming_loading: false,
-          week_bookings: week_json.data ?? [],
+          week_bookings: week_rows,
           week_loading: false,
-          month_bookings: month_json.data ?? [],
+          month_bookings: month_rows,
           month_loading: false,
-        });
+        }));
       } catch (error) {
         if ((error as Error).name === 'AbortError') return;
         console.error('useDashboardBookings:', error);
         if (!ac.signal.aborted) {
-          setState({
+          setState((prev) => ({
+            ...prev,
             today_bookings: [],
             today_loading: false,
-            next_appointment: null,
-            next_loading: false,
-            upcoming_appointments: [],
-            upcoming_loading: false,
             week_bookings: [],
             week_loading: false,
             month_bookings: [],
             month_loading: false,
-          });
+          }));
         }
       }
     };
